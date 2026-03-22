@@ -81,6 +81,7 @@ local TAB_DEFS = {
     { name = L["TAB_SUSPECTS"],  key = "keywords"  },
     { name = L["TAB_WHITELIST"], key = "whitelist" },
     { name = L["TAB_LOGS"],      key = "logs"      },
+    { name = L["TAB_ABOUT"],     key = "about"     },
 }
 
 -- ============================================================================
@@ -442,7 +443,7 @@ local function createMainFrame()
     tabBar:SetPoint("TOPRIGHT", header, "BOTTOMRIGHT", 0, 0)
     tabBar:SetHeight(TAB_BAR_HEIGHT)
 
-    local tabWidth = FRAME_WIDTH / #TAB_DEFS
+    local tabWidth = mainFrame:GetWidth() / #TAB_DEFS
     for i, def in ipairs(TAB_DEFS) do
         local tab = CreateFrame("Button", nil, tabBar, "BackdropTemplate")
         tab:SetSize(tabWidth, TAB_BAR_HEIGHT)
@@ -494,6 +495,7 @@ local function createMainFrame()
     buildKeywordsTab(tabFrames["keywords"])
     buildWhitelistTab(tabFrames["whitelist"])
     buildLogsTab(tabFrames["logs"])
+    buildAboutTab(tabFrames["about"])
 
     -- ========================================================================
     -- Status bar
@@ -573,6 +575,7 @@ refreshTabContent = function(key)
         refreshWhitelistEntries()
     elseif key == "logs" then
         refreshLogEntries()
+    -- "about" tab is static, no refresh needed
     end
 end
 
@@ -1382,6 +1385,53 @@ local function groupLogsByName()
     return sorted
 end
 
+
+-- ========================================================================
+-- About tab (static content)
+-- ========================================================================
+
+buildAboutTab = function(parent)
+    -- Container centered vertically and horizontally in the tab
+    local container = CreateFrame("Frame", nil, parent)
+    container:SetSize(440, 220)
+    container:SetPoint("CENTER", parent, "CENTER", 0, 10)
+
+    local yOffset = 0
+
+    -- Addon name (large)
+    local title = createLabel(container, "Sanctuary", 22, ACCENT_BLUE, "CENTER")
+    title:SetPoint("TOP", container, "TOP", 0, yOffset)
+    yOffset = yOffset - 36
+
+    -- Version
+    local version = createLabel(container, string.format(L["ABOUT_VERSION"], ns.VERSION), 13, DIM_COLOR, "CENTER")
+    version:SetPoint("TOP", container, "TOP", 0, yOffset)
+    yOffset = yOffset - 34
+
+    -- Description
+    local desc = createLabel(container, L["ABOUT_DESC"], 12, HIGHLIGHT_COLOR, "CENTER")
+    desc:SetPoint("TOP", container, "TOP", 0, yOffset)
+    desc:SetWidth(440)
+    yOffset = yOffset - 44
+
+    -- Author
+    local author = createLabel(container, string.format(L["ABOUT_AUTHOR"], "Zephos"), 12, DIM_COLOR, "CENTER")
+    author:SetPoint("TOP", container, "TOP", 0, yOffset)
+    yOffset = yOffset - 28
+
+    -- GitHub
+    local github = createLabel(container, string.format(L["ABOUT_GITHUB"], "github.com/VincentCassiau/Sanctuary"), 12, DIM_COLOR, "CENTER")
+    github:SetPoint("TOP", container, "TOP", 0, yOffset)
+    yOffset = yOffset - 40
+
+    -- Thanks
+    local thanks = createLabel(container, string.format(L["ABOUT_THANKS"], "Hearlcash"), 11, DIM_COLOR, "CENTER")
+    thanks:SetPoint("TOP", container, "TOP", 0, yOffset)
+end
+
+-- ========================================================================
+-- Logs tab
+-- ========================================================================
 
 buildLogsTab = function(parent)
     -- Title + count

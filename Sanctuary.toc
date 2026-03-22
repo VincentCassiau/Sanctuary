@@ -3,7 +3,7 @@
 ## Notes: Anti-harassment protection
 ## Notes-frFR: Protection anti-harcelement
 ## Author: Zephos
-## Version: 0.2.0
+## Version: 0.3.0
 ## IconTexture: Interface\Icons\inv_shield_06
 ## Category: Chat
 ## Category-frFR: Discussion

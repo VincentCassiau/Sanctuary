@@ -56,6 +56,14 @@ L["TAB_FILTERS"] = "Filters"
 L["TAB_SUSPECTS"] = "Patterns"
 L["TAB_WHITELIST"] = "Whitelist"
 L["TAB_LOGS"] = "Logs"
+L["TAB_ABOUT"] = "About"
+
+-- About tab
+L["ABOUT_VERSION"] = "Version %s"
+L["ABOUT_AUTHOR"] = "Author: %s"
+L["ABOUT_DESC"] = "Whitelist-based anti-harassment protection. Blocks all interactions from non-authorized players and logs everything."
+L["ABOUT_GITHUB"] = "GitHub: %s"
+L["ABOUT_THANKS"] = "Thanks to %s for testing."
 
 -- Filter labels
 L["FILTER_GROUP_INVITE"] = "Block group invitations"
@@ -214,6 +222,14 @@ L["TAB_FILTERS"] = "Filtres"
 L["TAB_SUSPECTS"] = "Patterns"
 L["TAB_WHITELIST"] = "Whitelist"
 L["TAB_LOGS"] = "Logs"
+L["TAB_ABOUT"] = "A propos"
+
+-- About tab
+L["ABOUT_VERSION"] = "Version %s"
+L["ABOUT_AUTHOR"] = "Auteur : %s"
+L["ABOUT_DESC"] = "Protection anti-harc\195\168lement par whitelist. Bloque toutes les interactions des joueurs non autoris\195\169s et conserve un historique complet."
+L["ABOUT_GITHUB"] = "GitHub : %s"
+L["ABOUT_THANKS"] = "Merci \195\160 %s pour les tests."
 
 -- Filter labels
 L["FILTER_GROUP_INVITE"] = "Bloquer les invitations de groupe"

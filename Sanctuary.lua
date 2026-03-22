@@ -1,6 +1,6 @@
 -- ============================================================================
 -- Sanctuary — WoW Anti-Harassment Addon (Whitelist-based protection)
--- Version: 0.2.0 | Interface: 120001 (Midnight)
+-- Version: 0.3.0 | Interface: 120001 (Midnight)
 -- ============================================================================
 
 -- ============================================================================
@@ -9,7 +9,7 @@
 
 local ADDON_NAME, ns = ...
 local L = ns.L
-local VERSION = "0.2.0"
+local VERSION = "0.3.0"
 
 local PREFIX = "|cFF66CCFF[Sanctuary]|r "
 local COLOR_ON = "|cFF00FF00"
