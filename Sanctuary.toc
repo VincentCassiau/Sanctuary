@@ -1,0 +1,16 @@
+## Interface: 120001
+## Title: Sanctuary
+## Notes: Anti-harassment protection
+## Notes-frFR: Protection anti-harcelement
+## Author: Zephos
+## Version: 0.2.0
+## IconTexture: Interface\Icons\inv_shield_06
+## Category: Chat
+## Category-frFR: Discussion
+## SavedVariables: SanctuaryDB
+## SavedVariablesPerCharacter: SanctuaryCharDB
+## DefaultState: enabled
+
+Locales.lua
+Sanctuary.lua
+SanctuaryUI.lua
