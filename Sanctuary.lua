@@ -1,6 +1,6 @@
 -- ============================================================================
 -- Sanctuary — WoW Anti-Harassment Addon (Whitelist-based protection)
--- Version: 0.3.0 | Interface: 120001 (Midnight)
+-- Version: 0.3.1 | Interface: 120001 (Midnight)
 -- ============================================================================
 
 -- ============================================================================
@@ -9,7 +9,7 @@
 
 local ADDON_NAME, ns = ...
 local L = ns.L
-local VERSION = "0.3.0"
+local VERSION = "0.3.1"
 
 local PREFIX = "|cFF66CCFF[Sanctuary]|r "
 local COLOR_ON = "|cFF00FF00"
@@ -121,6 +121,9 @@ end
 
 local function normalizeName(name)
     if not name or name == "" then return nil end
+    -- Strip WoW hyperlink markup: |Hplayer:Name-Realm|h[Name]|h → [Name]
+    name = name:gsub("|H.-|h", "")
+    name = name:gsub("|h", "")
     -- Strip color codes and link formatting
     name = name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
     -- Strip brackets (chat format: [Name-Realm])
@@ -450,6 +453,8 @@ local function buildInvitePatterns()
         "ERR_INVITED_TO_GROUP_SS",
         "ERR_INVITED_TO_GROUP_S",
         "ERR_INVITED_TO_GROUP",
+        "ERR_INVITED_ALREADY_IN_GROUP_SS",
+        "ERR_INVITED_ALREADY_IN_GROUP_S",
     }
     for _, globalName in ipairs(globals) do
         local globalStr = _G[globalName]
@@ -1074,19 +1079,41 @@ end)
 
 -- Post-hook on StaticPopup_Show: hide blocked popups immediately after creation
 -- Uses hooksecurefunc (safe, no taint) instead of raw hook
+--
+-- Note: text_arg1 format varies across WoW versions:
+--   Old (MoP):     raw name           "PlayerName"
+--   Modern:        formatted sentence  "PlayerName vous a invité à rejoindre un groupe."
+--   Modern+friend: colored sentence    "|cff00aaffPlayerName|r vous a invité..."
+--   Hypothetical:  hyperlink           "|Hplayer:PlayerName|h[PlayerName]|h"
+-- extractPopupInviterName handles all these cases safely.
+local function extractPopupInviterName(text)
+    if not text or type(text) ~= "string" then return nil end
+    -- Strategy 1: pattern-based extraction (handles formatted sentences)
+    local name = extractInviterFromSystemMessage(text)
+    if name then return name end
+    -- Strategy 2: no space = not a sentence = raw name, hyperlink, or colored name
+    -- (WoW character names never contain spaces)
+    if not text:find(" ") then return text end
+    -- Can't extract → return nil (let the event handler deal with it)
+    return nil
+end
+
 hooksecurefunc("StaticPopup_Show", function(which, text_arg1)
     if not isEnabled() then return end
 
     if which == "PARTY_INVITE" and getEffective("filters.groupInvite") then
-        if text_arg1 and not isWhitelisted(text_arg1) then
+        local name = extractPopupInviterName(text_arg1)
+        if name and not isWhitelisted(name) then
             StaticPopup_Hide("PARTY_INVITE")
         end
     elseif which == "DUEL_REQUESTED" and getEffective("filters.duel") then
-        if text_arg1 and not isWhitelisted(text_arg1) then
+        local name = extractPopupInviterName(text_arg1)
+        if name and not isWhitelisted(name) then
             StaticPopup_Hide("DUEL_REQUESTED")
         end
     elseif which == "GUILD_INVITE" and getEffective("filters.guildInvite") then
-        if text_arg1 and not isWhitelisted(text_arg1) then
+        local name = extractPopupInviterName(text_arg1)
+        if name and not isWhitelisted(name) then
             StaticPopup_Hide("GUILD_INVITE")
         end
     end
