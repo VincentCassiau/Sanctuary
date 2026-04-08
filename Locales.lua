@@ -173,6 +173,19 @@ L["STATUSBAR_SESSION"] = "Session: %s blocked"
 L["STATUSBAR_LOG"] = "Log: %s/%s"
 L["STATUSBAR_SUSPECTS"] = "Patterns: %s"
 
+-- Debug mode
+L["GROUP_DEBUG"] = "Diagnostics"
+L["DEBUG_ENABLE"] = "Enable debug mode"
+L["TIP_DEBUG"] = "Captures diagnostic data when\ninvitations are received.\n\nContains player names and system\nnotifications only (no personal messages).\nNothing is sent -- export is copy-paste.\n\nDisabling clears the log."
+L["DEBUG_EXPORT_BTN"] = "Export debug log"
+L["DEBUG_CLEAR_BTN"] = "Clear"
+L["DEBUG_EMPTY"] = "Debug log is empty. Enable debug mode, then play normally."
+L["DEBUG_EXPORT_TITLE"] = "Debug log export"
+L["DEBUG_EXPORT_INSTRUCTIONS"] = "Ctrl+A then Ctrl+C to copy"
+L["DEBUG_COUNT"] = "Debug: %s"
+L["DEBUG_ENABLED_MSG"] = "Debug mode ON. Play normally, then export."
+L["DEBUG_DISABLED_MSG"] = "Debug mode OFF. Log cleared."
+
 -- ============================================================================
 -- French overrides (frFR)
 -- ============================================================================
@@ -338,5 +351,18 @@ L["SETTINGS_OPEN_BTN"] = "Ouvrir Sanctuary"
 L["STATUSBAR_SESSION"] = "Session : %s bloqu\195\169(s)"
 L["STATUSBAR_LOG"] = "Log : %s/%s"
 L["STATUSBAR_SUSPECTS"] = "Patterns : %s"
+
+-- Debug mode
+L["GROUP_DEBUG"] = "Diagnostics"
+L["DEBUG_ENABLE"] = "Activer le mode debug"
+L["TIP_DEBUG"] = "Capture des donn\195\169es de diagnostic\nlors de la r\195\169ception d'invitations.\n\nContient uniquement des noms de\njoueurs et notifications syst\195\168me\n(aucun message personnel).\nRien n'est envoy\195\169 -- copier-coller.\n\nD\195\169sactiver vide le log."
+L["DEBUG_EXPORT_BTN"] = "Exporter le log debug"
+L["DEBUG_CLEAR_BTN"] = "Vider"
+L["DEBUG_EMPTY"] = "Le log debug est vide. Activez le mode debug, puis jouez normalement."
+L["DEBUG_EXPORT_TITLE"] = "Export du log debug"
+L["DEBUG_EXPORT_INSTRUCTIONS"] = "Ctrl+A puis Ctrl+C pour copier"
+L["DEBUG_COUNT"] = "Debug : %s"
+L["DEBUG_ENABLED_MSG"] = "Mode debug activ\195\169. Jouez normalement, puis exportez."
+L["DEBUG_DISABLED_MSG"] = "Mode debug d\195\169sactiv\195\169. Log debug vid\195\169."
 
 end -- frFR

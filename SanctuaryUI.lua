@@ -361,7 +361,12 @@ local function createMainFrame()
         if not SanctuaryCharDB then return end
         local current = ns.isEnabled()
         SanctuaryCharDB.overrides.enabled = not current
-        if ns.isEnabled() then
+        local newState = ns.isEnabled()
+        -- Debug: log addon enable/disable
+        if ns.debugLog then
+            ns.debugLog("TOGGLE", { enabled = newState })
+        end
+        if newState then
             if ns.muteInviteSounds then ns.muteInviteSounds() end
             ns.printSuccess(L["SANCTUARY_ENABLED"])
         else
@@ -604,10 +609,16 @@ refreshStatusBar = function()
         keywordPart = "  |  " .. string.format(L["STATUSBAR_SUSPECTS"], keywordCount)
     end
 
+    local debugPart = ""
+    if SanctuaryDB.debugEnabled and SanctuaryDB.debugLog then
+        debugPart = "  |  " .. string.format(L["DEBUG_COUNT"], #SanctuaryDB.debugLog)
+    end
+
     statusBar.text:SetText(
         string.format(L["STATUSBAR_SESSION"], blocked) .. "  |  "
         .. string.format(L["STATUSBAR_LOG"], logCount, maxLog)
         .. keywordPart
+        .. debugPart
     )
 end
 
@@ -1347,6 +1358,179 @@ local function showLogExport()
     exportFrame:Show()
 end
 
+-- ========================================================================
+-- Debug export modal
+-- ========================================================================
+
+local debugExportFrame = nil
+
+local function serializeDebugData(data)
+    if type(data) ~= "table" then return tostring(data) end
+    -- Sort keys for consistent, readable output (pairs() order is random in Lua 5.1)
+    local keys = {}
+    for k in pairs(data) do keys[#keys + 1] = tostring(k) end
+    table.sort(keys)
+    local parts = {}
+    for _, k in ipairs(keys) do
+        -- Use explicit nil check (not `or`) because false is a valid value in Lua
+        local v = data[k]
+        if v == nil then v = data[tonumber(k)] end
+        if type(v) == "table" then
+            local subKeys = {}
+            for sk in pairs(v) do subKeys[#subKeys + 1] = tostring(sk) end
+            table.sort(subKeys)
+            local sub = {}
+            for _, sk in ipairs(subKeys) do
+                local sv = v[sk]
+                if sv == nil then sv = v[tonumber(sk)] end
+                sub[#sub + 1] = sk .. "=" .. tostring(sv)
+            end
+            parts[#parts + 1] = k .. "={" .. table.concat(sub, ", ") .. "}"
+        else
+            parts[#parts + 1] = k .. "=" .. tostring(v)
+        end
+    end
+    return table.concat(parts, " | ")
+end
+
+local function showDebugExport()
+    if not SanctuaryDB then return end
+
+    if debugExportFrame then
+        debugExportFrame:Hide()
+        debugExportFrame:SetParent(nil)
+        debugExportFrame = nil
+    end
+
+    debugExportFrame = CreateFrame("Frame", "SanctuaryDebugExportFrame", UIParent, "BackdropTemplate")
+    debugExportFrame:SetSize(650, 500)
+    debugExportFrame:SetPoint("CENTER")
+    debugExportFrame:SetFrameStrata("FULLSCREEN_DIALOG")
+    debugExportFrame:SetMovable(true)
+    debugExportFrame:EnableMouse(true)
+    debugExportFrame:RegisterForDrag("LeftButton")
+    debugExportFrame:SetScript("OnDragStart", debugExportFrame.StartMoving)
+    debugExportFrame:SetScript("OnDragStop", debugExportFrame.StopMovingOrSizing)
+    debugExportFrame:SetClampedToScreen(true)
+
+    debugExportFrame:SetBackdrop({
+        bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    debugExportFrame:SetBackdropColor(0.05, 0.05, 0.1, 0.95)
+    debugExportFrame:SetBackdropBorderColor(0.3, 0.3, 0.4, 0.8)
+
+    local title = debugExportFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOP", 0, -10)
+    title:SetText(L["DEBUG_EXPORT_TITLE"])
+
+    local instructions = debugExportFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    instructions:SetPoint("TOP", title, "BOTTOM", 0, -4)
+    instructions:SetText(L["DEBUG_EXPORT_INSTRUCTIONS"])
+    instructions:SetTextColor(0.6, 0.6, 0.6)
+
+    local closeBtn = createButton(debugExportFrame, L["EXPORT_CLOSE"], 80, 24, function()
+        debugExportFrame:Hide()
+    end)
+    closeBtn:SetPoint("BOTTOM", 0, 10)
+
+    local sf = CreateFrame("ScrollFrame", nil, debugExportFrame, "UIPanelScrollFrameTemplate")
+    sf:SetPoint("TOPLEFT", debugExportFrame, "TOPLEFT", 14, -48)
+    sf:SetPoint("BOTTOMRIGHT", debugExportFrame, "BOTTOMRIGHT", -32, 40)
+
+    local eb = CreateFrame("EditBox", nil, sf)
+    eb:SetMultiLine(true)
+    eb:SetFontObject(ChatFontNormal)
+    eb:SetTextColor(1, 1, 1, 1)
+    eb:SetAutoFocus(true)
+    eb:SetWidth(590)
+    eb:SetTextInsets(4, 4, 4, 4)
+    eb:SetScript("OnEscapePressed", function() debugExportFrame:Hide() end)
+    sf:SetScrollChild(eb)
+
+    -- Build header with LIVE state
+    local result = "=== SANCTUARY DEBUG REPORT ===\n"
+    result = result .. "Date: " .. date("%Y-%m-%d %H:%M:%S") .. "\n"
+    result = result .. "Version: " .. (ns.VERSION or "?") .. " | Locale: " .. (GetLocale() or "?") .. "\n\n"
+
+    -- Globals
+    result = result .. "--- GLOBALS ---\n"
+    local gNames = {
+        "ERR_INVITED_TO_GROUP_SS", "ERR_INVITED_TO_GROUP_S",
+        "ERR_INVITED_ALREADY_IN_GROUP_SS", "ERR_INVITED_ALREADY_IN_GROUP_S",
+    }
+    for _, gName in ipairs(gNames) do
+        local val = _G[gName]
+        result = result .. gName .. " = " .. (type(val) == "string" and val or "nil") .. "\n"
+    end
+
+    -- Patterns
+    result = result .. "\n--- PATTERNS (" .. (ns.invitePatterns and #ns.invitePatterns or 0) .. ") ---\n"
+    if ns.invitePatterns then
+        for i, p in ipairs(ns.invitePatterns) do
+            result = result .. "[" .. i .. "] " .. p .. "\n"
+        end
+    end
+
+    -- Live state
+    result = result .. "\n--- STATE ---\n"
+    result = result .. "AddonEnabled: " .. tostring(ns.isEnabled()) .. "\n"
+    local gm = 0; pcall(function() gm = GetNumGuildMembers() end)
+    local bn = 0; pcall(function() bn = BNGetNumFriends() end)
+    local cf = 0; pcall(function() cf = C_FriendList.GetNumFriends() end)
+    local bnetCN = ns.countBNetWithCharName and ns.countBNetWithCharName() or "?"
+    result = result .. "IsInGuild: " .. tostring(IsInGuild()) .. " | GuildMembers: " .. gm .. "\n"
+    result = result .. "BNetFriends: " .. bn .. " | BNetWithCharName: " .. bnetCN .. "\n"
+    result = result .. "CharFriends: " .. cf .. "\n"
+
+    local cacheSize = "?"
+    if ns.getWhitelistCacheSize then
+        cacheSize = ns.getWhitelistCacheSize()
+    end
+    local manualA = 0
+    if SanctuaryDB.manualWhitelist then
+        for _ in pairs(SanctuaryDB.manualWhitelist) do manualA = manualA + 1 end
+    end
+    local manualC = 0
+    if SanctuaryCharDB and SanctuaryCharDB.manualWhitelist then
+        for _ in pairs(SanctuaryCharDB.manualWhitelist) do manualC = manualC + 1 end
+    end
+    result = result .. "ManualWL: " .. manualA .. "+" .. manualC .. " | WhitelistCache: " .. cacheSize .. "\n"
+    result = result .. "Keywords: " .. (SanctuaryDB.keywords and #SanctuaryDB.keywords or 0) .. "\n"
+
+    -- Event log
+    local debugLog = SanctuaryDB.debugLog or {}
+    result = result .. "\n--- EVENT LOG (" .. #debugLog .. " entries) ---\n"
+    if #debugLog == 0 then
+        result = result .. L["DEBUG_EMPTY"] .. "\n"
+    else
+        for _, entry in ipairs(debugLog) do
+            result = result .. "#" .. (entry.seq or "?")
+                .. " [" .. (entry.ts or "?") .. "] "
+                .. (entry.cat or "?") .. " | "
+                .. serializeDebugData(entry.data) .. "\n"
+        end
+    end
+
+    -- Insert text in small chunks (SetMaxLetters broken in Midnight)
+    eb:SetText("")
+    local chunkSize = 200
+    if #result <= chunkSize then
+        eb:SetText(result)
+    else
+        eb:SetText(result:sub(1, chunkSize))
+        for i = chunkSize + 1, #result, chunkSize do
+            eb:Insert(result:sub(i, math.min(i + chunkSize - 1, #result)))
+        end
+    end
+    eb:SetCursorPosition(0)
+    eb:HighlightText()
+
+    debugExportFrame:Show()
+end
+
 -- Type display names and colors
 local LOG_TYPE_DISPLAY = {
     groupInvite      = { label = L["LOG_TYPE_INVITE"],  color = { 1.0, 0.6, 0.2 } },
@@ -1393,8 +1577,8 @@ end
 buildAboutTab = function(parent)
     -- Container centered vertically and horizontally in the tab
     local container = CreateFrame("Frame", nil, parent)
-    container:SetSize(440, 220)
-    container:SetPoint("CENTER", parent, "CENTER", 0, 10)
+    container:SetSize(440, 380)
+    container:SetPoint("CENTER", parent, "CENTER", 0, 30)
 
     local yOffset = 0
 
@@ -1427,6 +1611,52 @@ buildAboutTab = function(parent)
     -- Thanks
     local thanks = createLabel(container, string.format(L["ABOUT_THANKS"], "Hearlcash"), 11, DIM_COLOR, "CENTER")
     thanks:SetPoint("TOP", container, "TOP", 0, yOffset)
+    yOffset = yOffset - 40
+
+    -- ====================================================================
+    -- Diagnostics section
+    -- ====================================================================
+
+    local diagSep = container:CreateTexture(nil, "ARTWORK")
+    diagSep:SetHeight(1)
+    diagSep:SetPoint("TOPLEFT", container, "TOPLEFT", 0, yOffset)
+    diagSep:SetPoint("TOPRIGHT", container, "TOPRIGHT", 0, yOffset)
+    diagSep:SetColorTexture(0.3, 0.3, 0.4, 0.4)
+    yOffset = yOffset - 12
+
+    local diagHeader = createLabel(container, L["GROUP_DEBUG"], 13, ACCENT_BLUE, "LEFT")
+    diagHeader:SetPoint("TOPLEFT", container, "TOPLEFT", 0, yOffset)
+    yOffset = yOffset - 24
+
+    -- Debug toggle checkbox
+    local debugCb = createCheckbox(container, L["DEBUG_ENABLE"], L["TIP_DEBUG"], function(checked)
+        if SanctuaryDB then
+            SanctuaryDB.debugEnabled = checked
+            if checked then
+                SanctuaryDB.debugLog = {}
+                if ns.captureDebugSnapshot then
+                    ns.captureDebugSnapshot()
+                end
+                ns.printSuccess(L["DEBUG_ENABLED_MSG"])
+            else
+                SanctuaryDB.debugLog = {}
+                ns.printMsg(L["DEBUG_DISABLED_MSG"])
+            end
+            refreshStatusBar()
+        end
+    end)
+    debugCb:SetPoint("TOPLEFT", container, "TOPLEFT", 0, yOffset)
+    debugCb:SetWidth(440)
+    if debugCb.checkbox and SanctuaryDB then
+        debugCb.checkbox:SetChecked(SanctuaryDB.debugEnabled or false)
+    end
+    yOffset = yOffset - 30
+
+    -- Debug export button
+    local debugExportBtn = createButton(container, L["DEBUG_EXPORT_BTN"], 180, 24, function()
+        showDebugExport()
+    end)
+    debugExportBtn:SetPoint("TOPLEFT", container, "TOPLEFT", 0, yOffset)
 end
 
 -- ========================================================================

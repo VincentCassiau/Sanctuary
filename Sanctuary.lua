@@ -73,6 +73,8 @@ local ACCOUNT_DEFAULTS = {
     uiSettings = {
         showMessageColumn = true,
     },
+    debugEnabled = false,
+    debugLog = {},
 }
 
 local CHARACTER_DEFAULTS = {
@@ -236,6 +238,9 @@ end
 
 ns.matchesKeyword = matchesKeyword
 
+-- Forward declarations for debug functions (defined in Section F2, used in E and H)
+local debugLog, countBNetWithCharName, captureDebugSnapshot
+
 -- ============================================================================
 -- SECTION E: Whitelist Engine
 -- ============================================================================
@@ -340,6 +345,21 @@ local function rebuildWhitelist()
 
     Sanctuary.whitelistCache = cache
     Sanctuary.whitelistDirty = false
+
+    -- Debug: log rebuild stats with per-source counts
+    if SanctuaryDB and SanctuaryDB.debugEnabled then
+        local totalSize = 0
+        for _ in pairs(cache) do totalSize = totalSize + 1 end
+        local gm = 0; pcall(function() gm = GetNumGuildMembers() end)
+        local bn = 0; pcall(function() bn = BNGetNumFriends() end)
+        local cf = 0; pcall(function() cf = C_FriendList.GetNumFriends() end)
+        local grp = IsInGroup() and GetNumGroupMembers() or 0
+        debugLog("REBUILD", {
+            cache = totalSize,
+            isInGuild = IsInGuild() and true or false,
+            guild = gm, bnet = bn, friends = cf, group = grp,
+        })
+    end
 end
 
 local function isWhitelisted(name)
@@ -359,6 +379,13 @@ end
 -- Export whitelist functions to namespace
 ns.isWhitelisted = isWhitelisted
 ns.invalidateWhitelist = invalidateWhitelist
+ns.getWhitelistCacheSize = function()
+    local count = 0
+    if Sanctuary.whitelistCache then
+        for _ in pairs(Sanctuary.whitelistCache) do count = count + 1 end
+    end
+    return count
+end
 
 -- ============================================================================
 -- SECTION F: Logging Engine
@@ -437,6 +464,117 @@ end
 ns.logBlock = logBlock
 
 -- ============================================================================
+-- SECTION F2: Debug Logging Engine
+-- ============================================================================
+
+local debugSeq = 0
+
+debugLog = function(cat, data)
+    if not SanctuaryDB or not SanctuaryDB.debugEnabled then return end
+    if not SanctuaryDB.debugLog then SanctuaryDB.debugLog = {} end
+
+    debugSeq = debugSeq + 1
+    table.insert(SanctuaryDB.debugLog, {
+        seq = debugSeq,
+        t = GetTime(),
+        ts = date("%H:%M:%S"),
+        cat = cat,
+        data = data or {},
+    })
+
+    -- Rotation: keep max 500 entries
+    if #SanctuaryDB.debugLog > 500 then
+        local newLog = {}
+        for i = #SanctuaryDB.debugLog - 499, #SanctuaryDB.debugLog do
+            newLog[#newLog + 1] = SanctuaryDB.debugLog[i]
+        end
+        SanctuaryDB.debugLog = newLog
+    end
+end
+
+-- Count BNet friends with characterName populated
+countBNetWithCharName = function()
+    local count = 0
+    pcall(function()
+        for i = 1, BNGetNumFriends() do
+            local info = C_BattleNet.GetFriendAccountInfo(i)
+            if info and info.gameAccountInfo
+                and info.gameAccountInfo.characterName
+                and info.gameAccountInfo.characterName ~= "" then
+                count = count + 1
+            end
+        end
+    end)
+    return count
+end
+
+-- Capture a full state snapshot (called on debug enable + ADDON_LOADED)
+captureDebugSnapshot = function()
+    if not SanctuaryDB or not SanctuaryDB.debugEnabled then return end
+
+    -- Globals
+    local globals = {}
+    local gNames = {
+        "ERR_INVITED_TO_GROUP_SS", "ERR_INVITED_TO_GROUP_S",
+        "ERR_INVITED_ALREADY_IN_GROUP_SS", "ERR_INVITED_ALREADY_IN_GROUP_S",
+    }
+    for _, gName in ipairs(gNames) do
+        local val = _G[gName]
+        globals[gName] = (type(val) == "string") and val or "nil"
+    end
+
+    -- Patterns
+    local patternList = {}
+    if ns.invitePatterns then
+        for i, p in ipairs(ns.invitePatterns) do
+            patternList[i] = p
+        end
+    end
+
+    -- Social data
+    local guildN = 0; pcall(function() guildN = GetNumGuildMembers() end)
+    local bnetN = 0; pcall(function() bnetN = BNGetNumFriends() end)
+    local friendN = 0; pcall(function() friendN = C_FriendList.GetNumFriends() end)
+
+    -- Whitelist cache size
+    local cacheSize = 0
+    if Sanctuary.whitelistCache then
+        for _ in pairs(Sanctuary.whitelistCache) do cacheSize = cacheSize + 1 end
+    end
+
+    -- Manual whitelist counts
+    local manualAccount = 0
+    if SanctuaryDB.manualWhitelist then
+        for _ in pairs(SanctuaryDB.manualWhitelist) do manualAccount = manualAccount + 1 end
+    end
+    local manualChar = 0
+    if SanctuaryCharDB and SanctuaryCharDB.manualWhitelist then
+        for _ in pairs(SanctuaryCharDB.manualWhitelist) do manualChar = manualChar + 1 end
+    end
+
+    debugLog("SNAPSHOT", {
+        version = VERSION,
+        locale = GetLocale(),
+        addonEnabled = isEnabled(),
+        globals = globals,
+        patternCount = ns.invitePatterns and #ns.invitePatterns or 0,
+        patterns = patternList,
+        isInGuild = IsInGuild() and true or false,
+        guildMembers = guildN,
+        bnetFriends = bnetN,
+        bnetWithCharName = countBNetWithCharName(),
+        charFriends = friendN,
+        whitelistCache = cacheSize,
+        manualWL = manualAccount .. "+" .. manualChar,
+        keywords = SanctuaryDB.keywords and #SanctuaryDB.keywords or 0,
+    })
+end
+
+ns.debugLog = debugLog
+ns.captureDebugSnapshot = captureDebugSnapshot
+ns.countBNetWithCharName = countBNetWithCharName
+
+-- ============================================================================
 -- SECTION G: Chat Message Filters (PURE functions — NO side effects)
 -- ============================================================================
 
@@ -476,18 +614,18 @@ local function buildInvitePatterns()
 end
 
 local function extractInviterFromSystemMessage(msg)
-    for _, pattern in ipairs(invitePatterns) do
+    for idx, pattern in ipairs(invitePatterns) do
         local name = msg:match(pattern)
         if name then
             -- Clean the name (remove realm info artifacts, brackets etc)
             name = name:gsub("%[", ""):gsub("%]", "")
             name = name:match("^%s*(.-)%s*$")
             if name ~= "" then
-                return name
+                return name, idx
             end
         end
     end
-    return nil
+    return nil, nil
 end
 
 -- System message filter: MUST be a PURE function (called 2+ times per message)
@@ -495,7 +633,34 @@ local function systemMessageFilter(self, event, msg, ...)
     if not isEnabled() then return false end
     if not getEffective("filters.groupInvite") then return false end
 
-    local inviterName = extractInviterFromSystemMessage(msg)
+    local inviterName, patIdx = extractInviterFromSystemMessage(msg)
+
+    -- Debug: log invite-related system messages (match or not)
+    if SanctuaryDB and SanctuaryDB.debugEnabled and msg
+        and (msg:find("invit") or msg:find("group") or msg:find("groupe")) then
+        if inviterName then
+            local wl = isWhitelisted(inviterName)
+            local km = matchesKeyword(inviterName)
+            local result = "SUPPRESS_WHITELIST"
+            if wl then result = "PASS_WHITELISTED"
+            elseif km then result = "SUPPRESS_KEYWORD" end
+            debugLog("FILTER", {
+                msg = msg:sub(1, 300),
+                name = inviterName,
+                pattern = patIdx or "?",
+                isWL = wl,
+                keyword = km and true or false,
+                result = result,
+            })
+        else
+            debugLog("FILTER", {
+                msg = msg:sub(1, 300),
+                name = "nil",
+                result = "NO_MATCH",
+            })
+        end
+    end
+
     if not inviterName then return false end
 
     -- Whitelisted players are never blocked
@@ -705,8 +870,26 @@ function handlers.PARTY_INVITE_REQUEST(name, isTank, isHealer, isDamage,
     if not isEnabled() then return end
     if not getEffective("filters.groupInvite") then return end
 
+    -- Compute debug data before acting
+    local wl = isWhitelisted(name)
+    local km, kw = matchesKeyword(name)
+    local action = wl and "ALLOW" or (km and "BLOCK_KEYWORD" or "BLOCK_WHITELIST")
+
+    -- Debug: log invite event with full context
+    debugLog("INVITE", {
+        name = name,
+        normalized = normalizeName(name),
+        guid = inviterGUID or "nil",
+        isWL = wl,
+        keyword = km and kw or "none",
+        action = action,
+        inGroup = IsInGroup() and true or false,
+        groupSize = IsInGroup() and GetNumGroupMembers() or 0,
+        wlCache = ns.getWhitelistCacheSize(),
+    })
+
     -- Whitelisted players are never blocked
-    if isWhitelisted(name) then
+    if wl then
         -- Whitelisted: briefly unmute so the invite sound plays, then re-mute
         unmuteInviteSounds()
         C_Timer.After(0.5, muteInviteSounds)
@@ -714,12 +897,11 @@ function handlers.PARTY_INVITE_REQUEST(name, isTank, isHealer, isDamage,
     end
 
     -- Keyword blacklist
-    local keyMatch, keyWord = matchesKeyword(name)
-    if keyMatch then
+    if km then
         DeclineGroup()
         StaticPopup_Hide("PARTY_INVITE")
         C_Timer.After(0.05, function() StaticPopup_Hide("PARTY_INVITE") end)
-        logBlock("groupInvite", name, nil, inviterGUID, keyWord)
+        logBlock("groupInvite", name, nil, inviterGUID, kw)
         return
     end
 
@@ -802,21 +984,41 @@ function handlers.TRADE_SHOW()
     logBlock("trade", tradeName, nil, nil)
 end
 
--- Whitelist refresh events
+-- Whitelist refresh events (with debug dedup to avoid log spam from WoW firing events in bursts)
+local lastSocialDebugKey = ""
+local lastSocialDebugTime = 0
+
+local function debugLogSocial(eventName)
+    local gm = 0; pcall(function() gm = GetNumGuildMembers() end)
+    local bn = 0; pcall(function() bn = BNGetNumFriends() end)
+    local cf = 0; pcall(function() cf = C_FriendList.GetNumFriends() end)
+    -- Dedup: skip if same event + same counts within 2 seconds
+    local key = eventName .. ":" .. gm .. ":" .. bn .. ":" .. cf
+    local now = GetTime()
+    if key == lastSocialDebugKey and (now - lastSocialDebugTime) < 2 then return end
+    lastSocialDebugKey = key
+    lastSocialDebugTime = now
+    debugLog("SOCIAL", { event = eventName, guild = gm, bnet = bn, friends = cf, bnetCN = countBNetWithCharName() })
+end
+
 function handlers.GUILD_ROSTER_UPDATE()
     invalidateWhitelist()
+    debugLogSocial("GUILD_ROSTER_UPDATE")
 end
 
 function handlers.FRIENDLIST_UPDATE()
     invalidateWhitelist()
+    debugLogSocial("FRIENDLIST_UPDATE")
 end
 
 function handlers.BN_FRIEND_INFO_CHANGED()
     invalidateWhitelist()
+    debugLogSocial("BN_FRIEND_INFO_CHANGED")
 end
 
 function handlers.BN_FRIEND_LIST_SIZE_CHANGED()
     invalidateWhitelist()
+    debugLogSocial("BN_FRIEND_LIST_SIZE_CHANGED")
 end
 
 function handlers.GROUP_ROSTER_UPDATE()
@@ -994,6 +1196,7 @@ function handlers.ADDON_LOADED(addonName)
 
     -- Build invite message patterns
     buildInvitePatterns()
+    ns.invitePatterns = invitePatterns
 
     -- Register chat message filters
     registerChatFilters()
@@ -1024,11 +1227,18 @@ function handlers.ADDON_LOADED(addonName)
         muteInviteSounds()
     end
 
+    -- Debug: capture snapshot at load time (if debug was already enabled)
+    captureDebugSnapshot()
+
     frame:UnregisterEvent("ADDON_LOADED")
 end
 
 function handlers.PLAYER_ENTERING_WORLD()
     invalidateWhitelist()
+    debugLog("WORLD", {
+        isInGuild = IsInGuild() and true or false,
+        isInGroup = IsInGroup() and true or false,
+    })
     -- Clean group tracker on login
     if SanctuaryCharDB then
         SanctuaryCharDB.groupTracker = {}
@@ -1103,7 +1313,22 @@ hooksecurefunc("StaticPopup_Show", function(which, text_arg1)
 
     if which == "PARTY_INVITE" and getEffective("filters.groupInvite") then
         local name = extractPopupInviterName(text_arg1)
-        if name and not isWhitelisted(name) then
+        local wl = name and isWhitelisted(name) or false
+        -- Determine which extraction strategy was used
+        local strategy = "nil"
+        if name then
+            local fromPattern = extractInviterFromSystemMessage(tostring(text_arg1 or ""))
+            strategy = fromPattern and "pattern" or "raw"
+        end
+        debugLog("POPUP", {
+            which = which,
+            text_arg1 = tostring(text_arg1 or "nil"):sub(1, 200),
+            extracted = name or "nil",
+            strategy = strategy,
+            isWL = wl,
+            action = (not name) and "NIL_NAME" or (wl and "KEEP" or "HIDE"),
+        })
+        if name and not wl then
             StaticPopup_Hide("PARTY_INVITE")
         end
     elseif which == "DUEL_REQUESTED" and getEffective("filters.duel") then
