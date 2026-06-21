@@ -610,12 +610,13 @@ local inviteApi = lastDebug("INVITE_API")
 check(inviteApi ~= nil, "blocked party invite logs native decline API")
 check(inviteApi.data.ok, "blocked party invite native decline API succeeded")
 equal(forbiddenStaticHides, 0, "no direct StaticPopup_Hide")
-popup:Hide()
+runTimers()
+equal(declinedGroups, beforeBlockedDeclines + 1, "blocked group invite silent hide does not decline twice")
+check(not popup:IsShown(), "blocked party invite popup hidden after native decline")
 equal(#playedSounds, 0, "blocked party invite close sound suppressed")
-equal(popup.alpha, 1, "popup alpha restored on native hide")
+equal(popup.alpha, 1, "popup alpha restored on silent hide")
 check(not mutedSoundFiles[567490], "blocked party invite releases popup-open mute after hide")
 check(not mutedSoundFiles[567464], "blocked party invite releases popup-close mute after hide")
-runTimers()
 
 -- Blizzard-first trusted popup: it is initially masked and restored in the same
 -- event dispatch once the name-based decision is available.
@@ -665,27 +666,30 @@ fire("PARTY_INVITE_REQUEST", "Anotherbad", false, false, true, true, false, "Pla
 StaticPopup_Show("PARTY_INVITE", "Anotherbad vous invite dans un groupe.")
 equal(popup.alpha, 0, "blocked decision survives Sanctuary-first ordering")
 equal(declinedGroups, beforeSanctuaryFirstBlockedDeclines + 1, "Sanctuary-first blocked invite declined by handler")
-popup:Hide()
-equal(#playedSounds, 0, "Sanctuary-first blocked invite never plays popup sounds")
 runTimers()
+check(not popup:IsShown(), "Sanctuary-first blocked invite popup hidden after pending block decision")
+equal(declinedGroups, beforeSanctuaryFirstBlockedDeclines + 1, "Sanctuary-first silent hide does not decline twice")
+equal(#playedSounds, 0, "Sanctuary-first blocked invite never plays popup sounds")
 
 -- Duel uses a StaticPopup; guild invites use Retail's GuildInviteFrame special
 -- popup. Both paths must stay silent for blocked senders.
 playedSounds = {}
 SanctuaryDB.debugLog = {}
+local beforeBlockedDuels = cancelledDuels
 StaticPopup_Show("DUEL_REQUESTED", "Duelbad veut vous provoquer en duel.")
 equal(popup.alpha, 0, "unknown duel popup masked immediately")
 equal(#playedSounds, 0, "blocked duel popup native sounds suppressed before decision")
 fire("DUEL_REQUESTED", "Duelbad")
-equal(cancelledDuels, 1, "blocked duel cancelled")
+equal(cancelledDuels, beforeBlockedDuels + 1, "blocked duel cancelled")
 local duelApi = lastDebug("DUEL_API")
 check(duelApi ~= nil, "blocked duel logs native cancel API")
 check(duelApi.data.ok, "blocked duel native cancel API succeeded")
-popup:Hide()
+runTimers()
+check(not popup:IsShown(), "blocked duel popup hidden after native cancel")
+equal(cancelledDuels, beforeBlockedDuels + 1, "blocked duel silent hide does not cancel twice")
 equal(#playedSounds, 0, "blocked duel popup close sound suppressed")
 check(not mutedSoundFiles[567490], "blocked duel releases popup-open mute after hide")
 check(not mutedSoundFiles[567464], "blocked duel releases popup-close mute after hide")
-runTimers()
 
 playedSounds = {}
 SanctuaryDB.debugLog = {}
@@ -846,6 +850,8 @@ local beforeMutedRefresh = #muted
 ns.refreshInviteSoundMuteState()
 equal(#muted, beforeMutedRefresh, "refresh does not add global sound mutes at rest")
 check(ns.areInviteSoundsMuted(), "sound state reports active invite sound guard")
+equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "party invite sound field suppressed while filter active")
+equal(StaticPopupDialogs.DUEL_REQUESTED.sound, nil, "duel sound field suppressed while filter active")
 check(not mutedSoundFiles[567451], "native invite sound file is not globally muted at rest")
 check(not mutedSoundFiles[567490], "generic popup open sound is not muted")
 check(not mutedSoundFiles[567464], "generic popup close sound is not muted")
@@ -853,6 +859,8 @@ SanctuaryDB.filters.groupInvite = false
 ns.refreshInviteSoundMuteState()
 equal(#muted, beforeMutedRefresh, "disabled group filter keeps existing duel sound guard without duplicate mute")
 check(ns.areInviteSoundsMuted(), "duel filter keeps native invite sound guarded")
+equal(StaticPopupDialogs.PARTY_INVITE.sound, 880, "disabled group filter restores party invite dialog sound")
+equal(StaticPopupDialogs.DUEL_REQUESTED.sound, nil, "disabled group filter leaves duel sound suppressed")
 check(type(ns.simulateInvite) == "function", "invite simulator exported")
 local disabledSimulation = ns.simulateInvite("Simulatedbad")
 check(disabledSimulation.shouldBlock, "disabled invite filter still reports raw block decision")
@@ -863,6 +871,15 @@ SanctuaryDB.filters.groupInvite = true
 ns.refreshInviteSoundMuteState()
 equal(#muted, beforeMutedRefresh, "enabled invite filter keeps existing invite sound guard without duplicate mute")
 check(ns.areInviteSoundsMuted(), "enabled invite filter has active invite sound guard")
+equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "re-enabled group filter suppresses party invite dialog sound")
+
+SanctuaryDB.filters.duel = false
+ns.refreshInviteSoundMuteState()
+check(ns.areInviteSoundsMuted(), "group filter keeps sound guard active when duel filter disabled")
+equal(StaticPopupDialogs.DUEL_REQUESTED.sound, 880, "disabled duel filter restores duel dialog sound")
+SanctuaryDB.filters.duel = true
+ns.refreshInviteSoundMuteState()
+equal(StaticPopupDialogs.DUEL_REQUESTED.sound, nil, "re-enabled duel filter suppresses duel dialog sound")
 
 SanctuaryCharDB.overrides.enabled = false
 ns.refreshInviteSoundMuteState()

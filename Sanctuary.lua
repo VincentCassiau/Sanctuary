@@ -1484,6 +1484,66 @@ releaseProtectedPopupSoundGuards = function(which, reason)
     return released
 end
 
+local function hidePopupDialogSilently(dialog, which, reason)
+    if not dialog or not dialog.IsShown or not dialog:IsShown() then return false end
+    if dialog.which ~= which then return false end
+
+    maskPopupDialog(dialog, which)
+
+    if not protectedPopupSoundGuardDialogs[dialog] then
+        protectedPopupSoundGuardDialogs[dialog] = {
+            token = acquireProtectedPopupSoundGuard(which, reason or "silent_hide"),
+            which = which,
+        }
+    end
+
+    local oldInviteAccepted = dialog.inviteAccepted
+    if which == "PARTY_INVITE" then
+        -- Retail PARTY_INVITE OnHide calls DeclineGroup() when inviteAccepted is
+        -- nil. Sanctuary already declined blocked invites, so mark this concrete
+        -- dialog instance only for the silent close. Do not use StaticPopup_Hide.
+        dialog.inviteAccepted = true
+    end
+
+    local ok, err = pcall(function()
+        dialog:Hide()
+    end)
+
+    if which == "PARTY_INVITE" then
+        dialog.inviteAccepted = oldInviteAccepted
+    end
+
+    debugLog("POPUP", {
+        which = which,
+        action = ok and "HIDE_SILENT" or "HIDE_ERROR",
+        reason = reason or "unknown",
+        error = ok and "none" or tostring(err),
+    })
+    return ok and true or false
+end
+
+local function hideVisiblePopupSilently(which, reason)
+    local hidden = 0
+    forEachStaticPopup(function(dialog)
+        if hidePopupDialogSilently(dialog, which, reason) then
+            hidden = hidden + 1
+        end
+    end)
+    return hidden
+end
+
+local function scheduleVisiblePopupSilentHide(which, reason)
+    C_Timer.After(0, function()
+        local hidden = hideVisiblePopupSilently(which, reason)
+        debugLog("POPUP", {
+            which = which,
+            action = "HIDE_SILENT_DEFERRED",
+            reason = reason or "unknown",
+            hidden = hidden,
+        })
+    end)
+end
+
 local function clearPendingPopupDecision(which)
     pendingPopupDecisions[which] = nil
 end
@@ -1818,6 +1878,9 @@ function handlers.PARTY_INVITE_REQUEST(name, isTank, isHealer, isDamage,
         ok = declineOk and true or false,
         error = declineOk and "none" or tostring(declineErr),
     })
+    if countVisiblePopup("PARTY_INVITE") > 0 then
+        scheduleVisiblePopupSilentHide("PARTY_INVITE", "blocked_invite_declined")
+    end
     logBlock("groupInvite", name, nil, inviterGUID, keyword)
 end
 
@@ -1857,6 +1920,9 @@ function handlers.DUEL_REQUESTED(playerName)
         ok = cancelOk and true or false,
         error = cancelOk and "none" or tostring(cancelErr),
     })
+    if countVisiblePopup("DUEL_REQUESTED") > 0 then
+        scheduleVisiblePopupSilentHide("DUEL_REQUESTED", "blocked_duel_cancelled")
+    end
     logBlock("duel", playerName, nil, nil, keyword)
 end
 
@@ -2953,6 +3019,9 @@ hooksecurefunc("StaticPopup_Show", function(which, text_arg1, text_arg2, data)
     if decision then
         affected = applyPopupDecision(which, decision.shouldBlock)
         action = decision.shouldBlock and "MASK_DECIDED_BLOCK" or "SHOW_DECIDED_ALLOW"
+        if decision.shouldBlock then
+            scheduleVisiblePopupSilentHide(which, "pending_block")
+        end
     else
         -- Blizzard ran first: hide immediately; Sanctuary's event handler will
         -- resolve allow/block later in the same synchronous event dispatch.

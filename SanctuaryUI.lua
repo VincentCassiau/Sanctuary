@@ -704,10 +704,13 @@ buildFiltersTab = function(parent)
                 if SanctuaryDB and SanctuaryDB.filters then
                     SanctuaryDB.filters[filterKey] = checked
 
-                    if filterKey == "groupInvite" then
+                    if filterKey == "groupInvite" or filterKey == "duel" or filterKey == "guildInvite" then
                         if ns.refreshInviteSoundMuteState then
                             ns.refreshInviteSoundMuteState()
                         end
+                    end
+
+                    if filterKey == "groupInvite" then
                         if not checked then
                             if ns.clearPendingPopupDecision then
                                 ns.clearPendingPopupDecision("PARTY_INVITE")
