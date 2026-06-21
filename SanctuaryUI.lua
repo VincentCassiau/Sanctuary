@@ -376,7 +376,9 @@ local function createMainFrame()
             if ns.clearPendingPopupDecision then
                 ns.clearPendingPopupDecision("PARTY_INVITE")
                 ns.clearPendingPopupDecision("DUEL_REQUESTED")
-                ns.clearPendingPopupDecision("GUILD_INVITE")
+            end
+            if ns.clearPendingGuildInviteFrameDecision then
+                ns.clearPendingGuildInviteFrameDecision()
             end
             if ns.unmaskAllInteractionPopups then
                 ns.unmaskAllInteractionPopups()
@@ -722,11 +724,11 @@ buildFiltersTab = function(parent)
                             ns.unmaskVisiblePopup("DUEL_REQUESTED")
                         end
                     elseif filterKey == "guildInvite" and not checked then
-                        if ns.clearPendingPopupDecision then
-                            ns.clearPendingPopupDecision("GUILD_INVITE")
+                        if ns.clearPendingGuildInviteFrameDecision then
+                            ns.clearPendingGuildInviteFrameDecision()
                         end
-                        if ns.unmaskVisiblePopup then
-                            ns.unmaskVisiblePopup("GUILD_INVITE")
+                        if ns.unmaskGuildInviteFrame then
+                            ns.unmaskGuildInviteFrame()
                         end
                     end
 
@@ -1528,9 +1530,12 @@ local function showDebugExport()
     result = result .. "IsInGuild: " .. tostring(IsInGuild()) .. " | GuildMembers: " .. gm .. "\n"
     result = result .. "BNetFriends: " .. bn .. " | BNetWithCharName: " .. bnetCN .. "\n"
     result = result .. "CharFriends: " .. cf .. "\n"
-    local inviteSoundsMuted = ns.areInviteSoundsMuted and ns.areInviteSoundsMuted() or "?"
+    local partyInviteSoundGuard = ns.isPartyInviteSoundGuardActive and ns.isPartyInviteSoundGuardActive() or "?"
     result = result .. "GroupInviteFilter: " .. tostring(ns.getEffective("filters.groupInvite"))
-        .. " | InviteSoundsMuted: " .. tostring(inviteSoundsMuted) .. "\n"
+        .. " | PartyInviteSoundGuard: " .. tostring(partyInviteSoundGuard) .. "\n"
+    if ns.getEffectiveFilterState then
+        result = result .. "Filters: " .. serializeDebugData(ns.getEffectiveFilterState()) .. "\n"
+    end
 
     local cacheSize = "?"
     if ns.getWhitelistCacheSize then

@@ -19,6 +19,17 @@ local function equal(actual, expected, message)
     end
 end
 
+local function lastDebug(cat, action)
+    if not SanctuaryDB or not SanctuaryDB.debugLog then return nil end
+    for i = #SanctuaryDB.debugLog, 1, -1 do
+        local entry = SanctuaryDB.debugLog[i]
+        if entry.cat == cat and (not action or (entry.data and entry.data.action == action)) then
+            return entry
+        end
+    end
+    return nil
+end
+
 function wipe(tbl)
     for key in pairs(tbl) do tbl[key] = nil end
     return tbl
@@ -109,8 +120,37 @@ ChatFrame1 = DEFAULT_CHAT_FRAME
 
 local muted = {}
 local unmuted = {}
-function MuteSoundFile(id) muted[#muted + 1] = id end
-function UnmuteSoundFile(id) unmuted[#unmuted + 1] = id end
+local mutedSoundFiles = {}
+local playedSounds = {}
+SOUNDKIT = {
+    IG_PLAYER_INVITE = 880,
+    IG_MAINMENU_OPEN = 850,
+    IG_MAINMENU_CLOSE = 851,
+    IG_MAINMENU_OPTION_CHECKBOX_ON = 852,
+    IG_MAINMENU_OPTION_CHECKBOX_OFF = 853,
+    IG_CHARACTER_INFO_TAB = 854,
+}
+local soundFilesByName = {
+    igPlayerInvite = 567451,
+    [SOUNDKIT.IG_PLAYER_INVITE] = 567451,
+    igMainMenuOpen = 567490,
+    [SOUNDKIT.IG_MAINMENU_OPEN] = 567490,
+    igMainMenuClose = 567464,
+    [SOUNDKIT.IG_MAINMENU_CLOSE] = 567464,
+}
+function MuteSoundFile(id)
+    muted[#muted + 1] = id
+    mutedSoundFiles[id] = true
+end
+function UnmuteSoundFile(id)
+    unmuted[#unmuted + 1] = id
+    mutedSoundFiles[id] = nil
+end
+function PlaySound(sound)
+    local fileID = soundFilesByName[sound]
+    if fileID and mutedSoundFiles[fileID] then return end
+    playedSounds[#playedSounds + 1] = sound
+end
 
 local declinedGroups = 0
 local cancelledDuels = 0
@@ -149,22 +189,117 @@ local function newPopup(name)
         end
     end
     function popup:Hide()
+        if not self.shown then return end
         self.shown = false
+        local dialogInfo = StaticPopupDialogs and StaticPopupDialogs[self.which]
+        if dialogInfo and dialogInfo.OnHide then
+            dialogInfo.OnHide(self, self.data)
+        end
+        PlaySound(SOUNDKIT.IG_MAINMENU_CLOSE)
         if self.scripts.OnHide then self.scripts.OnHide(self) end
     end
     return popup
+end
+
+local function newSpecialFrame(name)
+    local frame = {
+        name = name,
+        shown = false,
+        alpha = 1,
+        special = false,
+        accepted = nil,
+        scripts = {},
+    }
+    function frame:IsShown() return self.shown end
+    function frame:GetAlpha() return self.alpha end
+    function frame:SetAlpha(alpha) self.alpha = alpha end
+    function frame:HookScript(script, callback)
+        local previous = self.scripts[script]
+        if previous then
+            self.scripts[script] = function(...)
+                previous(...)
+                callback(...)
+            end
+        else
+            self.scripts[script] = callback
+        end
+    end
+    function frame:Show()
+        self.shown = true
+        if self.scripts.OnShow then self.scripts.OnShow(self) end
+    end
+    function frame:Hide()
+        if not self.shown then return end
+        self.shown = false
+        if self.scripts.OnHide then self.scripts.OnHide(self) end
+    end
+    return frame
 end
 
 for i = 1, STATICPOPUP_NUMDIALOGS do
     _G["StaticPopup" .. i] = newPopup("StaticPopup" .. i)
 end
 
+GuildInviteFrame = newSpecialFrame("GuildInviteFrame")
+
 local popup = StaticPopup1
+StaticPopupDialogs = {
+    PARTY_INVITE = {
+        sound = SOUNDKIT.IG_PLAYER_INVITE,
+        OnShow = function(dialog)
+            dialog.inviteAccepted = nil
+        end,
+        OnHide = function(dialog)
+            if not dialog.inviteAccepted then
+                DeclineGroup()
+                dialog:Hide()
+            end
+        end,
+    },
+    DUEL_REQUESTED = { sound = SOUNDKIT.IG_PLAYER_INVITE },
+}
+
+function StaticPopup_OnShow(dialog)
+    local dialogInfo = StaticPopupDialogs and StaticPopupDialogs[dialog.which]
+    if dialogInfo and dialogInfo.OnShow then
+        dialogInfo.OnShow(dialog, dialog.data)
+    end
+end
+
 function StaticPopup_Show(which, text_arg1, text_arg2, data)
+    if which == "GUILD_INVITE" then
+        fail("Retail guild invites must not use StaticPopup_Show(\"GUILD_INVITE\")")
+    end
     popup.which = which
+    popup.data = data
     popup.shown = true
     popup.alpha = 1
+    StaticPopup_OnShow(popup)
+    PlaySound(SOUNDKIT.IG_MAINMENU_OPEN)
+    local dialog = StaticPopupDialogs[which]
+    if dialog and dialog.sound then
+        PlaySound(dialog.sound)
+    end
     return popup
+end
+
+function StaticPopupSpecial_Show(dialog)
+    dialog.special = true
+    if dialog.Show then dialog:Show() end
+    return dialog
+end
+
+function StaticPopupSpecial_Hide(dialog)
+    if not dialog.special then return end
+    if dialog.Hide then dialog:Hide() end
+end
+
+GuildInviteFrame.scripts.OnHide = function(self)
+    if not self.accepted then
+        DeclineGuild()
+    end
+    PlaySound(SOUNDKIT.IG_MAINMENU_CLOSE)
+    StaticPopupSpecial_Hide(self)
 end
 
 function hooksecurefunc(target, methodOrHook, maybeHook)
@@ -238,11 +373,29 @@ local function fire(event, ...)
     frame.scripts.OnEvent(frame, event, ...)
 end
 
+local function showGuildInviteFrame(inviter, guildName)
+    GuildInviteFrame.inviter = inviter
+    GuildInviteFrame.guildName = guildName
+    GuildInviteFrame.accepted = nil
+    GuildInviteFrame.elapsed = 0
+    return StaticPopupSpecial_Show(GuildInviteFrame)
+end
+
+local function hideGuildInviteFrameForCleanup()
+    GuildInviteFrame.accepted = true
+    GuildInviteFrame:Hide()
+    GuildInviteFrame.accepted = nil
+end
+
 -- Initialize SavedVariables and filters.
 fire("ADDON_LOADED", "Sanctuary")
 fire("PLAYER_ENTERING_WORLD")
 equal(ns.VERSION, "0.3.2", "version exported")
-equal(#muted, 3, "invite sounds muted once at startup")
+equal(#muted, 0, "no global sound files muted at rest")
+equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "party invite dialog sound suppressed while group filter active")
+equal(StaticPopupDialogs.DUEL_REQUESTED.sound, nil, "duel dialog sound suppressed while duel filter active")
+equal(ns.getPartyInviteOriginalSound(), 880, "original party invite sound captured")
+check(ns.areInviteSoundsMuted(), "invite notification sound guard active at startup")
 check(chatFilters.CHAT_MSG_SYSTEM ~= nil, "system filter registered")
 check(chatFilters.CHAT_MSG_BN_WHISPER ~= nil, "BNet filter registered")
 
@@ -329,7 +482,9 @@ equal(#SanctuaryDB.debugLog, 1, "debug snapshot captured")
 equal(SanctuaryDB.debugLog[1].cat, "SNAPSHOT", "debug snapshot category")
 equal(SanctuaryDB.debugLog[1].data.version, "0.3.2", "debug snapshot version")
 check(SanctuaryDB.debugLog[1].data.groupInviteFilter, "debug snapshot reports group invite filter")
-check(SanctuaryDB.debugLog[1].data.inviteSoundsMuted, "debug snapshot reports invite sound mute state")
+check(SanctuaryDB.debugLog[1].data.partyInviteSoundGuardActive, "debug snapshot reports active invite sound guard")
+equal(SanctuaryDB.debugLog[1].data.filters.whisper, true, "debug snapshot reports whisper filter")
+equal(SanctuaryDB.debugLog[1].data.filters.channelMode, "none", "debug snapshot reports channel mode")
 local beforeDebug = #SanctuaryDB.debugLog
 chatFilters.CHAT_MSG_SYSTEM(nil, "CHAT_MSG_SYSTEM", systemMessage)
 chatFilters.CHAT_MSG_SYSTEM(nil, "CHAT_MSG_SYSTEM", systemMessage)
@@ -356,6 +511,8 @@ equal(#SanctuaryDB.debugLog, beforeChatDecisionDebug + 1, "allowed BNet whisper 
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.kind, "bn_whisper", "BNet decision kind")
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "ALLOW", "BNet decision action")
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.reason, "bnet_whitelist", "BNet decision reason")
+check(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.bnetWhitelisted, "BNet decision reports cache hit")
+check(tonumber(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.bnetCache) >= 1, "BNet decision reports cache size")
 
 SanctuaryDB.filters.channelMode = "all"
 beforeChatDecisionDebug = #SanctuaryDB.debugLog
@@ -365,6 +522,40 @@ equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.kind, "channel", "channel
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "BLOCK_NOT_WHITELISTED", "channel decision action")
 SanctuaryDB.filters.channelMode = "none"
 
+SanctuaryDB.filters.say = true
+filtered = chatFilters.CHAT_MSG_SAY(nil, "CHAT_MSG_SAY", "hello", "Victim-OtherRealm")
+check(filtered, "same-name sender from another realm is not treated as self")
+SanctuaryDB.filters.say = false
+
+SanctuaryDB.filters.yell = true
+check(chatFilters.CHAT_MSG_YELL(nil, "CHAT_MSG_YELL", "hello", "Unknown"), "yell filter blocks unknown")
+SanctuaryDB.filters.yell = false
+
+SanctuaryDB.filters.emote = true
+check(chatFilters.CHAT_MSG_TEXT_EMOTE(nil, "CHAT_MSG_TEXT_EMOTE", "waves", "Unknown"), "text emote filter blocks unknown")
+SanctuaryDB.filters.emote = false
+
+SanctuaryDB.debugLog = {}
+bnetFriends = { { accountName = "Diag", gameAccountInfo = { characterName = "Diagchar" } } }
+fire("BN_FRIEND_INFO_CHANGED")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].cat, "SOCIAL", "BNet social debug logged")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.bnetCN, 1, "BNet character count logged")
+bnetFriends = { { accountName = "Battle Friend", gameAccountInfo = { characterName = "Onlinechar" } } }
+ns.invalidateWhitelist()
+
+fire("CHAT_MSG_SYSTEM", "invitation group text that does not match localized patterns")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.result, "NO_MATCH", "unmatched invite-like system message diagnosed")
+
+SanctuaryDB.notifications.mode = "minimal"
+SanctuaryDB.notifications.minimalIntervalMinutes = 1
+SanctuaryCharDB.sessionStats.blockedCount = 2
+local beforeMinimalMessages = #chatMessages
+runTickers()
+equal(#chatMessages, beforeMinimalMessages + 1, "minimal notification printed once")
+runTickers()
+equal(#chatMessages, beforeMinimalMessages + 1, "minimal notification throttled")
+SanctuaryDB.notifications.mode = "silent"
+
 SanctuaryDB.debugLog = {}
 for i = 1, 505 do
     ns.debugLog("ROTATE", { i = i })
@@ -372,61 +563,216 @@ end
 equal(#SanctuaryDB.debugLog, 500, "debug log rotates to 500 entries")
 equal(SanctuaryDB.debugLog[1].data.i, 6, "debug log keeps newest entries after rotation")
 
+-- Popup helpers must handle multiple simultaneous StaticPopup frames and
+-- restore their original alpha values.
+StaticPopup1.shown, StaticPopup1.which, StaticPopup1.alpha = true, "PARTY_INVITE", 0.4
+StaticPopup2.shown, StaticPopup2.which, StaticPopup2.alpha = true, "PARTY_INVITE", 0.8
+equal(ns.maskVisiblePopup("PARTY_INVITE"), 2, "all visible party popups masked")
+equal(StaticPopup1.alpha, 0, "first popup masked")
+equal(StaticPopup2.alpha, 0, "second popup masked")
+equal(ns.unmaskVisiblePopup("PARTY_INVITE"), 2, "all party popups restored")
+equal(StaticPopup1.alpha, 0.4, "first popup alpha restored")
+equal(StaticPopup2.alpha, 0.8, "second popup alpha restored")
+StaticPopup1:Hide()
+StaticPopup2:Hide()
+
+-- Non-target StaticPopup paths such as QUIT/CAMP must stay native. Sanctuary's
+-- sound/popup guards only target invite and duel dialogs.
+playedSounds = {}
+StaticPopup_Show("QUIT")
+equal(popup.alpha, 1, "non-target static popup not masked")
+equal(#playedSounds, 1, "non-target static popup keeps native open sound")
+equal(playedSounds[1], SOUNDKIT.IG_MAINMENU_OPEN, "non-target static popup open sound is not muted")
+popup:Hide()
+equal(playedSounds[2], SOUNDKIT.IG_MAINMENU_CLOSE, "non-target static popup close sound is not muted")
+runTimers()
+
 -- Blizzard-first blocked popup: hook masks before render, event declines, and no
 -- direct StaticPopup_Hide is used.
 inGroup = false
 groupMembers = {}
 popup:Hide()
+playedSounds = {}
+SanctuaryDB.debugLog = {}
+local beforeBlockedDeclines = declinedGroups
 StaticPopup_Show("PARTY_INVITE", "Harasser vous invite dans un groupe.")
 equal(popup.alpha, 0, "unknown party popup masked immediately")
+equal(#playedSounds, 0, "unknown party popup native sounds suppressed before decision")
+check(ns.areInviteSoundsMuted(), "blocked party invite uses active native sound mute")
 fire("PARTY_INVITE_REQUEST", "Harasser", false, false, true, true, false, "Player-1")
 equal(popup.alpha, 0, "blocked popup remains masked")
-equal(declinedGroups, 1, "blocked group invite declined")
+equal(declinedGroups, beforeBlockedDeclines + 1, "blocked group invite declined by Sanctuary handler")
+local popupDecision = lastDebug("POPUP_DECISION")
+check(popupDecision ~= nil, "blocked party invite logs popup decision")
+equal(popupDecision.data.order, "popup_first", "blocked party invite reports popup-first ordering")
+equal(popupDecision.data.affected, 1, "blocked party invite reports affected popup count")
+local inviteApi = lastDebug("INVITE_API")
+check(inviteApi ~= nil, "blocked party invite logs native decline API")
+check(inviteApi.data.ok, "blocked party invite native decline API succeeded")
 equal(forbiddenStaticHides, 0, "no direct StaticPopup_Hide")
 popup:Hide()
+equal(#playedSounds, 0, "blocked party invite close sound suppressed")
 equal(popup.alpha, 1, "popup alpha restored on native hide")
+check(not mutedSoundFiles[567490], "blocked party invite releases popup-open mute after hide")
+check(not mutedSoundFiles[567464], "blocked party invite releases popup-close mute after hide")
 runTimers()
 
 -- Blizzard-first trusted popup: it is initially masked and restored in the same
 -- event dispatch once the name-based decision is available.
 SanctuaryDB.manualWhitelist.friend = { displayName = "Friend" }
 ns.invalidateWhitelist()
+playedSounds = {}
+SanctuaryDB.debugLog = {}
+local beforeTrustedDeclines = declinedGroups
 StaticPopup_Show("PARTY_INVITE", "Friend vous invite dans un groupe.")
 equal(popup.alpha, 0, "trusted popup guarded before event decision")
+equal(#playedSounds, 0, "trusted party popup native sounds suppressed before decision")
 fire("PARTY_INVITE_REQUEST", "Friend", false, false, true, true, false, "Player-2")
 equal(popup.alpha, 1, "trusted popup restored")
-equal(declinedGroups, 1, "trusted invite not declined")
+equal(declinedGroups, beforeTrustedDeclines, "trusted invite not declined by Sanctuary handler")
+equal(#playedSounds, 2, "trusted party invite replays native popup sounds after allow")
+equal(playedSounds[1], SOUNDKIT.IG_MAINMENU_OPEN, "trusted party invite replays native popup-open sound first")
+equal(playedSounds[2], 880, "trusted party invite replays native Blizzard invite sound second")
+local allowedSound = lastDebug("SOUND", "PLAY_ALLOWED_POPUP")
+check(allowedSound ~= nil, "trusted popup-first invite logs native sound replay")
+equal(allowedSound.data.popupSound, "880", "trusted popup-first invite logs captured native sound")
+check(ns.areInviteSoundsMuted(), "trusted party invite restores dialog sound suppression after replay")
+check(not mutedSoundFiles[567490], "trusted party invite releases popup-open mute after allow")
+check(not mutedSoundFiles[567464], "trusted party invite releases popup-close mute after allow")
 popup:Hide()
 runTimers()
 
 -- Sanctuary-first ordering: the pending decision is consumed by the later
 -- StaticPopup_Show post-hook, avoiding both flash and false blocking.
+playedSounds = {}
+SanctuaryDB.debugLog = {}
 fire("PARTY_INVITE_REQUEST", "Friend", false, false, true, true, false, "Player-3")
+popupDecision = lastDebug("POPUP_DECISION")
+check(popupDecision ~= nil, "trusted Sanctuary-first invite logs popup decision")
+equal(popupDecision.data.order, "event_first", "trusted Sanctuary-first invite reports event-first ordering")
+equal(#playedSounds, 0, "Sanctuary-first trusted invite does not synthesize sound before popup")
 StaticPopup_Show("PARTY_INVITE", "Friend vous invite dans un groupe.")
 equal(popup.alpha, 1, "trusted decision survives Sanctuary-first ordering")
+equal(#playedSounds, 2, "Sanctuary-first trusted invite uses native popup sounds")
+equal(playedSounds[1], SOUNDKIT.IG_MAINMENU_OPEN, "Sanctuary-first trusted invite native open sound plays")
+equal(playedSounds[2], 880, "Sanctuary-first trusted invite native invite sound plays")
 popup:Hide()
 runTimers()
 
+playedSounds = {}
+local beforeSanctuaryFirstBlockedDeclines = declinedGroups
 fire("PARTY_INVITE_REQUEST", "Anotherbad", false, false, true, true, false, "Player-4")
 StaticPopup_Show("PARTY_INVITE", "Anotherbad vous invite dans un groupe.")
 equal(popup.alpha, 0, "blocked decision survives Sanctuary-first ordering")
-equal(declinedGroups, 2, "Sanctuary-first blocked invite declined")
+equal(declinedGroups, beforeSanctuaryFirstBlockedDeclines + 1, "Sanctuary-first blocked invite declined by handler")
 popup:Hide()
+equal(#playedSounds, 0, "Sanctuary-first blocked invite never plays popup sounds")
 runTimers()
 
--- Duel and guild-invite popups use the same mask/native-decline strategy.
+-- Duel uses a StaticPopup; guild invites use Retail's GuildInviteFrame special
+-- popup. Both paths must stay silent for blocked senders.
+playedSounds = {}
+SanctuaryDB.debugLog = {}
 StaticPopup_Show("DUEL_REQUESTED", "Duelbad veut vous provoquer en duel.")
 equal(popup.alpha, 0, "unknown duel popup masked immediately")
+equal(#playedSounds, 0, "blocked duel popup native sounds suppressed before decision")
 fire("DUEL_REQUESTED", "Duelbad")
 equal(cancelledDuels, 1, "blocked duel cancelled")
+local duelApi = lastDebug("DUEL_API")
+check(duelApi ~= nil, "blocked duel logs native cancel API")
+check(duelApi.data.ok, "blocked duel native cancel API succeeded")
+popup:Hide()
+equal(#playedSounds, 0, "blocked duel popup close sound suppressed")
+check(not mutedSoundFiles[567490], "blocked duel releases popup-open mute after hide")
+check(not mutedSoundFiles[567464], "blocked duel releases popup-close mute after hide")
+runTimers()
+
+playedSounds = {}
+SanctuaryDB.debugLog = {}
+fire("GUILD_INVITE_REQUEST", "Guildbad", "Bad Guild")
+popupDecision = lastDebug("POPUP_DECISION")
+check(popupDecision ~= nil, "event-first blocked guild invite logs popup decision")
+equal(popupDecision.data.which, "GUILD_INVITE_FRAME", "event-first blocked guild invite uses special frame key")
+equal(popupDecision.data.order, "event_first", "event-first blocked guild invite reports event-first ordering")
+showGuildInviteFrame("Guildbad", "Bad Guild")
+equal(GuildInviteFrame:IsShown(), false, "event-first blocked guild invite frame hidden")
+equal(#playedSounds, 0, "event-first blocked guild invite stays silent")
+equal(declinedGuilds, 1, "blocked guild invite declined")
+local guildApi = lastDebug("GUILD_INVITE_API")
+check(guildApi ~= nil, "blocked guild invite logs native decline API")
+check(guildApi.data.ok, "blocked guild invite native decline API succeeded")
+local guildFrameLog = lastDebug("GUILD_INVITE_FRAME")
+check(guildFrameLog ~= nil, "event-first blocked guild invite logs frame handling")
+equal(guildFrameLog.data.action, "HIDE_DECIDED_BLOCK", "event-first blocked guild invite hides decided frame")
+equal(#playedSounds, 0, "event-first blocked guild invite close sound suppressed")
+runTimers()
+
+playedSounds = {}
+SanctuaryDB.debugLog = {}
+showGuildInviteFrame("GuildbadFrame", "Bad Guild")
+equal(GuildInviteFrame:IsShown(), true, "frame-first blocked guild invite waits for event")
+equal(GuildInviteFrame.alpha, 0, "frame-first blocked guild invite frame masked immediately")
+equal(#playedSounds, 0, "frame-first blocked guild invite has no open sound leak")
+fire("GUILD_INVITE_REQUEST", "GuildbadFrame", "Bad Guild")
+equal(GuildInviteFrame:IsShown(), false, "frame-first blocked guild invite frame hidden after decision")
+equal(#playedSounds, 0, "frame-first blocked guild invite close sound suppressed")
+equal(declinedGuilds, 2, "frame-first blocked guild invite declined exactly once")
+popupDecision = lastDebug("POPUP_DECISION")
+check(popupDecision ~= nil, "frame-first blocked guild invite logs popup decision")
+equal(popupDecision.data.order, "popup_first", "frame-first blocked guild invite reports popup-first ordering")
+equal(popupDecision.data.affected, 1, "frame-first blocked guild invite reports affected frame")
+guildApi = lastDebug("GUILD_INVITE_API")
+check(guildApi ~= nil, "frame-first blocked guild invite logs native decline API")
+check(guildApi.data.ok, "frame-first blocked guild invite native decline API succeeded")
+runTimers()
+
+SanctuaryDB.manualWhitelist.duelfriend = { displayName = "DuelFriend" }
+SanctuaryDB.manualWhitelist.guildfriend = { displayName = "GuildFriend" }
+ns.invalidateWhitelist()
+
+local beforeDuels = cancelledDuels
+playedSounds = {}
+StaticPopup_Show("DUEL_REQUESTED", "DuelFriend veut vous provoquer en duel.")
+equal(#playedSounds, 0, "trusted duel popup sound guarded before decision")
+fire("DUEL_REQUESTED", "DuelFriend")
+equal(popup.alpha, 1, "trusted duel popup restored")
+equal(cancelledDuels, beforeDuels, "trusted duel not cancelled")
+equal(#playedSounds, 2, "trusted duel popup native sounds replayed after allow")
+equal(playedSounds[1], SOUNDKIT.IG_MAINMENU_OPEN, "trusted duel replays native popup-open sound first")
+equal(playedSounds[2], 880, "trusted duel replays native invite sound second")
 popup:Hide()
 runTimers()
 
-fire("GUILD_INVITE_REQUEST", "Guildbad", "Bad Guild")
-StaticPopup_Show("GUILD_INVITE", "Guildbad vous invite dans une guilde.")
-equal(popup.alpha, 0, "blocked guild invite popup masked")
-equal(declinedGuilds, 1, "blocked guild invite declined")
-popup:Hide()
+local beforeGuilds = declinedGuilds
+playedSounds = {}
+SanctuaryDB.debugLog = {}
+showGuildInviteFrame("GuildFriend", "Friendly Guild")
+equal(GuildInviteFrame.alpha, 0, "trusted guild frame guarded before event decision")
+equal(#playedSounds, 0, "trusted guild frame has no synthetic open sound")
+fire("GUILD_INVITE_REQUEST", "GuildFriend", "Friendly Guild")
+equal(GuildInviteFrame:IsShown(), true, "trusted guild invite frame stays visible")
+equal(GuildInviteFrame.alpha, 1, "trusted guild invite frame restored")
+equal(declinedGuilds, beforeGuilds, "trusted guild invite not declined")
+equal(#playedSounds, 0, "trusted guild invite does not receive an invented replay sound")
+popupDecision = lastDebug("POPUP_DECISION")
+check(popupDecision ~= nil, "trusted frame-first guild invite logs popup decision")
+equal(popupDecision.data.order, "popup_first", "trusted frame-first guild invite reports popup-first ordering")
+hideGuildInviteFrameForCleanup()
+runTimers()
+
+beforeGuilds = declinedGuilds
+playedSounds = {}
+SanctuaryDB.debugLog = {}
+fire("GUILD_INVITE_REQUEST", "GuildFriend", "Friendly Guild")
+popupDecision = lastDebug("POPUP_DECISION")
+check(popupDecision ~= nil, "trusted event-first guild invite logs popup decision")
+equal(popupDecision.data.order, "event_first", "trusted event-first guild invite reports event-first ordering")
+showGuildInviteFrame("GuildFriend", "Friendly Guild")
+equal(GuildInviteFrame:IsShown(), true, "trusted event-first guild invite frame shown")
+equal(GuildInviteFrame.alpha, 1, "trusted event-first guild invite frame keeps alpha")
+equal(declinedGuilds, beforeGuilds, "trusted event-first guild invite not declined")
+equal(#playedSounds, 0, "trusted event-first guild invite has no synthetic open sound")
+hideGuildInviteFrameForCleanup()
 runTimers()
 
 SanctuaryDB.filters.duel = false
@@ -437,6 +783,18 @@ equal(cancelledDuels, 1, "disabled duel filter does not cancel")
 popup:Hide()
 runTimers()
 SanctuaryDB.filters.duel = true
+
+SanctuaryDB.filters.guildInvite = false
+local beforeDisabledGuilds = declinedGuilds
+playedSounds = {}
+showGuildInviteFrame("Guildbad2", "Bad Guild")
+equal(GuildInviteFrame:IsShown(), true, "guild frame stays native when guild filter disabled")
+equal(GuildInviteFrame.alpha, 1, "guild frame unprotected when guild filter disabled")
+fire("GUILD_INVITE_REQUEST", "Guildbad2", "Bad Guild")
+equal(declinedGuilds, beforeDisabledGuilds, "disabled guild filter does not decline")
+hideGuildInviteFrameForCleanup()
+runTimers()
+SanctuaryDB.filters.guildInvite = true
 
 -- Trade detection uses the available NPC/unit label and logs hyphenated realms
 -- without allocating a replacement log table during rotation.
@@ -456,30 +814,60 @@ SanctuaryDB.logging.maxEntries = 5000
 SanctuaryDB.log = {}
 
 npcName = "Traderbad-TestRealm"
+SanctuaryDB.debugLog = {}
 now = now + 2
 fire("TRADE_SHOW")
 equal(closedTrades, 1, "blocked trade closed")
 equal(SanctuaryDB.log[#SanctuaryDB.log].type, "trade", "blocked trade logged")
+local tradeApi = lastDebug("TRADE_API")
+check(tradeApi ~= nil, "blocked trade logs native close API")
+check(tradeApi.data.ok, "blocked trade native close API succeeded")
 npcName = nil
 
--- Disabling the invitation filter immediately restores sound state.
+SanctuaryDB.manualWhitelist.traderfriend = { displayName = "TraderFriend" }
+ns.invalidateWhitelist()
+SanctuaryDB.debugLog = {}
+npcName = "TraderFriend-TestRealm"
+local beforeClosedTrades = closedTrades
+local beforeTradeLogs = #SanctuaryDB.log
+now = now + 2
+fire("TRADE_SHOW")
+equal(closedTrades, beforeClosedTrades, "trusted trade not closed")
+equal(#SanctuaryDB.log, beforeTradeLogs, "trusted trade not block-logged")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].cat, "TRADE", "trusted trade debug logged")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "ALLOW", "trusted trade debug action")
+npcName = nil
+
+-- Refreshing sound state suppresses only the specific dialog sound fields at
+-- rest. File-level mutes are transient and only used while an unknown popup is
+-- being protected.
+SanctuaryDB.debugLog = {}
+local beforeMutedRefresh = #muted
+ns.refreshInviteSoundMuteState()
+equal(#muted, beforeMutedRefresh, "refresh does not add global sound mutes at rest")
+check(ns.areInviteSoundsMuted(), "sound state reports active invite sound guard")
+check(not mutedSoundFiles[567451], "native invite sound file is not globally muted at rest")
+check(not mutedSoundFiles[567490], "generic popup open sound is not muted")
+check(not mutedSoundFiles[567464], "generic popup close sound is not muted")
 SanctuaryDB.filters.groupInvite = false
 ns.refreshInviteSoundMuteState()
-equal(#unmuted, 3, "invite sounds unmuted when filter disabled")
+equal(#muted, beforeMutedRefresh, "disabled group filter keeps existing duel sound guard without duplicate mute")
+check(ns.areInviteSoundsMuted(), "duel filter keeps native invite sound guarded")
 check(type(ns.simulateInvite) == "function", "invite simulator exported")
 local disabledSimulation = ns.simulateInvite("Simulatedbad")
 check(disabledSimulation.shouldBlock, "disabled invite filter still reports raw block decision")
 check(not disabledSimulation.filterEnabled, "disabled invite filter reported by simulator")
 check(not disabledSimulation.systemSuppressed, "disabled invite filter does not suppress system message")
 equal(disabledSimulation.popupAction, "pass", "disabled invite filter does not protect popup")
-check(not disabledSimulation.inviteSoundsMuted, "disabled invite filter leaves invite sounds unmuted")
 SanctuaryDB.filters.groupInvite = true
 ns.refreshInviteSoundMuteState()
-equal(#muted, 6, "invite sounds muted again when filter enabled")
+equal(#muted, beforeMutedRefresh, "enabled invite filter keeps existing invite sound guard without duplicate mute")
+check(ns.areInviteSoundsMuted(), "enabled invite filter has active invite sound guard")
 
 SanctuaryCharDB.overrides.enabled = false
 ns.refreshInviteSoundMuteState()
-equal(#unmuted, 6, "invite sounds unmuted when addon disabled")
+check(not ns.areInviteSoundsMuted(), "disabled addon releases invite sound guard")
+check(not mutedSoundFiles[567451], "disabled addon unmutes native invite sound file")
 local addonDisabledSimulation = ns.simulateInvite("Simulatedbad")
 check(addonDisabledSimulation.shouldBlock, "disabled addon still reports raw block decision")
 check(not addonDisabledSimulation.filterEnabled, "disabled addon disables invite filtering")
@@ -488,7 +876,8 @@ filtered = chatFilters.CHAT_MSG_WHISPER(nil, "CHAT_MSG_WHISPER", "hello", "Unkno
 check(not filtered, "disabled addon lets whisper pass")
 SanctuaryCharDB.overrides.enabled = nil
 ns.refreshInviteSoundMuteState()
-equal(#muted, 9, "invite sounds remuted when addon re-enabled")
+check(ns.areInviteSoundsMuted(), "re-enabled addon restores invite sound guard")
+check(not mutedSoundFiles[567451], "re-enabled addon keeps native invite file unmuted at rest")
 
 -- The invite simulator must exercise Sanctuary's decision/filtering path without
 -- touching server-side WoW APIs or persistent block logs.
@@ -514,6 +903,18 @@ check(not bnetSimulation.filtered, "BNet friend simulation allowed")
 equal(bnetSimulation.reason, "bnet_whitelist", "BNet friend simulation reason")
 check(bnetSimulation.bnetWhitelisted, "BNet friend simulation reports cache hit")
 
+SanctuaryDB.debugLog = {}
+inGroup = true
+groupMembers = { "Onlinechar-TestRealm" }
+bnetSimulation = ns.simulateBNetWhisper("Battle Friend")
+local bnetGroupLog = lastDebug("BNET_GROUP")
+check(bnetGroupLog ~= nil, "BNet group diagnostic logged when account has grouped character")
+check(bnetGroupLog.data.accountMatched, "BNet group diagnostic reports account match")
+check(bnetGroupLog.data.result, "BNet group diagnostic reports grouped character match")
+equal(bnetGroupLog.data.character, "onlinechar", "BNet group diagnostic reports normalized character")
+inGroup = false
+groupMembers = {}
+
 bnetSimulation = ns.simulateBNetWhisper("Unknown Battle")
 check(bnetSimulation.filtered, "unknown BNet simulation blocked")
 equal(bnetSimulation.reason, "not_whitelisted", "unknown BNet simulation reason")
@@ -532,6 +933,17 @@ equal(bnetSimulation.reason, "bnet_api_unavailable", "BNet unavailable simulatio
 C_BattleNet.GetFriendAccountInfo = originalBNetInfo
 ns.invalidateWhitelist()
 
+ChatFrame3 = { chatType = "BN_WHISPER", chatTarget = "Blocked Battle" }
+ChatFrame4 = { chatType = "BN_WHISPER", chatTarget = "Other Battle" }
+local beforeClosedBNetTabs = #closedChatFrames
+SanctuaryDB.debugLog = {}
+fire("CHAT_MSG_BN_WHISPER", "bad", "Blocked Battle")
+runTimers()
+equal(#closedChatFrames, beforeClosedBNetTabs + 1, "only one BNet whisper tab closed")
+equal(closedChatFrames[#closedChatFrames], ChatFrame3, "blocked BNet tab closed exactly")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].cat, "WHISPER_TAB", "BNet tab close debug logged")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.chatType, "BN_WHISPER", "BNet tab close debug type")
+
 local beforeSlashMessages = #chatMessages
 SlashCmdList["SANCTUARY"]("simulate Simulatedbad")
 check(#chatMessages == beforeSlashMessages + 1, "slash simulation prints one diagnostic line")
@@ -542,6 +954,67 @@ beforeSlashMessages = #chatMessages
 SlashCmdList["SANCTUARY"]("simulate bnetfriend 1")
 check(#chatMessages == beforeSlashMessages + 1, "slash BNet simulation prints one diagnostic line")
 check(chatMessages[#chatMessages]:find("Simulation bnet whisper", 1, true) ~= nil, "slash BNet simulation output label")
+
+beforeSlashMessages = #chatMessages
+playedSounds = {}
+SanctuaryDB.debugLog = {}
+SlashCmdList["SANCTUARY"]("diag sound invite")
+check(#chatMessages == beforeSlashMessages + 1, "slash sound diagnostic prints one diagnostic line")
+check(chatMessages[#chatMessages]:find("Diagnostic sound invite", 1, true) ~= nil, "slash sound diagnostic output label")
+equal(#playedSounds, 2, "slash sound diagnostic plays popup-open plus native invite")
+equal(playedSounds[1], SOUNDKIT.IG_MAINMENU_OPEN, "slash sound diagnostic plays native popup-open")
+equal(playedSounds[2], 880, "slash sound diagnostic plays native party invite")
+local soundTestLog = lastDebug("SOUND_TEST")
+check(soundTestLog ~= nil, "slash sound diagnostic logs diagnostic")
+equal(soundTestLog.data.inviteSound, "880", "slash sound diagnostic logs native party invite sound")
+
+beforeSlashMessages = #chatMessages
+playedSounds = {}
+SanctuaryDB.debugLog = {}
+SlashCmdList["SANCTUARY"]("diag popup duel")
+runTimers()
+check(#chatMessages == beforeSlashMessages + 1, "slash duel popup diagnostic prints one diagnostic line")
+check(chatMessages[#chatMessages]:find("Diagnostic popup duel", 1, true) ~= nil, "slash duel popup diagnostic output label")
+equal(#playedSounds, 0, "slash duel popup diagnostic stays silent")
+local popupTestLog = lastDebug("POPUP_TEST")
+check(popupTestLog ~= nil, "slash duel popup diagnostic logs diagnostic")
+equal(popupTestLog.data.which, "DUEL_REQUESTED", "slash duel popup diagnostic logs popup kind")
+check(popupTestLog.data.hidden, "slash duel popup diagnostic hides diagnostic popup")
+
+beforeSlashMessages = #chatMessages
+playedSounds = {}
+SanctuaryDB.debugLog = {}
+local beforeDiagGuilds = declinedGuilds
+SlashCmdList["SANCTUARY"]("diag popup guild")
+runTimers()
+check(#chatMessages == beforeSlashMessages + 1, "slash guild popup diagnostic prints one diagnostic line")
+check(chatMessages[#chatMessages]:find("Diagnostic popup guild", 1, true) ~= nil, "slash guild popup diagnostic output label")
+equal(#playedSounds, 0, "slash guild popup diagnostic stays silent")
+popupTestLog = lastDebug("POPUP_TEST")
+check(popupTestLog ~= nil, "slash guild popup diagnostic logs diagnostic")
+equal(popupTestLog.data.which, "GUILD_INVITE_FRAME", "slash guild popup diagnostic logs frame key")
+equal(popupTestLog.data.frame, "GuildInviteFrame", "slash guild popup diagnostic logs frame kind")
+equal(popupTestLog.data.reason, "guild_invite_frame_probe", "slash guild popup diagnostic probes special frame")
+check(popupTestLog.data.masked, "slash guild popup diagnostic masks special frame")
+check(popupTestLog.data.hidden, "slash guild popup diagnostic hides special frame")
+equal(declinedGuilds, beforeDiagGuilds, "slash guild popup diagnostic does not call native decline")
+
+beforeSlashMessages = #chatMessages
+SanctuaryDB.debugLog = {}
+SlashCmdList["SANCTUARY"]("diag popup list guild")
+check(#chatMessages == beforeSlashMessages + 1, "slash popup list diagnostic prints one line")
+check(chatMessages[#chatMessages]:find("Diagnostic popup list guild", 1, true) ~= nil, "slash popup list diagnostic output label")
+local popupListLog = lastDebug("POPUP_LIST")
+check(popupListLog ~= nil, "slash popup list diagnostic logs result")
+equal(popupListLog.data.query, "guild", "slash popup list diagnostic logs query")
+
+showGuildInviteFrame("BusyGuild", "Busy Guild")
+local busyGuildDiagnostic = ns.runPopupDiagnostic("guild")
+check(busyGuildDiagnostic.skipped, "guild popup diagnostic skips an already visible frame")
+equal(busyGuildDiagnostic.reason, "guild_invite_frame_busy", "guild popup diagnostic reports busy frame")
+check(GuildInviteFrame:IsShown(), "guild popup diagnostic does not hide a busy frame")
+hideGuildInviteFrameForCleanup()
+runTimers()
 
 local uiToggles = 0
 ns.ToggleUI = function() uiToggles = uiToggles + 1 end
@@ -572,10 +1045,14 @@ ChatFrame1 = { chatType = "WHISPER", chatTarget = "Blocked" }
 ChatFrame2 = { chatType = "WHISPER", chatTarget = "OtherUnknown" }
 ChatFrame1Tab = { Text = { GetText = function() return "Blocked" end } }
 ChatFrame2Tab = { Text = { GetText = function() return "OtherUnknown" end } }
+local beforeClosedWhisperTabs = #closedChatFrames
+SanctuaryDB.debugLog = {}
 fire("CHAT_MSG_WHISPER", "bad", "Blocked")
 runTimers()
-equal(#closedChatFrames, 1, "only one whisper tab closed")
-equal(closedChatFrames[1], ChatFrame1, "blocked sender tab closed exactly")
+equal(#closedChatFrames, beforeClosedWhisperTabs + 1, "only one whisper tab closed")
+equal(closedChatFrames[#closedChatFrames], ChatFrame1, "blocked sender tab closed exactly")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].cat, "WHISPER_TAB", "whisper tab close debug logged")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.chatType, "WHISPER", "whisper tab close debug type")
 
 if failures > 0 then
     io.stderr:write(string.format("%d/%d assertions failed\n", failures, assertions))

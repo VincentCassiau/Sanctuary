@@ -224,6 +224,27 @@ local function parseBool(str)
     return nil
 end
 
+local FILTER_STATE_KEYS = {
+    "groupInvite",
+    "whisper",
+    "duel",
+    "trade",
+    "guildInvite",
+    "say",
+    "yell",
+    "emote",
+    "channelMode",
+    "autoTrust",
+}
+
+local function getEffectiveFilterState()
+    local filters = {}
+    for _, key in ipairs(FILTER_STATE_KEYS) do
+        filters[key] = getEffective("filters." .. key)
+    end
+    return filters
+end
+
 -- Export utilities to namespace
 ns.printMsg = printMsg
 ns.printError = printError
@@ -235,6 +256,7 @@ ns.isEnabled = isEnabled
 ns.parseBool = parseBool
 ns.deepCopy = deepCopy
 ns.fillMissingDefaults = fillMissingDefaults
+ns.getEffectiveFilterState = getEffectiveFilterState
 
 -- Keyword blacklist: blocks names containing any suspect keyword
 local function matchesKeyword(name)
@@ -254,9 +276,11 @@ end
 
 ns.matchesKeyword = matchesKeyword
 
--- Forward declarations for debug functions (defined in Section F2, used in E and H)
+-- Forward declarations for helpers used before their concrete section.
 local debugLog, countBNetWithCharName, captureDebugSnapshot, isBNetSenderInGroup
-local inviteSoundsMutedBySanctuary = false
+local pendingPopupDecisions
+local capturePartyInviteOriginalSound
+local partyInviteSoundGuardDepth = 0
 
 -- ============================================================================
 -- SECTION E: Whitelist Engine
@@ -667,8 +691,10 @@ captureDebugSnapshot = function()
         bnetWhitelistCache = bnetCacheSize,
         manualWL = manualAccount .. "+" .. manualChar,
         keywords = SanctuaryDB.keywords and #SanctuaryDB.keywords or 0,
+        filters = getEffectiveFilterState(),
         groupInviteFilter = getEffective("filters.groupInvite") == true,
-        inviteSoundsMuted = inviteSoundsMutedBySanctuary and true or false,
+        partyInviteOriginalSound = tostring(capturePartyInviteOriginalSound() or "nil"),
+        partyInviteSoundGuardActive = partyInviteSoundGuardDepth > 0,
     })
 end
 
@@ -927,57 +953,314 @@ end
 
 ns.hookChatOutputDiagnostics = hookChatOutputDiagnostics
 
--- Mute invite sounds permanently while filtering is active (safe API, no taint)
--- FileDataIDs verified via Wowhead sound database + in-game testing
-local INVITE_SOUND_FILES = {
-    567451,  -- igPlayerInvite (FileDataID) - the invite notification ding
-    567490,  -- igMainMenuOpen (FileDataID) - popup open sound
-    567464,  -- igMainMenuClose (FileDataID) - popup close sound
-    -- All 3 muted to fully suppress invite audio feedback
+-- StaticPopup_Show is also used by protected Blizzard UI such as CAMP/QUIT.
+-- Retail live testing confirmed that wrapping it globally can break quit/logout
+-- flows, so Sanctuary only adjusts the specific invite/duel dialog definitions.
+local STATIC_POPUP_SOUND_GUARDS = {
+    PARTY_INVITE = "filters.groupInvite",
+    DUEL_REQUESTED = "filters.duel",
 }
 
-local function muteInviteSounds()
-    if inviteSoundsMutedBySanctuary then return end
-    for _, fileID in ipairs(INVITE_SOUND_FILES) do
-        pcall(MuteSoundFile, fileID)
+local PROTECTED_POPUP_SOUND_FILES = {
+    567490,  -- igMainMenuOpen
+    567464,  -- igMainMenuClose
+}
+
+local partyInviteOriginalSound = nil
+local staticPopupSoundGuardStates = {}
+partyInviteSoundGuardDepth = 0
+local protectedPopupSoundGuardDepth = 0
+local protectedPopupSoundGuardSerial = 0
+local protectedPopupSoundGuardTokens = {}
+local protectedPopupSoundGuardDialogs = setmetatable({}, { __mode = "k" })
+local staticPopupOnShowGuardHooked = false
+local guildInviteFrameSoundGuardToken = nil
+local releaseProtectedPopupSoundGuards
+local releaseGuildInviteFrameSoundGuard
+
+capturePartyInviteOriginalSound = function()
+    local state = staticPopupSoundGuardStates.PARTY_INVITE
+    if state and state.originalSound then
+        partyInviteOriginalSound = state.originalSound
+    else
+        local dialog = StaticPopupDialogs and StaticPopupDialogs.PARTY_INVITE
+        if not partyInviteOriginalSound and dialog and dialog.sound then
+            partyInviteOriginalSound = dialog.sound
+        end
     end
-    inviteSoundsMutedBySanctuary = true
-    debugLog("SOUND", {
-        action = "MUTE",
-        files = #INVITE_SOUND_FILES,
-        addonEnabled = isEnabled(),
-        groupInviteFilter = getEffective("filters.groupInvite") == true,
-    })
+    return partyInviteOriginalSound
 end
 
-local function unmuteInviteSounds()
-    if not inviteSoundsMutedBySanctuary then return end
-    for _, fileID in ipairs(INVITE_SOUND_FILES) do
-        pcall(UnmuteSoundFile, fileID)
+local function captureStaticPopupSound(which)
+    local state = staticPopupSoundGuardStates[which]
+    if state and state.originalSound then
+        return state.originalSound
     end
-    inviteSoundsMutedBySanctuary = false
+
+    local dialog = StaticPopupDialogs and StaticPopupDialogs[which]
+    if not dialog then return nil end
+
+    state = state or {}
+    state.originalSound = state.originalSound or dialog.sound
+    staticPopupSoundGuardStates[which] = state
+    if which == "PARTY_INVITE" and state.originalSound then
+        partyInviteOriginalSound = state.originalSound
+    end
+    return state.originalSound
+end
+
+local function isStaticPopupSoundSuppressed(which)
+    local state = staticPopupSoundGuardStates[which]
+    return state and state.active or false
+end
+
+local function resetStaticPopupSoundGuardDepth()
+    partyInviteSoundGuardDepth = 0
+    for guardedWhich in pairs(STATIC_POPUP_SOUND_GUARDS) do
+        if isStaticPopupSoundSuppressed(guardedWhich) then
+            partyInviteSoundGuardDepth = partyInviteSoundGuardDepth + 1
+        end
+    end
+end
+
+local function setStaticPopupSoundSuppressed(which, shouldSuppress, reason)
+    local dialog = StaticPopupDialogs and StaticPopupDialogs[which]
+    if not dialog then
+        debugLog("SOUND", {
+            action = shouldSuppress and "DIALOG_SOUND_OFF_SKIPPED" or "DIALOG_SOUND_ON_SKIPPED",
+            which = which or "nil",
+            reason = reason or "unknown",
+            skipReason = "dialog_missing",
+        })
+        return false
+    end
+
+    local state = staticPopupSoundGuardStates[which] or {}
+    if not state.originalSound and dialog.sound then
+        state.originalSound = dialog.sound
+    end
+    staticPopupSoundGuardStates[which] = state
+
+    if shouldSuppress and not state.active then
+        dialog.sound = nil
+        state.active = true
+    elseif not shouldSuppress and state.active then
+        dialog.sound = state.originalSound
+        state.active = false
+    else
+        return false
+    end
+
+    resetStaticPopupSoundGuardDepth()
+
     debugLog("SOUND", {
-        action = "UNMUTE",
-        files = #INVITE_SOUND_FILES,
-        addonEnabled = isEnabled(),
-        groupInviteFilter = getEffective("filters.groupInvite") == true,
+        action = state.active and "DIALOG_SOUND_OFF" or "DIALOG_SOUND_ON",
+        which = which,
+        reason = reason or "unknown",
+        sound = tostring(state.originalSound or "nil"),
+        active = state.active and true or false,
+        depth = partyInviteSoundGuardDepth,
     })
+    return true
+end
+
+local function restoreStaticPopupSoundAfterShow(which, reason)
+    local state = staticPopupSoundGuardStates[which]
+    if not state or not state.temporarilyRestoredForShow then return false end
+
+    state.temporarilyRestoredForShow = nil
+    local dialog = StaticPopupDialogs and StaticPopupDialogs[which]
+    if state.active and dialog then
+        dialog.sound = nil
+    end
+
+    debugLog("SOUND", {
+        action = "DIALOG_SOUND_TEMP_OFF",
+        which = which or "nil",
+        reason = reason or "unknown",
+        sound = tostring(state.originalSound or "nil"),
+        active = state.active and true or false,
+    })
+    return true
+end
+
+local function acquireProtectedPopupSoundGuard(which, reason)
+    protectedPopupSoundGuardSerial = protectedPopupSoundGuardSerial + 1
+    local token = protectedPopupSoundGuardSerial
+    protectedPopupSoundGuardTokens[token] = true
+    protectedPopupSoundGuardDepth = protectedPopupSoundGuardDepth + 1
+
+    local failures = 0
+    local firstError = nil
+    if protectedPopupSoundGuardDepth == 1 then
+        for _, fileID in ipairs(PROTECTED_POPUP_SOUND_FILES) do
+            local ok, err = pcall(MuteSoundFile, fileID)
+            if not ok then
+                failures = failures + 1
+                firstError = firstError or tostring(err)
+            end
+        end
+    end
+
+    debugLog("SOUND", {
+        action = "POPUP_GUARD_ON",
+        which = which or "nil",
+        reason = reason or "unknown",
+        depth = protectedPopupSoundGuardDepth,
+        files = #PROTECTED_POPUP_SOUND_FILES,
+        failures = failures,
+        firstError = firstError or "none",
+    })
+    return token
+end
+
+local function releaseProtectedPopupSoundGuard(token, which, reason)
+    if token and not protectedPopupSoundGuardTokens[token] then return false end
+    if token then
+        protectedPopupSoundGuardTokens[token] = nil
+    end
+    if protectedPopupSoundGuardDepth <= 0 then return false end
+
+    protectedPopupSoundGuardDepth = protectedPopupSoundGuardDepth - 1
+    local failures = 0
+    local firstError = nil
+    if protectedPopupSoundGuardDepth == 0 then
+        for _, fileID in ipairs(PROTECTED_POPUP_SOUND_FILES) do
+            local ok, err = pcall(UnmuteSoundFile, fileID)
+            if not ok then
+                failures = failures + 1
+                firstError = firstError or tostring(err)
+            end
+        end
+    end
+
+    debugLog("SOUND", {
+        action = "POPUP_GUARD_OFF",
+        which = which or "nil",
+        reason = reason or "unknown",
+        depth = protectedPopupSoundGuardDepth,
+        files = #PROTECTED_POPUP_SOUND_FILES,
+        failures = failures,
+        firstError = firstError or "none",
+    })
+    return true
+end
+
+local function playAllowedProtectedPopupSounds(which, reason)
+    local openSound = SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPEN
+    local openOk = true
+    local openErr = nil
+    if openSound then
+        openOk, openErr = pcall(PlaySound, openSound)
+    end
+
+    local popupSound = captureStaticPopupSound(which)
+    local popupOk = true
+    local popupErr = nil
+    if popupSound then
+        popupOk, popupErr = pcall(PlaySound, popupSound)
+    end
+    debugLog("SOUND", {
+        action = "PLAY_ALLOWED_POPUP",
+        which = which or "nil",
+        reason = reason or "unknown",
+        openSound = tostring(openSound or "nil"),
+        openOk = openOk and true or false,
+        popupSound = tostring(popupSound or "nil"),
+        popupOk = popupOk and true or false,
+        error = (openOk and popupOk) and "none" or tostring(openErr or popupErr),
+    })
+    return (openOk and popupOk) and true or false
+end
+
+local function prepareStaticPopupSoundForShow(dialog)
+    if not dialog then return end
+    local which = dialog.which
+    if not STATIC_POPUP_SOUND_GUARDS[which] then return end
+    if not isStaticPopupSoundSuppressed(which) then return end
+
+    local decision = pendingPopupDecisions and pendingPopupDecisions[which] or nil
+    if decision and not decision.shouldBlock then
+        local sound = captureStaticPopupSound(which)
+        local dialogInfo = StaticPopupDialogs and StaticPopupDialogs[which]
+        if dialogInfo and sound then
+            dialogInfo.sound = sound
+            local state = staticPopupSoundGuardStates[which] or {}
+            state.originalSound = state.originalSound or sound
+            state.temporarilyRestoredForShow = true
+            staticPopupSoundGuardStates[which] = state
+        end
+        debugLog("SOUND", {
+            action = "DIALOG_SOUND_TEMP_ON",
+            which = which,
+            reason = "pending_allow",
+            sound = tostring(sound or "nil"),
+        })
+        return
+    end
+
+    if protectedPopupSoundGuardDialogs[dialog] then return end
+
+    local token = acquireProtectedPopupSoundGuard(which, decision and "pending_block" or "awaiting_event")
+    protectedPopupSoundGuardDialogs[dialog] = {
+        token = token,
+        which = which,
+    }
+end
+
+local function installStaticPopupSoundOnShowGuard()
+    if staticPopupOnShowGuardHooked then return true end
+    if type(hooksecurefunc) ~= "function" or type(StaticPopup_OnShow) ~= "function" then
+        debugLog("SOUND", {
+            action = "STATICPOPUP_ONSHOW_HOOK_SKIPPED",
+            reason = "api_missing",
+        })
+        return false
+    end
+
+    local ok, err = pcall(hooksecurefunc, "StaticPopup_OnShow", prepareStaticPopupSoundForShow)
+    if ok then
+        staticPopupOnShowGuardHooked = true
+        debugLog("SOUND", {
+            action = "STATICPOPUP_ONSHOW_HOOKED",
+        })
+        return true
+    end
+
+    debugLog("SOUND", {
+        action = "STATICPOPUP_ONSHOW_HOOK_FAILED",
+        error = tostring(err),
+    })
+    return false
 end
 
 local function refreshInviteSoundMuteState()
-    if isEnabled() and getEffective("filters.groupInvite") then
-        muteInviteSounds()
-    else
-        unmuteInviteSounds()
+    installStaticPopupSoundOnShowGuard()
+    for which, filterPath in pairs(STATIC_POPUP_SOUND_GUARDS) do
+        local shouldSuppress = isEnabled() and getEffective(filterPath) == true
+        setStaticPopupSoundSuppressed(which, shouldSuppress, shouldSuppress and "filter_enabled" or "filter_disabled")
+    end
+
+    if not isEnabled() then
+        releaseProtectedPopupSoundGuards(nil, "filter_disabled")
+        releaseGuildInviteFrameSoundGuard("filter_disabled")
+        return
+    end
+    if not getEffective("filters.duel") then
+        releaseProtectedPopupSoundGuards("DUEL_REQUESTED", "filter_disabled")
+    end
+    if not getEffective("filters.guildInvite") then
+        releaseGuildInviteFrameSoundGuard("filter_disabled")
     end
 end
 
-ns.muteInviteSounds = muteInviteSounds
-ns.unmuteInviteSounds = unmuteInviteSounds
-ns.refreshInviteSoundMuteState = refreshInviteSoundMuteState
-ns.areInviteSoundsMuted = function()
-    return inviteSoundsMutedBySanctuary and true or false
+ns.getPartyInviteOriginalSound = capturePartyInviteOriginalSound
+ns.isStaticPopupSoundSuppressed = isStaticPopupSoundSuppressed
+ns.isPartyInviteSoundGuardActive = function()
+    return partyInviteSoundGuardDepth > 0
 end
+ns.areInviteSoundsMuted = ns.isPartyInviteSoundGuardActive
+ns.refreshInviteSoundMuteState = refreshInviteSoundMuteState
 
 -- Close only the whisper/BNet tab that belongs to the blocked sender. The old
 -- implementation closed every non-whitelisted whisper tab and could destroy an
@@ -1009,7 +1292,15 @@ local function closeBlockedWhisperTabs(blockedSender, isBNet)
                     end
 
                     if matches then
-                        pcall(FCF_Close, chatFrame)
+                        local ok = pcall(FCF_Close, chatFrame)
+                        debugLog("WHISPER_TAB", {
+                            action = "CLOSE",
+                            ok = ok and true or false,
+                            frame = i,
+                            chatType = expectedType,
+                            target = blockedSender,
+                            normalized = wanted,
+                        })
                     end
                 end
             end
@@ -1024,17 +1315,24 @@ isBNetSenderInGroup = function(senderBNetName)
     if not senderKey then return false end
 
     local found = false
-    pcall(function()
+    local accountMatched = false
+    local normalizedCharacter = nil
+    local missingCharacterName = false
+    local membersChecked = 0
+    local ok, err = pcall(function()
         local numFriends = BNGetNumFriends() or 0
         for i = 1, numFriends do
             local info = ns.getBNetFriendInfo and ns.getBNetFriendInfo(i)
             if info and normalizeBNetName(info.accountName) == senderKey then
+                accountMatched = true
                 local gameInfo = info.gameAccountInfo
                 local charName = gameInfo and normalizeName(gameInfo.characterName)
+                normalizedCharacter = charName
                 if charName then
                     local numMembers = GetNumGroupMembers() or 0
                     local isRaid = IsInRaid()
                     for j = 1, numMembers do
+                        membersChecked = membersChecked + 1
                         local unit = isRaid and ("raid" .. j) or ("party" .. j)
                         local unitName = UnitName(unit)
                         if unitName and normalizeName(unitName) == charName then
@@ -1042,10 +1340,27 @@ isBNetSenderInGroup = function(senderBNetName)
                             return
                         end
                     end
+                else
+                    missingCharacterName = true
                 end
             end
         end
     end)
+    if accountMatched or not ok then
+        debugLog("BNET_GROUP", {
+            sender = senderBNetName or "nil",
+            normalized = senderKey,
+            accountMatched = accountMatched and true or false,
+            character = normalizedCharacter or "nil",
+            missingCharacterName = missingCharacterName and true or false,
+            inGroup = IsInGroup() and true or false,
+            groupSize = IsInGroup() and GetNumGroupMembers() or 0,
+            membersChecked = membersChecked,
+            result = found and true or false,
+            ok = ok and true or false,
+            error = ok and "none" or tostring(err),
+        })
+    end
     return found
 end
 
@@ -1054,10 +1369,9 @@ end
 -- ============================================================================
 -- StaticPopup_Show runs synchronously inside Blizzard's event handling. A
 -- secure post-hook can therefore set alpha to zero before the next rendered
--- frame. The PARTY_INVITE_REQUEST/DUEL_REQUESTED/GUILD_INVITE_REQUEST handler
--- then supplies the trust decision. The small pending-decision bridge supports
--- both possible handler orders: Sanctuary before Blizzard or Blizzard before
--- Sanctuary.
+-- frame. The PARTY_INVITE_REQUEST/DUEL_REQUESTED handlers then supply the trust
+-- decision. The small pending-decision bridge supports both possible handler
+-- orders: Sanctuary before Blizzard or Blizzard before Sanctuary.
 --
 -- Native decline APIs remain responsible for closing their own dialogs. Never
 -- call StaticPopup_Hide for these interactions: Midnight attaches stateful
@@ -1065,9 +1379,12 @@ end
 -- alive across popup reuse.
 local maskedPopupState = setmetatable({}, { __mode = "k" })
 local popupHideHooked = setmetatable({}, { __mode = "k" })
-local pendingPopupDecisions = {}
+pendingPopupDecisions = {}
 local popupDecisionSerial = 0
 local POPUP_DECISION_MAX_AGE = 1.0
+local GUILD_INVITE_FRAME_KEY = "GUILD_INVITE_FRAME"
+local unmaskGuildInviteFrame
+local clearPendingGuildInviteFrameDecision
 
 local function restorePopup(dialog)
     local state = maskedPopupState[dialog]
@@ -1093,6 +1410,11 @@ local function maskPopupDialog(dialog, which)
         popupHideHooked[dialog] = true
         dialog:HookScript("OnHide", function(self)
             restorePopup(self)
+            local protectedState = protectedPopupSoundGuardDialogs[self]
+            if protectedState then
+                protectedPopupSoundGuardDialogs[self] = nil
+                releaseProtectedPopupSoundGuard(protectedState.token, protectedState.which, "popup_hide")
+            end
         end)
     end
 
@@ -1141,7 +1463,25 @@ local function unmaskVisiblePopup(which)
 end
 
 local function unmaskAllInteractionPopups()
-    unmaskVisiblePopup(nil)
+    local restored = unmaskVisiblePopup(nil)
+    if unmaskGuildInviteFrame then
+        restored = restored + (unmaskGuildInviteFrame() or 0)
+    end
+    return restored
+end
+
+releaseProtectedPopupSoundGuards = function(which, reason)
+    local released = 0
+    forEachStaticPopup(function(dialog)
+        local state = protectedPopupSoundGuardDialogs[dialog]
+        if state and (not which or state.which == which) then
+            protectedPopupSoundGuardDialogs[dialog] = nil
+            if releaseProtectedPopupSoundGuard(state.token, state.which, reason) then
+                released = released + 1
+            end
+        end
+    end)
+    return released
 end
 
 local function clearPendingPopupDecision(which)
@@ -1170,9 +1510,20 @@ local function synchronizePopupDecision(which, shouldBlock, name, reason)
     -- first, the StaticPopup_Show post-hook below consumes this decision later
     -- in the same event dispatch.
     local visible = countVisiblePopup(which)
+    local affected = 0
     if visible > 0 then
-        applyPopupDecision(which, decision.shouldBlock)
+        affected = applyPopupDecision(which, decision.shouldBlock) or 0
     end
+    debugLog("POPUP_DECISION", {
+        which = which,
+        name = name or "nil",
+        normalized = name and (normalizeName(name) or "nil") or "nil",
+        shouldBlock = decision.shouldBlock,
+        reason = reason or "nil",
+        visible = visible,
+        affected = affected,
+        order = visible > 0 and "popup_first" or "event_first",
+    })
 
     C_Timer.After(0, function()
         if pendingPopupDecisions[which] == decision then
@@ -1197,16 +1548,224 @@ local function isPopupProtectionActive(which)
         return getEffective("filters.groupInvite") == true
     elseif which == "DUEL_REQUESTED" then
         return getEffective("filters.duel") == true
-    elseif which == "GUILD_INVITE" then
-        return getEffective("filters.guildInvite") == true
     end
     return false
+end
+
+local function isGuildInviteFrameProtectionActive()
+    return isEnabled() and getEffective("filters.guildInvite") == true
+end
+
+local guildInviteFrameHooked = false
+local guildInviteFrameMaskedState = nil
+local guildInviteFrameLastMaskSerial = 0
+local guildInviteFrameLastHideSerial = 0
+
+local function getGuildInviteFrame()
+    return _G and _G.GuildInviteFrame or nil
+end
+
+local function isGuildInviteFrameShown(frame)
+    frame = frame or getGuildInviteFrame()
+    return frame and frame.IsShown and frame:IsShown() or false
+end
+
+local function restoreGuildInviteFrame(frame)
+    frame = frame or getGuildInviteFrame()
+    if not frame or not guildInviteFrameMaskedState then return 0 end
+
+    local state = guildInviteFrameMaskedState
+    guildInviteFrameMaskedState = nil
+    if frame.SetAlpha then
+        frame:SetAlpha(state.alpha or 1)
+    end
+    return 1
+end
+
+local function maskGuildInviteFrame(frame)
+    frame = frame or getGuildInviteFrame()
+    if not isGuildInviteFrameShown(frame) then return false end
+
+    if not guildInviteFrameMaskedState then
+        guildInviteFrameMaskedState = {
+            alpha = frame.GetAlpha and frame:GetAlpha() or 1,
+        }
+    end
+    if frame.SetAlpha then
+        frame:SetAlpha(0)
+    end
+    guildInviteFrameLastMaskSerial = guildInviteFrameLastMaskSerial + 1
+    return true
+end
+
+local function acquireGuildInviteFrameSoundGuard(reason)
+    if guildInviteFrameSoundGuardToken then
+        return guildInviteFrameSoundGuardToken
+    end
+    guildInviteFrameSoundGuardToken = acquireProtectedPopupSoundGuard(GUILD_INVITE_FRAME_KEY, reason)
+    return guildInviteFrameSoundGuardToken
+end
+
+releaseGuildInviteFrameSoundGuard = function(reason)
+    local token = guildInviteFrameSoundGuardToken
+    if not token then return false end
+    guildInviteFrameSoundGuardToken = nil
+    return releaseProtectedPopupSoundGuard(token, GUILD_INVITE_FRAME_KEY, reason)
+end
+
+local function hideGuildInviteFrameSilently(reason)
+    local frame = getGuildInviteFrame()
+    if not frame or not frame.Hide then
+        return false, "frame_missing"
+    end
+    if frame.IsShown and not frame:IsShown() then
+        return false, "frame_not_shown"
+    end
+
+    maskGuildInviteFrame(frame)
+    local token = acquireGuildInviteFrameSoundGuard(reason or "guild_invite_hide")
+    local oldAccepted = frame.accepted
+    -- Confirmed Retail behavior: GuildInviteFrame:OnHide calls DeclineGuild()
+    -- when accepted is nil, then plays the generic close sound. Blocked invites
+    -- are already declined explicitly, so mark accepted only for this silent
+    -- close to avoid a duplicate decline and mute the close sound guard.
+    frame.accepted = true
+    local ok, err = pcall(function()
+        frame:Hide()
+    end)
+    frame.accepted = oldAccepted
+
+    if guildInviteFrameSoundGuardToken == token then
+        releaseGuildInviteFrameSoundGuard(ok and "guild_invite_hide" or "guild_invite_hide_error")
+    end
+    if not ok then
+        debugLog("GUILD_INVITE_FRAME", {
+            action = "HIDE_ERROR",
+            reason = reason or "unknown",
+            error = tostring(err),
+        })
+        return false, tostring(err)
+    end
+    guildInviteFrameLastHideSerial = guildInviteFrameLastHideSerial + 1
+    debugLog("GUILD_INVITE_FRAME", {
+        action = "HIDE_SILENT",
+        reason = reason or "unknown",
+        acceptedWas = oldAccepted and true or false,
+        soundGuardActive = guildInviteFrameSoundGuardToken and true or false,
+    })
+    return true
+end
+
+local function applyGuildInviteFrameDecision(shouldBlock, reason)
+    if shouldBlock then
+        local masked = maskGuildInviteFrame() and 1 or 0
+        local hidden = hideGuildInviteFrameSilently(reason or "decision_block")
+        return masked, hidden and true or false
+    end
+    return unmaskGuildInviteFrame and unmaskGuildInviteFrame() or 0, false
+end
+
+local function synchronizeGuildInviteFrameDecision(shouldBlock, inviter, reason)
+    popupDecisionSerial = popupDecisionSerial + 1
+    local decision = {
+        serial = popupDecisionSerial,
+        at = GetTime(),
+        shouldBlock = shouldBlock and true or false,
+        name = inviter,
+        reason = reason,
+    }
+    pendingPopupDecisions[GUILD_INVITE_FRAME_KEY] = decision
+
+    local visible = isGuildInviteFrameShown() and 1 or 0
+    local affected = 0
+    local hidden = false
+    if visible > 0 then
+        affected, hidden = applyGuildInviteFrameDecision(decision.shouldBlock, "decision_block")
+    end
+
+    debugLog("POPUP_DECISION", {
+        which = GUILD_INVITE_FRAME_KEY,
+        frame = "GuildInviteFrame",
+        name = inviter or "nil",
+        normalized = inviter and (normalizeName(inviter) or "nil") or "nil",
+        shouldBlock = decision.shouldBlock,
+        reason = reason or "nil",
+        visible = visible,
+        affected = affected or 0,
+        hidden = hidden and true or false,
+        order = visible > 0 and "popup_first" or "event_first",
+    })
+
+    C_Timer.After(0, function()
+        if pendingPopupDecisions[GUILD_INVITE_FRAME_KEY] == decision then
+            pendingPopupDecisions[GUILD_INVITE_FRAME_KEY] = nil
+        end
+    end)
+end
+
+local function installGuildInviteFrameGuard()
+    local frame = getGuildInviteFrame()
+    if not frame or guildInviteFrameHooked or not frame.HookScript then
+        return frame
+    end
+
+    guildInviteFrameHooked = true
+    frame:HookScript("OnShow", function(self)
+        if not isGuildInviteFrameProtectionActive() then
+            clearPendingGuildInviteFrameDecision()
+            restoreGuildInviteFrame(self)
+            return
+        end
+
+        local decision = consumePendingPopupDecision(GUILD_INVITE_FRAME_KEY)
+        local action
+        local affected = 0
+        local hidden = false
+        if decision then
+            if decision.shouldBlock then
+                affected = maskGuildInviteFrame(self) and 1 or 0
+                hidden = hideGuildInviteFrameSilently("pending_block")
+                action = "HIDE_DECIDED_BLOCK"
+            else
+                affected = restoreGuildInviteFrame(self)
+                action = "SHOW_DECIDED_ALLOW"
+            end
+        else
+            affected = maskGuildInviteFrame(self) and 1 or 0
+            action = "MASK_AWAITING_EVENT"
+        end
+
+        debugLog("GUILD_INVITE_FRAME", {
+            action = action,
+            affected = affected or 0,
+            hidden = hidden and true or false,
+            pendingName = decision and decision.name or "nil",
+            pendingReason = decision and decision.reason or "nil",
+            shown = isGuildInviteFrameShown(self) and true or false,
+            alpha = self.GetAlpha and tostring(self:GetAlpha()) or "nil",
+        })
+    end)
+    frame:HookScript("OnHide", function(self)
+        restoreGuildInviteFrame(self)
+        releaseGuildInviteFrameSoundGuard("guild_invite_frame_hide")
+    end)
+    return frame
+end
+
+clearPendingGuildInviteFrameDecision = function()
+    clearPendingPopupDecision(GUILD_INVITE_FRAME_KEY)
+end
+
+unmaskGuildInviteFrame = function()
+    return restoreGuildInviteFrame()
 end
 
 ns.maskVisiblePopup = maskVisiblePopup
 ns.unmaskVisiblePopup = unmaskVisiblePopup
 ns.unmaskAllInteractionPopups = unmaskAllInteractionPopups
 ns.clearPendingPopupDecision = clearPendingPopupDecision
+ns.clearPendingGuildInviteFrameDecision = clearPendingGuildInviteFrameDecision
+ns.unmaskGuildInviteFrame = unmaskGuildInviteFrame
 
 -- ============================================================================
 -- SECTION H: Event Handlers (side effects happen HERE, not in filters)
@@ -1219,11 +1778,19 @@ function handlers.PARTY_INVITE_REQUEST(name, isTank, isHealer, isDamage,
     if not isEnabled() or not getEffective("filters.groupInvite") then
         clearPendingPopupDecision("PARTY_INVITE")
         unmaskVisiblePopup("PARTY_INVITE")
+        refreshInviteSoundMuteState()
         return
     end
 
     local shouldBlock, reason, keyword = getCharacterDecision(name)
     synchronizePopupDecision("PARTY_INVITE", shouldBlock, name, reason)
+    local replayedSound = false
+    if not shouldBlock then
+        local releasedGuards = releaseProtectedPopupSoundGuards("PARTY_INVITE", "allowed_invite")
+        if releasedGuards > 0 then
+            replayedSound = playAllowedProtectedPopupSounds("PARTY_INVITE", "allowed_invite_after_guard")
+        end
+    end
 
     debugLog("INVITE", {
         name = name,
@@ -1231,10 +1798,11 @@ function handlers.PARTY_INVITE_REQUEST(name, isTank, isHealer, isDamage,
         guid = inviterGUID or "nil",
         isWL = reason == "whitelist",
         keyword = keyword or "none",
-        action = shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_WHITELIST") or "ALLOW",
+        action = shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
         filterEnabled = getEffective("filters.groupInvite") == true,
         popupProtectionActive = isPopupProtectionActive("PARTY_INVITE"),
-        soundMuted = inviteSoundsMutedBySanctuary and true or false,
+        soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
+        replayedSound = replayedSound and true or false,
         inGroup = IsInGroup() and true or false,
         groupSize = IsInGroup() and GetNumGroupMembers() or 0,
         popupVisible = countVisiblePopup("PARTY_INVITE"),
@@ -1244,7 +1812,12 @@ function handlers.PARTY_INVITE_REQUEST(name, isTank, isHealer, isDamage,
     if not shouldBlock then return end
 
     -- Keep the dialog invisible and use only Blizzard's native decline path.
-    DeclineGroup()
+    local declineOk, declineErr = pcall(DeclineGroup)
+    debugLog("INVITE_API", {
+        api = "DeclineGroup",
+        ok = declineOk and true or false,
+        error = declineOk and "none" or tostring(declineErr),
+    })
     logBlock("groupInvite", name, nil, inviterGUID, keyword)
 end
 
@@ -1253,40 +1826,73 @@ function handlers.DUEL_REQUESTED(playerName)
     if not isEnabled() or not getEffective("filters.duel") then
         clearPendingPopupDecision("DUEL_REQUESTED")
         unmaskVisiblePopup("DUEL_REQUESTED")
+        releaseProtectedPopupSoundGuards("DUEL_REQUESTED", "filter_disabled_event")
         return
     end
 
     local shouldBlock, reason, keyword = getCharacterDecision(playerName)
     synchronizePopupDecision("DUEL_REQUESTED", shouldBlock, playerName, reason)
+    local replayedSound = false
+    if not shouldBlock then
+        local releasedGuards = releaseProtectedPopupSoundGuards("DUEL_REQUESTED", "allowed_duel")
+        if releasedGuards > 0 then
+            replayedSound = playAllowedProtectedPopupSounds("DUEL_REQUESTED", "allowed_duel_after_guard")
+        end
+    end
     debugLog("DUEL", {
         name = playerName,
-        action = shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_WHITELIST") or "ALLOW",
+        normalized = normalizeName(playerName),
+        reason = reason or "nil",
+        keyword = keyword or "none",
+        filterEnabled = getEffective("filters.duel") == true,
+        replayedSound = replayedSound and true or false,
+        action = shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
     })
 
     if not shouldBlock then return end
 
-    CancelDuel()
+    local cancelOk, cancelErr = pcall(CancelDuel)
+    debugLog("DUEL_API", {
+        api = "CancelDuel",
+        ok = cancelOk and true or false,
+        error = cancelOk and "none" or tostring(cancelErr),
+    })
     logBlock("duel", playerName, nil, nil, keyword)
 end
 
 function handlers.GUILD_INVITE_REQUEST(inviter, guildName)
+    installGuildInviteFrameGuard()
+
     if not isEnabled() or not getEffective("filters.guildInvite") then
-        clearPendingPopupDecision("GUILD_INVITE")
-        unmaskVisiblePopup("GUILD_INVITE")
+        clearPendingGuildInviteFrameDecision()
+        unmaskGuildInviteFrame()
+        releaseGuildInviteFrameSoundGuard("filter_disabled_event")
         return
     end
 
     local shouldBlock, reason, keyword = getCharacterDecision(inviter)
-    synchronizePopupDecision("GUILD_INVITE", shouldBlock, inviter, reason)
+    synchronizeGuildInviteFrameDecision(shouldBlock, inviter, reason)
     debugLog("GUILD_INVITE", {
         name = inviter,
+        normalized = normalizeName(inviter),
         guild = guildName or "nil",
-        action = shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_WHITELIST") or "ALLOW",
+        reason = reason or "nil",
+        keyword = keyword or "none",
+        filterEnabled = getEffective("filters.guildInvite") == true,
+        frameShown = isGuildInviteFrameShown() and true or false,
+        frameAlpha = (getGuildInviteFrame() and getGuildInviteFrame().GetAlpha) and tostring(getGuildInviteFrame():GetAlpha()) or "nil",
+        soundGuardActive = guildInviteFrameSoundGuardToken and true or false,
+        action = shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
     })
 
     if not shouldBlock then return end
 
-    DeclineGuild()
+    local declineOk, declineErr = pcall(DeclineGuild)
+    debugLog("GUILD_INVITE_API", {
+        api = "DeclineGuild",
+        ok = declineOk and true or false,
+        error = declineOk and "none" or tostring(declineErr),
+    })
     logBlock("guildInvite", inviter, guildName, nil, keyword)
 end
 
@@ -1306,14 +1912,24 @@ function handlers.TRADE_SHOW()
     end
 
     local shouldBlock, reason, keyword = getCharacterDecision(tradeName)
-    if not shouldBlock then return end
-
-    CloseTrade()
-    logBlock("trade", tradeName, nil, nil, keyword)
     debugLog("TRADE", {
         name = tradeName,
-        action = reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_WHITELIST",
+        normalized = normalizeName(tradeName),
+        reason = reason or "nil",
+        keyword = keyword or "none",
+        filterEnabled = getEffective("filters.trade") == true,
+        action = shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
     })
+
+    if not shouldBlock then return end
+
+    local closeOk, closeErr = pcall(CloseTrade)
+    debugLog("TRADE_API", {
+        api = "CloseTrade",
+        ok = closeOk and true or false,
+        error = closeOk and "none" or tostring(closeErr),
+    })
+    logBlock("trade", tradeName, nil, nil, keyword)
 end
 
 -- Whitelist refresh events. WoW fires roster events in bursts (and sometimes
@@ -1447,7 +2063,7 @@ function handlers.CHAT_MSG_SYSTEM(msg, ...)
         keyword = keyword or "none",
         result = shouldBlock and (reason == "keyword" and "SUPPRESS_KEYWORD" or "SUPPRESS_NOT_WHITELISTED") or "PASS_WHITELISTED",
         inGroup = IsInGroup() and true or false,
-        soundMuted = inviteSoundsMutedBySanctuary and true or false,
+        soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
     })
 
     if shouldBlock then
@@ -1492,19 +2108,27 @@ function handlers.CHAT_MSG_BN_WHISPER(msg, sender, ...)
 
     local action = "BLOCK_NOT_WHITELISTED"
     local reason = "not_whitelisted"
+    local bnetWhitelisted = isBNetWhitelisted(sender)
+    local bnetGroup = false
     if keywordMatch then
         action = "BLOCK_KEYWORD"
         reason = "keyword"
-    elseif isBNetWhitelisted(sender) then
+    elseif bnetWhitelisted then
         action = "ALLOW"
         reason = "bnet_whitelist"
-    elseif isBNetSenderInGroup(sender) then
-        action = "ALLOW"
-        reason = "bnet_group"
+    else
+        bnetGroup = isBNetSenderInGroup(sender) and true or false
+        if bnetGroup then
+            action = "ALLOW"
+            reason = "bnet_group"
+        end
     end
 
     debugLogChatDecision("bn_whisper", sender, msg, action, reason, keyword, {
         filterEnabled = filterEnabled,
+        bnetWhitelisted = bnetWhitelisted and true or false,
+        inGroup = bnetGroup,
+        bnetCache = ns.getBNetWhitelistCacheSize and ns.getBNetWhitelistCacheSize() or "?",
     })
     if action == "ALLOW" then return end
 
@@ -1662,7 +2286,7 @@ local function simulateInvite(name)
         alreadyGroupSuppressed = systemMessageFilter(nil, "CHAT_MSG_SYSTEM", alreadyGroupMessage) and true or false,
         wouldDecline = groupInviteFilterEnabled and shouldBlock and true or false,
         declined = false,
-        inviteSoundsMuted = inviteSoundsMutedBySanctuary and true or false,
+        partyInviteSoundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
     }
 
     debugLog("SIMULATE_INVITE", {
@@ -1772,14 +2396,14 @@ local function formatSimulationResult(result)
     local system = result.systemSuppressed and "blocked" or "visible"
     local alreadyGroup = result.alreadyGroupSuppressed and "blocked" or "visible"
     local wouldDecline = result.wouldDecline and "yes" or "no"
-    local soundMute = result.inviteSoundsMuted and "yes" or "no"
+    local soundGuard = result.partyInviteSoundGuardActive and "yes" or "no"
     local reason = result.reason
     if result.keyword then
         reason = reason .. ":" .. result.keyword
     end
 
     return string.format(
-        "Simulation invite: %s -> %s (%s) | popup=%s | chat=%s | already-group=%s | would-decline=%s | API=not-called | sound-muted=%s",
+        "Simulation invite: %s -> %s (%s) | popup=%s | chat=%s | already-group=%s | would-decline=%s | API=not-called | sound-guard=%s",
         result.name,
         action,
         reason,
@@ -1787,7 +2411,7 @@ local function formatSimulationResult(result)
         system,
         alreadyGroup,
         wouldDecline,
-        soundMute
+        soundGuard
     )
 end
 
@@ -1820,6 +2444,287 @@ local function formatBNetSimulationResult(result)
     )
 end
 
+local function runSoundDiagnostic()
+    local inviteSound = capturePartyInviteOriginalSound()
+    local openSound = (SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPEN) or "igMainMenuOpen"
+    local openOk = pcall(PlaySound, openSound)
+    local inviteOk = inviteSound and pcall(PlaySound, inviteSound) or false
+    debugLog("SOUND_TEST", {
+        openSound = tostring(openSound),
+        inviteSound = tostring(inviteSound or "nil"),
+        openOk = openOk and true or false,
+        inviteOk = inviteOk and true or false,
+        guardActive = partyInviteSoundGuardDepth > 0,
+    })
+    return {
+        openSound = openSound,
+        inviteSound = inviteSound,
+        openOk = openOk and true or false,
+        inviteOk = inviteOk and true or false,
+        guardActive = partyInviteSoundGuardDepth > 0,
+    }
+end
+
+local function formatSoundDiagnosticResult(result)
+    if not result.inviteSound then
+        return "Diagnostic sound invite: ERROR (native party invite sound unavailable)"
+    end
+    return string.format(
+        "Diagnostic sound invite: popup-open=%s invite=%s guard=%s",
+        result.openOk and "played" or "failed",
+        result.inviteOk and tostring(result.inviteSound) or "failed",
+        result.guardActive and "active" or "inactive"
+    )
+end
+
+local POPUP_DIAGNOSTICS = {
+    duel = {
+        which = "DUEL_REQUESTED",
+        label = "duel",
+        text = "SanctuaryDiagnostic vous provoque en duel.",
+    },
+    guild = {
+        which = GUILD_INVITE_FRAME_KEY,
+        label = "guild",
+        frame = "GuildInviteFrame",
+    },
+}
+
+local function collectPopupDialogNames(query)
+    local needle = trimCommandText(query):lower()
+    local matches = {}
+    if type(StaticPopupDialogs) ~= "table" then return matches end
+
+    for key in pairs(StaticPopupDialogs) do
+        local text = tostring(key)
+        if needle == "" or text:lower():find(needle, 1, true) then
+            matches[#matches + 1] = text
+        end
+    end
+    table.sort(matches)
+    return matches
+end
+
+local function runPopupListDiagnostic(query)
+    local normalizedQuery = trimCommandText(query):lower()
+    local matches = collectPopupDialogNames(normalizedQuery)
+    local preview = {}
+    for i = 1, math.min(#matches, 8) do
+        preview[#preview + 1] = matches[i]
+    end
+    local result = {
+        query = normalizedQuery ~= "" and normalizedQuery or "all",
+        count = #matches,
+        preview = table.concat(preview, ", "),
+        truncated = #matches > #preview,
+    }
+    debugLog("POPUP_LIST", result)
+    return result
+end
+
+local function formatPopupListDiagnosticResult(result)
+    if result.count == 0 then
+        return string.format("Diagnostic popup list %s: none", result.query)
+    end
+    return string.format(
+        "Diagnostic popup list %s: %s%s",
+        result.query,
+        result.preview,
+        result.truncated and " ..." or ""
+    )
+end
+
+local function runPopupDiagnostic(kind)
+    local normalizedKind = trimCommandText(kind):lower()
+    local config = POPUP_DIAGNOSTICS[normalizedKind]
+    if not config then
+        return {
+            available = false,
+            kind = normalizedKind ~= "" and normalizedKind or "unknown",
+            reason = "unknown_popup_diagnostic",
+        }
+    end
+
+    if config.frame == "GuildInviteFrame" then
+        local frame = installGuildInviteFrameGuard()
+        if not frame then
+            local result = {
+                available = true,
+                skipped = true,
+                kind = config.label,
+                which = config.which,
+                frame = config.frame,
+                filterEnabled = isGuildInviteFrameProtectionActive() and true or false,
+                shown = false,
+                masked = false,
+                hidden = false,
+                specialShow = type(StaticPopupSpecial_Show) == "function",
+                reason = "guild_invite_frame_missing",
+            }
+            debugLog("POPUP_TEST", result)
+            return result
+        end
+
+        if isGuildInviteFrameShown(frame) then
+            local result = {
+                available = true,
+                skipped = true,
+                kind = config.label,
+                which = config.which,
+                frame = config.frame,
+                filterEnabled = isGuildInviteFrameProtectionActive() and true or false,
+                shown = true,
+                masked = false,
+                hidden = false,
+                specialShow = type(StaticPopupSpecial_Show) == "function",
+                reason = "guild_invite_frame_busy",
+            }
+            debugLog("POPUP_TEST", result)
+            return result
+        end
+
+        local protectionActive = isGuildInviteFrameProtectionActive()
+        if not protectionActive then
+            local result = {
+                available = true,
+                skipped = true,
+                kind = config.label,
+                which = config.which,
+                frame = config.frame,
+                filterEnabled = false,
+                shown = false,
+                masked = false,
+                hidden = false,
+                specialShow = type(StaticPopupSpecial_Show) == "function",
+                reason = "filter_disabled",
+            }
+            debugLog("POPUP_TEST", result)
+            return result
+        end
+
+        local beforeMaskSerial = guildInviteFrameLastMaskSerial
+        local beforeHideSerial = guildInviteFrameLastHideSerial
+        frame.inviter = "SanctuaryDiagnostic"
+        frame.accepted = nil
+        frame.elapsed = 0
+        synchronizeGuildInviteFrameDecision(true, "SanctuaryDiagnostic", "diagnostic")
+
+        local showOk, showErr
+        if type(StaticPopupSpecial_Show) == "function" then
+            showOk, showErr = pcall(StaticPopupSpecial_Show, frame)
+        elseif frame.Show then
+            showOk, showErr = pcall(function()
+                frame:Show()
+            end)
+        else
+            showOk, showErr = false, "frame_show_missing"
+        end
+
+        local hidden = (guildInviteFrameLastHideSerial > beforeHideSerial)
+            or (frame.IsShown and not frame:IsShown())
+        local result = {
+            available = true,
+            kind = config.label,
+            which = config.which,
+            frame = config.frame,
+            filterEnabled = true,
+            shown = showOk and true or false,
+            masked = guildInviteFrameLastMaskSerial > beforeMaskSerial,
+            hidden = hidden and true or false,
+            alpha = frame.GetAlpha and tostring(frame:GetAlpha()) or "nil",
+            specialShow = type(StaticPopupSpecial_Show) == "function",
+            reason = showOk and "guild_invite_frame_probe" or "guild_invite_frame_show_error",
+            error = showOk and "none" or tostring(showErr),
+        }
+        debugLog("POPUP_TEST", result)
+        return result
+    end
+
+    if not StaticPopupDialogs or not StaticPopupDialogs[config.which] then
+        local result = {
+            available = true,
+            skipped = true,
+            kind = config.label,
+            which = config.which,
+            filterEnabled = isPopupProtectionActive(config.which) and true or false,
+            shown = false,
+            masked = false,
+            hidden = false,
+            reason = "popup_dialog_missing",
+        }
+        debugLog("POPUP_TEST", result)
+        return result
+    end
+
+    local protectionActive = isPopupProtectionActive(config.which)
+    if not protectionActive then
+        local result = {
+            available = true,
+            skipped = true,
+            kind = config.label,
+            which = config.which,
+            filterEnabled = false,
+            shown = false,
+            masked = false,
+            hidden = false,
+            reason = "filter_disabled",
+        }
+        debugLog("POPUP_TEST", result)
+        return result
+    end
+
+    local dialog = StaticPopup_Show(config.which, config.text)
+    local shown = dialog and dialog.IsShown and dialog:IsShown() or false
+    local alpha = dialog and dialog.GetAlpha and dialog:GetAlpha() or nil
+    local masked = alpha == 0
+    local hidden = false
+
+    if dialog and dialog.Hide then
+        dialog:Hide()
+        hidden = true
+    else
+        forEachStaticPopup(function(popup)
+            if popup.which == config.which and popup.Hide then
+                popup:Hide()
+                hidden = true
+            end
+        end)
+    end
+
+    local result = {
+        available = true,
+        kind = config.label,
+        which = config.which,
+        filterEnabled = true,
+        shown = shown and true or false,
+        masked = masked and true or false,
+        hidden = hidden and true or false,
+        alpha = alpha and tostring(alpha) or "nil",
+        reason = "protected_popup_probe",
+    }
+    debugLog("POPUP_TEST", result)
+    return result
+end
+
+local function formatPopupDiagnosticResult(result)
+    if not result.available then
+        return string.format("Diagnostic popup %s: ERROR (%s)",
+            result.kind or "unknown", result.reason or "unknown")
+    end
+    if result.skipped then
+        return string.format("Diagnostic popup %s: SKIP (%s)",
+            result.kind or "unknown", result.reason or "unknown")
+    end
+    return string.format(
+        "Diagnostic popup %s: shown=%s masked=%s hidden=%s filter=%s",
+        result.kind,
+        result.shown and "yes" or "no",
+        result.masked and "yes" or "no",
+        result.hidden and "yes" or "no",
+        result.filterEnabled and "on" or "off"
+    )
+end
+
 local function resolveSimulationTarget(args)
     local text = trimCommandText(args)
     local first, rest = text:match("^(%S+)%s*(.*)$")
@@ -1837,6 +2742,12 @@ ns.formatSimulationResult = formatSimulationResult
 ns.simulateBNetWhisper = simulateBNetWhisper
 ns.simulateBNetFriend = simulateBNetFriend
 ns.formatBNetSimulationResult = formatBNetSimulationResult
+ns.runSoundDiagnostic = runSoundDiagnostic
+ns.formatSoundDiagnosticResult = formatSoundDiagnosticResult
+ns.runPopupDiagnostic = runPopupDiagnostic
+ns.formatPopupDiagnosticResult = formatPopupDiagnosticResult
+ns.runPopupListDiagnostic = runPopupListDiagnostic
+ns.formatPopupListDiagnosticResult = formatPopupListDiagnosticResult
 
 -- /sanc and /sanctuary open the GUI. Diagnostic subcommands stay hidden.
 SLASH_SANCTUARY1 = "/sanctuary"
@@ -1859,6 +2770,31 @@ SlashCmdList["SANCTUARY"] = function(msg)
                 printMsg(formatSimulationResult(result))
             end
             return
+        end
+
+        if command == "diag" then
+            local diagKind, diagRest = trimCommandText(rest):match("^(%S+)%s*(.*)$")
+            diagKind = diagKind and diagKind:lower() or ""
+            diagRest = trimCommandText(diagRest)
+            if diagKind == "sound" then
+                local soundKind = diagRest:match("^(%S+)") or "invite"
+                if soundKind:lower() ~= "invite" then
+                    printError("Diagnostic inconnu. Utilisez /sanc diag sound invite.")
+                    return
+                end
+                printMsg(formatSoundDiagnosticResult(runSoundDiagnostic()))
+                return
+            elseif diagKind == "popup" then
+                local popupCommand, popupRest = diagRest:match("^(%S+)%s*(.*)$")
+                popupCommand = popupCommand and popupCommand:lower() or ""
+                popupRest = trimCommandText(popupRest)
+                if popupCommand == "list" then
+                    printMsg(formatPopupListDiagnosticResult(runPopupListDiagnostic(popupRest)))
+                else
+                    printMsg(formatPopupDiagnosticResult(runPopupDiagnostic(diagRest)))
+                end
+                return
+            end
         end
 
         if ns.ToggleUI then
@@ -1920,6 +2856,7 @@ function handlers.ADDON_LOADED(addonName)
 
     -- Keep invite audio suppression aligned with the effective setting.
     refreshInviteSoundMuteState()
+    installGuildInviteFrameGuard()
 
     -- Debug: capture snapshot at load time (if debug was already enabled)
     captureDebugSnapshot()
@@ -1946,6 +2883,7 @@ function handlers.PLAYER_ENTERING_WORLD()
     hasEnteredWorld = true
     refreshGroupTracker()
     refreshInviteSoundMuteState()
+    installGuildInviteFrameGuard()
     hookChatOutputDiagnostics()
 
     -- Request social data refresh. Both calls are pcall-wrapped because their
@@ -1998,13 +2936,14 @@ end)
 -- Secure post-hook: mask protected interaction popups before the next frame.
 -- The event-order bridge above makes this safe for trusted invitations too.
 hooksecurefunc("StaticPopup_Show", function(which, text_arg1, text_arg2, data)
-    if which ~= "PARTY_INVITE" and which ~= "DUEL_REQUESTED" and which ~= "GUILD_INVITE" then
+    if which ~= "PARTY_INVITE" and which ~= "DUEL_REQUESTED" then
         return
     end
 
     if not isPopupProtectionActive(which) then
         clearPendingPopupDecision(which)
         unmaskVisiblePopup(which)
+        restoreStaticPopupSoundAfterShow(which, "filter_disabled_show")
         return
     end
 
@@ -2020,11 +2959,13 @@ hooksecurefunc("StaticPopup_Show", function(which, text_arg1, text_arg2, data)
         affected = maskVisiblePopup(which)
         action = "MASK_AWAITING_EVENT"
     end
+    local soundRestored = restoreStaticPopupSoundAfterShow(which, "static_popup_show")
 
     debugLog("POPUP", {
         which = which,
         action = action,
         affected = affected or 0,
+        soundRestored = soundRestored and true or false,
         pendingName = decision and decision.name or "nil",
         pendingReason = decision and decision.reason or "nil",
         text_arg1 = tostring(text_arg1 or "nil"):sub(1, 200),
