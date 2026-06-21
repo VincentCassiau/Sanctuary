@@ -12,4 +12,8 @@ desktop.ini
 
 # Claude Code
 CLAUDE.md
+AGENTS.md
 .claude/
+
+# Local project-only working notes
+internal_docs/

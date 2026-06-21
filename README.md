@@ -46,11 +46,14 @@ Sanctuary works alongside addons like LeatrixPlus, BadBoy, and Global Ignore Lis
 
 Type `/sanc` or `/sanctuary` to open the configuration window.
 
-The GUI has 4 tabs:
+The GUI has 5 tabs:
 - **Filters** -- Toggle which interactions to block, notification mode, channel filtering
 - **Patterns** -- Add suspect name patterns (e.g. "goldbank" blocks any player whose name contains it)
 - **Whitelist** -- Manually add trusted players
 - **Logs** -- Browse blocked interactions, export logs
+- **About** -- Version information and opt-in diagnostics export
+
+Developer diagnostics: `/sanc simulate <name>` runs the group-invite decision and chat-filter path without calling WoW decline APIs or showing the real `PARTY_INVITE` popup. `/sanc simulate bnetfriend 1` checks the first Battle.net friend against the BNet-whisper filter without printing the account name. `/sanc diag sound invite`, `/sanc diag popup duel`, and `/sanc diag popup guild` exercise focused live-client diagnostics for protected sounds/popups.
 
 ## How the whitelist works
 
@@ -69,7 +72,8 @@ The addon maintains a whitelist from multiple sources. All sources are always ac
 
 ## Compatibility
 
-- **WoW version:** Retail (Midnight) -- Interface 120001
+- **WoW version:** Retail (Midnight) -- Interface 120007
+- **Retail only.** Classic, Cataclysm Classic, Season of Discovery, and other non-retail clients are not supported or tested.
 - **LeatrixPlus:** Compatible. Sanctuary adds system message suppression on top of LeatrixPlus's auto-decline.
 - **BadBoy:** Compatible. Both addons work independently on their respective filters.
 - **No dependencies.** Pure WoW API, no external libraries.
@@ -126,11 +130,14 @@ Sanctuary fonctionne aux cotes d'addons comme LeatrixPlus, BadBoy et Global Igno
 
 Tapez `/sanc` ou `/sanctuary` pour ouvrir la fenetre de configuration.
 
-L'interface comporte 4 onglets :
+L'interface comporte 5 onglets :
 - **Filtres** -- Activer/desactiver les filtres, mode de notification, filtrage des canaux
 - **Patterns** -- Ajouter des mots-cles suspects (ex: "goldbank" bloque tout joueur dont le pseudo contient ce mot)
 - **Whitelist** -- Ajouter manuellement des joueurs de confiance
 - **Logs** -- Consulter les interactions bloquees, exporter les logs
+- **A propos** -- Version et export de diagnostics active manuellement
+
+Diagnostics developpeur : `/sanc simulate <name>` execute la decision d'invitation de groupe et le filtre de chat sans appeler les APIs de refus WoW ni afficher la vraie popup `PARTY_INVITE`. `/sanc simulate bnetfriend 1` teste le premier ami Battle.net contre le filtre de whisper BNet sans afficher le nom du compte. `/sanc diag sound invite`, `/sanc diag popup duel` et `/sanc diag popup guild` lancent des diagnostics client cibles sur les sons/popups proteges.
 
 ### Fonctionnement de la whitelist
 
@@ -149,7 +156,8 @@ L'addon maintient une whitelist a partir de plusieurs sources. Toutes les source
 
 ### Compatibilite
 
-- **Version WoW :** Retail (Midnight) -- Interface 120001
+- **Version WoW :** Retail (Midnight) -- Interface 120007
+- **Retail uniquement.** Classic, Cataclysm Classic, Season of Discovery et les autres clients non-retail ne sont pas supportes ni testes.
 - **LeatrixPlus :** Compatible. Sanctuary ajoute la suppression des messages systeme en complement du refus automatique de LeatrixPlus.
 - **BadBoy :** Compatible. Les deux addons fonctionnent ensemble sans conflit.
 - **Aucune dependance.** API WoW native uniquement, pas de librairie externe.
