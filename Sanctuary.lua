@@ -279,6 +279,7 @@ ns.matchesKeyword = matchesKeyword
 -- Forward declarations for helpers used before their concrete section.
 local debugLog, countBNetWithCharName, captureDebugSnapshot, isBNetSenderInGroup
 local pendingPopupDecisions
+local unmaskVisiblePopup
 local capturePartyInviteOriginalSound
 local partyInviteSoundGuardDepth = 0
 
@@ -321,15 +322,27 @@ local function rebuildWhitelist()
 
     -- Manual whitelist (account-wide)
     if SanctuaryDB and SanctuaryDB.manualWhitelist then
-        for key in pairs(SanctuaryDB.manualWhitelist) do
+        for key, data in pairs(SanctuaryDB.manualWhitelist) do
             addCharacterName(key)
+            if type(data) == "table" then
+                addCharacterName(data.displayName)
+                if data.source == "bnet" or (type(data.displayName) == "string" and data.displayName:find("%s")) then
+                    addBNetAccountName(data.displayName)
+                end
+            end
         end
     end
 
     -- Manual whitelist (per-character)
     if SanctuaryCharDB and SanctuaryCharDB.manualWhitelist then
-        for key in pairs(SanctuaryCharDB.manualWhitelist) do
+        for key, data in pairs(SanctuaryCharDB.manualWhitelist) do
             addCharacterName(key)
+            if type(data) == "table" then
+                addCharacterName(data.displayName)
+                if data.source == "bnet" or (type(data.displayName) == "string" and data.displayName:find("%s")) then
+                    addBNetAccountName(data.displayName)
+                end
+            end
         end
     end
 
@@ -708,6 +721,7 @@ ns.countBNetWithCharName = countBNetWithCharName
 
 -- Build invite pattern from WoW global string at init
 local invitePatterns = {}
+local invitePatternKinds = {}
 
 local function escapePattern(s)
     return s:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
@@ -734,21 +748,23 @@ end
 
 local function buildInvitePatterns()
     wipe(invitePatterns)
+    wipe(invitePatternKinds)
     local seen = {}
 
     local globals = {
-        "ERR_INVITED_TO_GROUP_SS",
-        "ERR_INVITED_TO_GROUP_S",
-        "ERR_INVITED_TO_GROUP",
-        "ERR_INVITED_ALREADY_IN_GROUP_SS",
-        "ERR_INVITED_ALREADY_IN_GROUP_S",
+        { name = "ERR_INVITED_TO_GROUP_SS", kind = "popup_backed" },
+        { name = "ERR_INVITED_TO_GROUP_S", kind = "popup_backed" },
+        { name = "ERR_INVITED_TO_GROUP", kind = "popup_backed" },
+        { name = "ERR_INVITED_ALREADY_IN_GROUP_SS", kind = "already_group" },
+        { name = "ERR_INVITED_ALREADY_IN_GROUP_S", kind = "already_group" },
     }
 
-    for _, globalName in ipairs(globals) do
-        local pattern = formatStringToPattern(_G[globalName])
+    for _, globalInfo in ipairs(globals) do
+        local pattern = formatStringToPattern(_G[globalInfo.name])
         if pattern and not seen[pattern] then
             seen[pattern] = true
             invitePatterns[#invitePatterns + 1] = pattern
+            invitePatternKinds[#invitePatterns] = globalInfo.kind
         end
     end
 
@@ -756,12 +772,14 @@ local function buildInvitePatterns()
     -- startup/API edge cases where the localized strings are unexpectedly nil.
     if #invitePatterns == 0 then
         invitePatterns[#invitePatterns + 1] = "^%[(.+)%] vous a invit"
+        invitePatternKinds[#invitePatterns] = "unknown"
         invitePatterns[#invitePatterns + 1] = "^%[(.+)%] has invited you to join a group"
+        invitePatternKinds[#invitePatterns] = "unknown"
     end
 end
 
 local function extractInviterFromSystemMessage(msg)
-    if type(msg) ~= "string" or msg == "" then return nil, nil end
+    if type(msg) ~= "string" or msg == "" then return nil, nil, nil end
     for idx, pattern in ipairs(invitePatterns) do
         local name = msg:match(pattern)
         if name then
@@ -769,11 +787,11 @@ local function extractInviterFromSystemMessage(msg)
             name = name:gsub("%[", ""):gsub("%]", "")
             name = name:match("^%s*(.-)%s*$")
             if name ~= "" then
-                return name, idx
+                return name, idx, invitePatternKinds[idx] or "unknown"
             end
         end
     end
-    return nil, nil
+    return nil, nil, nil
 end
 
 -- System-message filters are invoked once per destination chat frame, so they
@@ -1252,6 +1270,12 @@ local function refreshInviteSoundMuteState()
     if not getEffective("filters.guildInvite") then
         releaseGuildInviteFrameSoundGuard("filter_disabled")
     end
+    if not getEffective("filters.groupInvite") then
+        releaseProtectedPopupSoundGuards("PARTY_INVITE", "filter_disabled")
+        if unmaskVisiblePopup then
+            unmaskVisiblePopup("PARTY_INVITE")
+        end
+    end
 end
 
 ns.getPartyInviteOriginalSound = capturePartyInviteOriginalSound
@@ -1450,7 +1474,7 @@ local function maskVisiblePopup(which)
     return masked
 end
 
-local function unmaskVisiblePopup(which)
+unmaskVisiblePopup = function(which)
     local restored = 0
     forEachStaticPopup(function(dialog)
         local state = maskedPopupState[dialog]
@@ -2108,7 +2132,7 @@ ns.refreshGroupTracker = refreshGroupTracker
 function handlers.CHAT_MSG_SYSTEM(msg, ...)
     if not isEnabled() or not getEffective("filters.groupInvite") then return end
 
-    local inviterName, patternIndex = extractInviterFromSystemMessage(msg)
+    local inviterName, patternIndex, patternKind = extractInviterFromSystemMessage(msg)
     if not inviterName then
         if SanctuaryDB and SanctuaryDB.debugEnabled and msg
             and (msg:lower():find("invit", 1, true) or msg:lower():find("group", 1, true)) then
@@ -2130,9 +2154,14 @@ function handlers.CHAT_MSG_SYSTEM(msg, ...)
         result = shouldBlock and (reason == "keyword" and "SUPPRESS_KEYWORD" or "SUPPRESS_NOT_WHITELISTED") or "PASS_WHITELISTED",
         inGroup = IsInGroup() and true or false,
         soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
+        patternKind = patternKind or "unknown",
     })
 
-    if shouldBlock then
+    -- Normal invite system messages are popup-backed and are followed by
+    -- PARTY_INVITE_REQUEST, which carries the GUID. Only the no-popup
+    -- already-grouped path block-logs here, otherwise the 1s logBlock dedupe can
+    -- discard the later richer event log.
+    if shouldBlock and (patternKind == "already_group" or (patternKind == "unknown" and IsInGroup())) then
         logBlock("groupInvite", inviterName, msg, nil, keyword)
     end
 end

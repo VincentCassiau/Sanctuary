@@ -431,6 +431,26 @@ check(not filtered, "BNet friend whisper remains allowed by cached account name"
 filtered = chatFilters.CHAT_MSG_BN_WHISPER(nil, "CHAT_MSG_BN_WHISPER", "hello", "Unknown Battle")
 check(filtered, "unknown BNet whisper blocked")
 
+-- Manual whitelist entries store a character-normalized key, but BNet account
+-- display names may contain spaces. The displayName must feed the BNet cache.
+bnetFriends = {}
+SanctuaryDB.manualWhitelist.manualbnet = { displayName = "Manual Battle" }
+ns.invalidateWhitelist()
+check(ns.isBNetWhitelisted("Manual Battle"), "manual displayName cached as BNet account")
+filtered = chatFilters.CHAT_MSG_BN_WHISPER(nil, "CHAT_MSG_BN_WHISPER", "hello", "Manual Battle")
+check(not filtered, "manual BNet displayName whisper passes")
+SanctuaryDB.manualWhitelist.manualbnet = nil
+SanctuaryDB.manualWhitelist.characteronly = { displayName = "Characteronly" }
+ns.invalidateWhitelist()
+check(not ns.isBNetWhitelisted("Characteronly"), "character-only manual whitelist does not become BNet account")
+filtered = chatFilters.CHAT_MSG_BN_WHISPER(nil, "CHAT_MSG_BN_WHISPER", "hello", "Characteronly")
+check(filtered, "character-only manual whitelist does not allow matching BNet display")
+SanctuaryDB.manualWhitelist.characteronly = nil
+bnetFriends = {
+    { accountName = "Battle Friend", gameAccountInfo = { characterName = "Onlinechar" } },
+}
+ns.invalidateWhitelist()
+
 -- Core chat filters: unknown players are blocked only when the relevant filter
 -- says so, while suspicious keywords always win and self messages always pass.
 filtered = chatFilters.CHAT_MSG_WHISPER(nil, "CHAT_MSG_WHISPER", "hello", "Unknown")
@@ -472,6 +492,21 @@ local beforeLogs = #SanctuaryDB.log
 fire("CHAT_MSG_SYSTEM", systemMessage)
 equal(#SanctuaryDB.log, beforeLogs + 1, "already-in-group invite logged")
 equal(SanctuaryDB.log[#SanctuaryDB.log].type, "groupInvite", "system invite log type")
+
+-- Popup-backed system messages are filtered from chat but not block-logged from
+-- CHAT_MSG_SYSTEM; PARTY_INVITE_REQUEST owns the durable log because it carries
+-- the inviter GUID.
+inGroup = false
+local normalSystemMessage = "[Normalbad] vous a invité à rejoindre un groupe."
+beforeLogs = #SanctuaryDB.log
+filtered = chatFilters.CHAT_MSG_SYSTEM(nil, "CHAT_MSG_SYSTEM", normalSystemMessage)
+check(filtered, "popup-backed invite system message suppressed")
+fire("CHAT_MSG_SYSTEM", normalSystemMessage)
+equal(#SanctuaryDB.log, beforeLogs, "popup-backed system invite does not preempt event log")
+fire("PARTY_INVITE_REQUEST", "Normalbad", false, false, true, true, false, "Player-System-1")
+equal(#SanctuaryDB.log, beforeLogs + 1, "party invite event logs popup-backed invite")
+equal(SanctuaryDB.log[#SanctuaryDB.log].guid, "Player-System-1", "party invite event preserves inviter GUID")
+runTimers()
 
 -- The pure chat filter must not duplicate debug/log side effects when WoW calls
 -- it once per destination chat frame.
@@ -855,9 +890,20 @@ equal(StaticPopupDialogs.DUEL_REQUESTED.sound, nil, "duel sound field suppressed
 check(not mutedSoundFiles[567451], "native invite sound file is not globally muted at rest")
 check(not mutedSoundFiles[567490], "generic popup open sound is not muted")
 check(not mutedSoundFiles[567464], "generic popup close sound is not muted")
+StaticPopup_Show("PARTY_INVITE", "Guardedbad vous invite dans un groupe.")
+check(mutedSoundFiles[567490], "protected party popup mutes generic open sound")
+check(mutedSoundFiles[567464], "protected party popup mutes generic close sound")
+local afterPartyGuardMutes = #muted
 SanctuaryDB.filters.groupInvite = false
 ns.refreshInviteSoundMuteState()
-equal(#muted, beforeMutedRefresh, "disabled group filter keeps existing duel sound guard without duplicate mute")
+check(not mutedSoundFiles[567490], "disabled group filter releases party popup open guard")
+check(not mutedSoundFiles[567464], "disabled group filter releases party popup close guard")
+equal(popup.alpha, 1, "disabled group filter restores visible party popup")
+popup.inviteAccepted = true
+popup:Hide()
+popup.inviteAccepted = nil
+playedSounds = {}
+equal(#muted, afterPartyGuardMutes, "disabled group filter releases party guard without duplicate mute")
 check(ns.areInviteSoundsMuted(), "duel filter keeps native invite sound guarded")
 equal(StaticPopupDialogs.PARTY_INVITE.sound, 880, "disabled group filter restores party invite dialog sound")
 equal(StaticPopupDialogs.DUEL_REQUESTED.sound, nil, "disabled group filter leaves duel sound suppressed")
@@ -869,7 +915,7 @@ check(not disabledSimulation.systemSuppressed, "disabled invite filter does not 
 equal(disabledSimulation.popupAction, "pass", "disabled invite filter does not protect popup")
 SanctuaryDB.filters.groupInvite = true
 ns.refreshInviteSoundMuteState()
-equal(#muted, beforeMutedRefresh, "enabled invite filter keeps existing invite sound guard without duplicate mute")
+equal(#muted, afterPartyGuardMutes, "enabled invite filter keeps existing invite sound guard without duplicate mute")
 check(ns.areInviteSoundsMuted(), "enabled invite filter has active invite sound guard")
 equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "re-enabled group filter suppresses party invite dialog sound")
 
