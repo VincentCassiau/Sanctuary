@@ -1,6 +1,6 @@
 -- ============================================================================
 -- SanctuaryUI.lua — Configuration interface for Sanctuary anti-harassment addon
--- Pure Lua, no XML, no external libraries. WoW Midnight compatible (120001).
+-- Pure Lua, no XML, no external libraries. WoW Midnight compatible (120007).
 -- ============================================================================
 
 local ADDON_NAME, ns = ...
@@ -270,6 +270,7 @@ local buildFiltersTab, refreshFilterCheckboxes
 local buildKeywordsTab, refreshKeywordEntries
 local buildWhitelistTab, refreshWhitelistEntries
 local buildLogsTab, refreshLogEntries
+local buildAboutTab
 
 StaticPopupDialogs["SANCTUARY_CLEAR_LOG"] = {
     text = L["LOGS_CLEAR_CONFIRM"],
@@ -366,11 +367,20 @@ local function createMainFrame()
         if ns.debugLog then
             ns.debugLog("TOGGLE", { enabled = newState })
         end
+        if ns.refreshInviteSoundMuteState then
+            ns.refreshInviteSoundMuteState()
+        end
         if newState then
-            if ns.muteInviteSounds then ns.muteInviteSounds() end
             ns.printSuccess(L["SANCTUARY_ENABLED"])
         else
-            if ns.unmuteInviteSounds then ns.unmuteInviteSounds() end
+            if ns.clearPendingPopupDecision then
+                ns.clearPendingPopupDecision("PARTY_INVITE")
+                ns.clearPendingPopupDecision("DUEL_REQUESTED")
+                ns.clearPendingPopupDecision("GUILD_INVITE")
+            end
+            if ns.unmaskAllInteractionPopups then
+                ns.unmaskAllInteractionPopups()
+            end
             ns.printMsg(ns.COLOR_OFF .. L["SANCTUARY_DISABLED"] .. ns.COLOR_RESET)
         end
         -- Refresh toggle visual and status bar
@@ -687,9 +697,39 @@ buildFiltersTab = function(parent)
             local label = FILTER_LABELS[key] or key
             local tooltip = FILTER_TOOLTIPS[key]
 
+            local filterKey = key
             local cb = createCheckbox(child, label, tooltip, function(checked)
                 if SanctuaryDB and SanctuaryDB.filters then
-                    SanctuaryDB.filters[key] = checked
+                    SanctuaryDB.filters[filterKey] = checked
+
+                    if filterKey == "groupInvite" then
+                        if ns.refreshInviteSoundMuteState then
+                            ns.refreshInviteSoundMuteState()
+                        end
+                        if not checked then
+                            if ns.clearPendingPopupDecision then
+                                ns.clearPendingPopupDecision("PARTY_INVITE")
+                            end
+                            if ns.unmaskVisiblePopup then
+                                ns.unmaskVisiblePopup("PARTY_INVITE")
+                            end
+                        end
+                    elseif filterKey == "duel" and not checked then
+                        if ns.clearPendingPopupDecision then
+                            ns.clearPendingPopupDecision("DUEL_REQUESTED")
+                        end
+                        if ns.unmaskVisiblePopup then
+                            ns.unmaskVisiblePopup("DUEL_REQUESTED")
+                        end
+                    elseif filterKey == "guildInvite" and not checked then
+                        if ns.clearPendingPopupDecision then
+                            ns.clearPendingPopupDecision("GUILD_INVITE")
+                        end
+                        if ns.unmaskVisiblePopup then
+                            ns.unmaskVisiblePopup("GUILD_INVITE")
+                        end
+                    end
+
                     refreshStatusBar()
                 end
             end)
@@ -819,7 +859,11 @@ buildFiltersTab = function(parent)
     local trustCb = createCheckbox(child, L["FILTER_AUTO_TRUST"], L["TIP_AUTO_TRUST"], function(checked)
         if SanctuaryDB and SanctuaryDB.filters then
             SanctuaryDB.filters.autoTrust = checked
-            ns.invalidateWhitelist()
+            if ns.refreshGroupTracker then
+                ns.refreshGroupTracker()
+            else
+                ns.invalidateWhitelist()
+            end
         end
     end)
     trustCb:SetPoint("TOPLEFT", child, "TOPLEFT", 4, -yOffset)
@@ -1484,10 +1528,17 @@ local function showDebugExport()
     result = result .. "IsInGuild: " .. tostring(IsInGuild()) .. " | GuildMembers: " .. gm .. "\n"
     result = result .. "BNetFriends: " .. bn .. " | BNetWithCharName: " .. bnetCN .. "\n"
     result = result .. "CharFriends: " .. cf .. "\n"
+    local inviteSoundsMuted = ns.areInviteSoundsMuted and ns.areInviteSoundsMuted() or "?"
+    result = result .. "GroupInviteFilter: " .. tostring(ns.getEffective("filters.groupInvite"))
+        .. " | InviteSoundsMuted: " .. tostring(inviteSoundsMuted) .. "\n"
 
     local cacheSize = "?"
     if ns.getWhitelistCacheSize then
         cacheSize = ns.getWhitelistCacheSize()
+    end
+    local bnetCacheSize = "?"
+    if ns.getBNetWhitelistCacheSize then
+        bnetCacheSize = ns.getBNetWhitelistCacheSize()
     end
     local manualA = 0
     if SanctuaryDB.manualWhitelist then
@@ -1497,7 +1548,9 @@ local function showDebugExport()
     if SanctuaryCharDB and SanctuaryCharDB.manualWhitelist then
         for _ in pairs(SanctuaryCharDB.manualWhitelist) do manualC = manualC + 1 end
     end
-    result = result .. "ManualWL: " .. manualA .. "+" .. manualC .. " | WhitelistCache: " .. cacheSize .. "\n"
+    result = result .. "ManualWL: " .. manualA .. "+" .. manualC
+        .. " | WhitelistCache: " .. cacheSize
+        .. " | BNetAccountCache: " .. bnetCacheSize .. "\n"
     result = result .. "Keywords: " .. (SanctuaryDB.keywords and #SanctuaryDB.keywords or 0) .. "\n"
 
     -- Event log

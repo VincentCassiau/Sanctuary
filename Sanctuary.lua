@@ -1,6 +1,6 @@
 -- ============================================================================
 -- Sanctuary — WoW Anti-Harassment Addon (Whitelist-based protection)
--- Version: 0.3.1 | Interface: 120001 (Midnight)
+-- Version: 0.3.2 | Interface: 120007 (Midnight)
 -- ============================================================================
 
 -- ============================================================================
@@ -9,7 +9,7 @@
 
 local ADDON_NAME, ns = ...
 local L = ns.L
-local VERSION = "0.3.1"
+local VERSION = "0.3.2"
 
 local PREFIX = "|cFF66CCFF[Sanctuary]|r "
 local COLOR_ON = "|cFF00FF00"
@@ -121,25 +121,36 @@ local function getPlayerRealm()
     return playerRealm or ""
 end
 
+local function stripWoWFormatting(value)
+    if not value or value == "" then return nil end
+    value = tostring(value)
+    -- |Hplayer:Name-Realm:...|h[Name]|h -> [Name]
+    value = value:gsub("|H.-|h", "")
+    value = value:gsub("|h", "")
+    value = value:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    value = value:gsub("%[", ""):gsub("%]", "")
+    value = value:match("^%s*(.-)%s*$")
+    if value == "" then return nil end
+    return value
+end
+
 local function normalizeName(name)
-    if not name or name == "" then return nil end
-    -- Strip WoW hyperlink markup: |Hplayer:Name-Realm|h[Name]|h → [Name]
-    name = name:gsub("|H.-|h", "")
-    name = name:gsub("|h", "")
-    -- Strip color codes and link formatting
-    name = name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-    -- Strip brackets (chat format: [Name-Realm])
-    name = name:gsub("%[", ""):gsub("%]", "")
-    -- Trim leading/trailing whitespace
-    name = name:match("^%s*(.-)%s*$")
-    if name == "" then return nil end
-    -- Remove ALL internal spaces
-    name = name:gsub("%s", "")
-    name = name:lower()
-    -- Extract NAME ONLY (strip realm if present): "alice-tarrenmill" -> "alice"
-    -- This avoids all realm normalization bugs and simplifies cross-realm matching
-    local nameOnly = name:match("^(.+)-") or name
+    name = stripWoWFormatting(name)
+    if not name then return nil end
+    -- WoW character names never contain spaces.
+    name = name:gsub("%s", ""):lower()
+    -- Compatibility note: existing SavedVariables use name-only keys. Keep that
+    -- behaviour in 0.3.2; realm-aware migration needs a dedicated release.
+    local nameOnly = name:match("^([^-]+)-") or name
     return nameOnly
+end
+
+local function normalizeBNetName(name)
+    name = stripWoWFormatting(name)
+    if not name then return nil end
+    -- Battle.net account display names may contain spaces; preserve them.
+    name = name:gsub("%s+", " "):lower()
+    return name
 end
 
 local function deepCopy(orig)
@@ -218,6 +229,7 @@ ns.printMsg = printMsg
 ns.printError = printError
 ns.printSuccess = printSuccess
 ns.normalizeName = normalizeName
+ns.normalizeBNetName = normalizeBNetName
 ns.getEffective = getEffective
 ns.isEnabled = isEnabled
 ns.parseBool = parseBool
@@ -227,9 +239,13 @@ ns.fillMissingDefaults = fillMissingDefaults
 -- Keyword blacklist: blocks names containing any suspect keyword
 local function matchesKeyword(name)
     if not name or not SanctuaryDB or not SanctuaryDB.keywords then return false, nil end
-    local lowerName = name:lower():gsub("%s", "")
+    local cleanName = stripWoWFormatting(name)
+    if not cleanName then return false, nil end
+
+    local lowerName = cleanName:lower():gsub("%s", "")
     for _, keyword in ipairs(SanctuaryDB.keywords) do
-        if keyword ~= "" and lowerName:find(keyword:lower(), 1, true) then
+        local cleanKeyword = tostring(keyword or ""):lower():gsub("%s", "")
+        if cleanKeyword ~= "" and lowerName:find(cleanKeyword, 1, true) then
             return true, keyword
         end
     end
@@ -239,93 +255,89 @@ end
 ns.matchesKeyword = matchesKeyword
 
 -- Forward declarations for debug functions (defined in Section F2, used in E and H)
-local debugLog, countBNetWithCharName, captureDebugSnapshot
+local debugLog, countBNetWithCharName, captureDebugSnapshot, isBNetSenderInGroup
+local inviteSoundsMutedBySanctuary = false
 
 -- ============================================================================
 -- SECTION E: Whitelist Engine
 -- ============================================================================
 
 Sanctuary.whitelistCache = {}
+Sanctuary.bnetWhitelistCache = {}
 Sanctuary.whitelistDirty = true
 
 local function rebuildWhitelist()
     local cache = {}
+    local bnetCache = {}
+
+    local function addCharacterName(name)
+        local normalized = normalizeName(name)
+        if normalized then
+            cache[normalized] = true
+        end
+    end
+
+    local function addBNetAccountName(name)
+        local normalized = normalizeBNetName(name)
+        if normalized then
+            bnetCache[normalized] = true
+        end
+    end
 
     -- Manual whitelist (account-wide)
     if SanctuaryDB and SanctuaryDB.manualWhitelist then
         for key in pairs(SanctuaryDB.manualWhitelist) do
-            cache[key] = true
+            addCharacterName(key)
         end
     end
 
     -- Manual whitelist (per-character)
     if SanctuaryCharDB and SanctuaryCharDB.manualWhitelist then
         for key in pairs(SanctuaryCharDB.manualWhitelist) do
-            cache[key] = true
+            addCharacterName(key)
         end
     end
 
-    -- Guild members (always whitelisted)
-    if IsInGuild() then
-        local ok = pcall(function()
-            local numMembers = GetNumGuildMembers()
-            for i = 1, numMembers do
-                local name = GetGuildRosterInfo(i)
-                if name then
-                    local normalized = normalizeName(name)
-                    if normalized then
-                        cache[normalized] = true
-                    end
-                end
-            end
-        end)
-        if not ok then
-            -- Guild API failed, skip silently
+    -- Guild members (always whitelisted).
+    -- Do not gate this on IsInGuild(): during instance/loading transitions WoW can
+    -- transiently return false while the roster is still fully populated.
+    pcall(function()
+        local numMembers = GetNumGuildMembers() or 0
+        for i = 1, numMembers do
+            local name = GetGuildRosterInfo(i)
+            if name then addCharacterName(name) end
         end
-    end
+    end)
 
-    -- Battle.net friends (always whitelisted)
-    -- NOTE: BNGetNumFriends() may be deprecated in future; monitor for C_BattleNet replacement
-    local ok = pcall(function()
-        local numFriends = BNGetNumFriends()
+    -- Battle.net friends (always whitelisted): cache both the account display
+    -- name (used by CHAT_MSG_BN_WHISPER) and the currently visible character.
+    pcall(function()
+        local numFriends = BNGetNumFriends() or 0
         for i = 1, numFriends do
             local info = C_BattleNet.GetFriendAccountInfo(i)
-            if info and info.gameAccountInfo then
+            if info then
+                addBNetAccountName(info.accountName)
                 local gameInfo = info.gameAccountInfo
-                local charName = gameInfo.characterName
-                local realmName = gameInfo.realmName
-                -- normalizeName extracts name-only (strips realm), so just pass charName
-                if charName and charName ~= "" then
-                    local normalized = normalizeName(charName)
-                    if normalized then
-                        cache[normalized] = true
-                    end
+                if gameInfo and gameInfo.characterName and gameInfo.characterName ~= "" then
+                    addCharacterName(gameInfo.characterName)
                 end
             end
         end
     end)
-    if not ok then
-        -- BNet API failed, skip silently
-    end
 
     -- Character friends (always whitelisted)
     pcall(function()
-        local numFriends = C_FriendList.GetNumFriends()
+        local numFriends = C_FriendList.GetNumFriends() or 0
         for i = 1, numFriends do
             local info = C_FriendList.GetFriendInfoByIndex(i)
-            if info and info.name then
-                local normalized = normalizeName(info.name)
-                if normalized then
-                    cache[normalized] = true
-                end
-            end
+            if info and info.name then addCharacterName(info.name) end
         end
     end)
 
     -- Current group/raid members (always whitelisted)
     pcall(function()
         if IsInGroup() then
-            local numMembers = GetNumGroupMembers()
+            local numMembers = GetNumGroupMembers() or 0
             local isRaid = IsInRaid()
             for i = 1, numMembers do
                 local unit = isRaid and ("raid" .. i) or ("party" .. i)
@@ -334,28 +346,28 @@ local function rebuildWhitelist()
                     if realm and realm ~= "" then
                         name = name .. "-" .. realm
                     end
-                    local normalized = normalizeName(name)
-                    if normalized then
-                        cache[normalized] = true
-                    end
+                    addCharacterName(name)
                 end
             end
         end
     end)
 
     Sanctuary.whitelistCache = cache
+    Sanctuary.bnetWhitelistCache = bnetCache
     Sanctuary.whitelistDirty = false
 
-    -- Debug: log rebuild stats with per-source counts
     if SanctuaryDB and SanctuaryDB.debugEnabled then
         local totalSize = 0
         for _ in pairs(cache) do totalSize = totalSize + 1 end
+        local bnetSize = 0
+        for _ in pairs(bnetCache) do bnetSize = bnetSize + 1 end
         local gm = 0; pcall(function() gm = GetNumGuildMembers() end)
         local bn = 0; pcall(function() bn = BNGetNumFriends() end)
         local cf = 0; pcall(function() cf = C_FriendList.GetNumFriends() end)
         local grp = IsInGroup() and GetNumGroupMembers() or 0
         debugLog("REBUILD", {
             cache = totalSize,
+            bnetAccounts = bnetSize,
             isInGuild = IsInGuild() and true or false,
             guild = gm, bnet = bn, friends = cf, group = grp,
         })
@@ -372,17 +384,51 @@ local function isWhitelisted(name)
     return Sanctuary.whitelistCache[normalized] == true
 end
 
+local function isBNetWhitelisted(name)
+    if not name then return false end
+    if Sanctuary.whitelistDirty then
+        rebuildWhitelist()
+    end
+    local normalized = normalizeBNetName(name)
+    if not normalized then return false end
+    return Sanctuary.bnetWhitelistCache[normalized] == true
+end
+
 local function invalidateWhitelist()
     Sanctuary.whitelistDirty = true
 end
 
+-- Single source of truth for character-name decisions. Suspect patterns are
+-- intentionally evaluated first: this matches the UI/README contract that a
+-- pattern overrides every trust source.
+local function getCharacterDecision(name)
+    local keywordMatch, keyword = matchesKeyword(name)
+    if keywordMatch then
+        return true, "keyword", keyword
+    end
+    if isWhitelisted(name) then
+        return false, "whitelist", nil
+    end
+    return true, "not_whitelisted", nil
+end
+
 -- Export whitelist functions to namespace
 ns.isWhitelisted = isWhitelisted
+ns.isBNetWhitelisted = isBNetWhitelisted
 ns.invalidateWhitelist = invalidateWhitelist
+ns.getCharacterDecision = getCharacterDecision
 ns.getWhitelistCacheSize = function()
     local count = 0
     if Sanctuary.whitelistCache then
         for _ in pairs(Sanctuary.whitelistCache) do count = count + 1 end
+    end
+    return count
+end
+
+ns.getBNetWhitelistCacheSize = function()
+    local count = 0
+    if Sanctuary.bnetWhitelistCache then
+        for _ in pairs(Sanctuary.bnetWhitelistCache) do count = count + 1 end
     end
     return count
 end
@@ -412,8 +458,9 @@ local function logBlock(blockType, sourceName, message, guid, keyword)
     local sourceRealm = ""
     local cleanName = sourceName or "Unknown"
 
-    -- Extract realm from "Name-Realm" format
-    local n, r = cleanName:match("^(.+)-(.+)$")
+    -- Extract realm from "Name-Realm" format. Character names cannot contain
+    -- hyphens, so the first hyphen is the unambiguous separator.
+    local n, r = cleanName:match("^([^-]+)%-(.+)$")
     if n and r then
         cleanName = n
         sourceRealm = r
@@ -433,15 +480,17 @@ local function logBlock(blockType, sourceName, message, guid, keyword)
 
     table.insert(SanctuaryDB.log, entry)
 
-    -- Rotation
-    local maxEntries = SanctuaryDB.logging.maxEntries or 5000
-    if #SanctuaryDB.log > maxEntries then
-        local overflow = #SanctuaryDB.log - maxEntries
-        local newLog = {}
-        for i = overflow + 1, #SanctuaryDB.log do
-            newLog[#newLog + 1] = SanctuaryDB.log[i]
+    -- Rotation without allocating a second multi-thousand-entry table.
+    local maxEntries = math.max(1, SanctuaryDB.logging.maxEntries or 5000)
+    local overflow = #SanctuaryDB.log - maxEntries
+    if overflow > 0 then
+        local oldCount = #SanctuaryDB.log
+        for i = 1, oldCount - overflow do
+            SanctuaryDB.log[i] = SanctuaryDB.log[i + overflow]
         end
-        SanctuaryDB.log = newLog
+        for i = oldCount - overflow + 1, oldCount do
+            SanctuaryDB.log[i] = nil
+        end
     end
 
     -- Session stats
@@ -482,14 +531,47 @@ debugLog = function(cat, data)
         data = data or {},
     })
 
-    -- Rotation: keep max 500 entries
-    if #SanctuaryDB.debugLog > 500 then
-        local newLog = {}
-        for i = #SanctuaryDB.debugLog - 499, #SanctuaryDB.debugLog do
-            newLog[#newLog + 1] = SanctuaryDB.debugLog[i]
+    -- Rotation: keep max 500 entries without replacing the SavedVariables
+    -- table reference used by the diagnostics UI.
+    local overflow = #SanctuaryDB.debugLog - 500
+    if overflow > 0 then
+        local oldCount = #SanctuaryDB.debugLog
+        for i = 1, oldCount - overflow do
+            SanctuaryDB.debugLog[i] = SanctuaryDB.debugLog[i + overflow]
         end
-        SanctuaryDB.debugLog = newLog
+        for i = oldCount - overflow + 1, oldCount do
+            SanctuaryDB.debugLog[i] = nil
+        end
     end
+end
+
+local function debugLogChatDecision(kind, sender, msg, action, reason, keyword, extra)
+    if not SanctuaryDB or not SanctuaryDB.debugEnabled then return end
+
+    local normalized
+    if kind == "bn_whisper" then
+        normalized = normalizeBNetName(sender)
+    else
+        normalized = normalizeName(sender)
+    end
+
+    local data = {
+        kind = kind,
+        sender = sender or "nil",
+        normalized = normalized or "nil",
+        action = action or "UNKNOWN",
+        reason = reason or "nil",
+        keyword = keyword or "none",
+        msg = type(msg) == "string" and msg:sub(1, 300) or "nil",
+    }
+
+    if extra then
+        for key, value in pairs(extra) do
+            data[key] = value
+        end
+    end
+
+    debugLog("CHAT_DECISION", data)
 end
 
 -- Count BNet friends with characterName populated
@@ -536,10 +618,14 @@ captureDebugSnapshot = function()
     local bnetN = 0; pcall(function() bnetN = BNGetNumFriends() end)
     local friendN = 0; pcall(function() friendN = C_FriendList.GetNumFriends() end)
 
-    -- Whitelist cache size
+    -- Whitelist cache sizes
     local cacheSize = 0
     if Sanctuary.whitelistCache then
         for _ in pairs(Sanctuary.whitelistCache) do cacheSize = cacheSize + 1 end
+    end
+    local bnetCacheSize = 0
+    if Sanctuary.bnetWhitelistCache then
+        for _ in pairs(Sanctuary.bnetWhitelistCache) do bnetCacheSize = bnetCacheSize + 1 end
     end
 
     -- Manual whitelist counts
@@ -565,8 +651,11 @@ captureDebugSnapshot = function()
         bnetWithCharName = countBNetWithCharName(),
         charFriends = friendN,
         whitelistCache = cacheSize,
+        bnetWhitelistCache = bnetCacheSize,
         manualWL = manualAccount .. "+" .. manualChar,
         keywords = SanctuaryDB.keywords and #SanctuaryDB.keywords or 0,
+        groupInviteFilter = getEffective("filters.groupInvite") == true,
+        inviteSoundsMuted = inviteSoundsMutedBySanctuary and true or false,
     })
 end
 
@@ -585,8 +674,29 @@ local function escapePattern(s)
     return s:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
 end
 
+local function formatStringToPattern(formatString)
+    if type(formatString) ~= "string" or formatString == "" then return nil end
+
+    -- Replace printf tokens before escaping the remaining literal text. Numbered
+    -- tokens are supported for locales that reorder placeholders.
+    local stringToken = "\001"
+    local numberToken = "\002"
+    local prepared = formatString
+        :gsub("%%%d+%$s", stringToken)
+        :gsub("%%s", stringToken)
+        :gsub("%%%d+%$d", numberToken)
+        :gsub("%%d", numberToken)
+
+    local pattern = escapePattern(prepared)
+        :gsub(stringToken, "(.+)")
+        :gsub(numberToken, "%%d+")
+    return "^" .. pattern .. "$"
+end
+
 local function buildInvitePatterns()
-    -- Try WoW global strings first
+    wipe(invitePatterns)
+    local seen = {}
+
     local globals = {
         "ERR_INVITED_TO_GROUP_SS",
         "ERR_INVITED_TO_GROUP_S",
@@ -594,26 +704,25 @@ local function buildInvitePatterns()
         "ERR_INVITED_ALREADY_IN_GROUP_SS",
         "ERR_INVITED_ALREADY_IN_GROUP_S",
     }
+
     for _, globalName in ipairs(globals) do
-        local globalStr = _G[globalName]
-        if globalStr and type(globalStr) == "string" then
-            -- Convert "%s" format specifiers to Lua capture patterns
-            local escaped = escapePattern(globalStr)
-            local pattern = escaped:gsub("%%%%s", "(.+)"):gsub("%%%%d", "%%d+")
-            table.insert(invitePatterns, pattern)
+        local pattern = formatStringToPattern(_G[globalName])
+        if pattern and not seen[pattern] then
+            seen[pattern] = true
+            invitePatterns[#invitePatterns + 1] = pattern
         end
     end
 
-    -- Fallback patterns for common locales
+    -- The client globals are the source of truth. These fallbacks only protect
+    -- startup/API edge cases where the localized strings are unexpectedly nil.
     if #invitePatterns == 0 then
-        -- French
-        table.insert(invitePatterns, "(.+) vous a invit")
-        -- English
-        table.insert(invitePatterns, "(.+) has invited you to join a group")
+        invitePatterns[#invitePatterns + 1] = "^%[(.+)%] vous a invit"
+        invitePatterns[#invitePatterns + 1] = "^%[(.+)%] has invited you to join a group"
     end
 end
 
 local function extractInviterFromSystemMessage(msg)
+    if type(msg) ~= "string" or msg == "" then return nil, nil end
     for idx, pattern in ipairs(invitePatterns) do
         local name = msg:match(pattern)
         if name then
@@ -628,140 +737,182 @@ local function extractInviterFromSystemMessage(msg)
     return nil, nil
 end
 
--- System message filter: MUST be a PURE function (called 2+ times per message)
+-- System-message filters are invoked once per destination chat frame, so they
+-- must stay side-effect free. Logging/debugging happens in CHAT_MSG_SYSTEM.
 local function systemMessageFilter(self, event, msg, ...)
     if not isEnabled() then return false end
     if not getEffective("filters.groupInvite") then return false end
 
-    local inviterName, patIdx = extractInviterFromSystemMessage(msg)
-
-    -- Debug: log invite-related system messages (match or not)
-    if SanctuaryDB and SanctuaryDB.debugEnabled and msg
-        and (msg:find("invit") or msg:find("group") or msg:find("groupe")) then
-        if inviterName then
-            local wl = isWhitelisted(inviterName)
-            local km = matchesKeyword(inviterName)
-            local result = "SUPPRESS_WHITELIST"
-            if wl then result = "PASS_WHITELISTED"
-            elseif km then result = "SUPPRESS_KEYWORD" end
-            debugLog("FILTER", {
-                msg = msg:sub(1, 300),
-                name = inviterName,
-                pattern = patIdx or "?",
-                isWL = wl,
-                keyword = km and true or false,
-                result = result,
-            })
-        else
-            debugLog("FILTER", {
-                msg = msg:sub(1, 300),
-                name = "nil",
-                result = "NO_MATCH",
-            })
-        end
-    end
-
+    local inviterName = extractInviterFromSystemMessage(msg)
     if not inviterName then return false end
 
-    -- Whitelisted players are never blocked
-    if isWhitelisted(inviterName) then return false end
-
-    -- Keyword blacklist
-    local keyMatch = matchesKeyword(inviterName)
-    if keyMatch then
-        return true -- suppress the message
-    end
-
-    return true -- suppress non-whitelisted
+    local shouldBlock = getCharacterDecision(inviterName)
+    return shouldBlock
 end
 
 -- Whisper filter (P1 — active if setting enabled)
 local function whisperFilter(self, event, msg, sender, ...)
     if not isEnabled() then return false end
-    -- Whitelisted players are never blocked
-    if isWhitelisted(sender) then return false end
-    -- Keyword blacklist
-    local keyMatch = matchesKeyword(sender)
-    if keyMatch then return true end
+
+    local keywordMatch = matchesKeyword(sender)
+    if keywordMatch then return true end
     if not getEffective("filters.whisper") then return false end
-    return true -- suppress non-whitelisted
+
+    local shouldBlock = getCharacterDecision(sender)
+    return shouldBlock
 end
 
--- Never filter the player's own messages
+-- Battle.net whispers use account display names, not character names.
+local function bnetWhisperFilter(self, event, msg, sender, ...)
+    if not isEnabled() then return false end
+
+    local keywordMatch = matchesKeyword(sender)
+    if keywordMatch then return true end
+    if not getEffective("filters.whisper") then return false end
+
+    if isBNetWhitelisted(sender) then return false end
+    if isBNetSenderInGroup and isBNetSenderInGroup(sender) then return false end
+    return true
+end
+
+local function normalizeRealmToken(realm)
+    if not realm or realm == "" then return nil end
+    return realm:lower():gsub("[%s%-']", "")
+end
+
+-- Never filter the player's own public messages. Realm information is honored
+-- when present so a same-named player on another realm is not mistaken for self.
 local function isSelf(sender)
-    if not sender then return false end
-    local playerName = UnitName("player")
-    return playerName and normalizeName(sender) == normalizeName(playerName)
+    local clean = stripWoWFormatting(sender)
+    if not clean then return false end
+
+    local senderName, senderRealm = clean:match("^([^-]+)%-(.+)$")
+    senderName = senderName or clean
+
+    local playerName, playerRealm
+    if UnitFullName then
+        playerName, playerRealm = UnitFullName("player")
+    end
+    playerName = playerName or UnitName("player")
+    playerRealm = playerRealm or getPlayerRealm()
+    if not playerName or senderName:lower() ~= playerName:lower() then
+        return false
+    end
+
+    if senderRealm and senderRealm ~= "" then
+        return normalizeRealmToken(senderRealm) == normalizeRealmToken(playerRealm)
+    end
+    return true
 end
 
 -- Say filter (P2 — off by default)
 local function sayFilter(self, event, msg, sender, ...)
     if not isEnabled() then return false end
     if isSelf(sender) then return false end
-    -- Whitelisted players are never blocked
-    if isWhitelisted(sender) then return false end
-    -- Keyword blacklist
-    local keyMatch = matchesKeyword(sender)
-    if keyMatch then return true end
+
+    local keywordMatch = matchesKeyword(sender)
+    if keywordMatch then return true end
     if not getEffective("filters.say") then return false end
-    return true -- suppress non-whitelisted
+
+    local shouldBlock = getCharacterDecision(sender)
+    return shouldBlock
 end
 
 -- Yell filter (P2 — off by default)
 local function yellFilter(self, event, msg, sender, ...)
     if not isEnabled() then return false end
     if isSelf(sender) then return false end
-    -- Whitelisted players are never blocked
-    if isWhitelisted(sender) then return false end
-    -- Keyword blacklist
-    local keyMatch = matchesKeyword(sender)
-    if keyMatch then return true end
+
+    local keywordMatch = matchesKeyword(sender)
+    if keywordMatch then return true end
     if not getEffective("filters.yell") then return false end
-    return true -- suppress non-whitelisted
+
+    local shouldBlock = getCharacterDecision(sender)
+    return shouldBlock
 end
 
 -- Emote filter (P2 — off by default)
 local function emoteFilter(self, event, msg, sender, ...)
     if not isEnabled() then return false end
     if isSelf(sender) then return false end
-    -- Whitelisted players are never blocked
-    if isWhitelisted(sender) then return false end
-    -- Keyword blacklist
-    local keyMatch = matchesKeyword(sender)
-    if keyMatch then return true end
+
+    local keywordMatch = matchesKeyword(sender)
+    if keywordMatch then return true end
     if not getEffective("filters.emote") then return false end
-    return true -- suppress non-whitelisted
+
+    local shouldBlock = getCharacterDecision(sender)
+    return shouldBlock
 end
 
 -- Channel filter (/1, /2, /3...) with 3 modes: none, keywords, all
 local function channelFilter(self, event, msg, sender, ...)
     if not isEnabled() then return false end
     if isSelf(sender) then return false end
+
     local mode = getEffective("filters.channelMode") or "none"
     if mode == "none" then return false end
-    -- Whitelisted players are never blocked
-    if isWhitelisted(sender) then return false end
-    -- Keyword blacklist
-    local keyMatch = matchesKeyword(sender)
-    if keyMatch then return true end
-    -- Full whitelist filter only in "all" mode
-    if mode == "all" then
-        return true -- suppress non-whitelisted
-    end
-    return false
+
+    local keywordMatch = matchesKeyword(sender)
+    if keywordMatch then return true end
+    if mode ~= "all" then return false end
+
+    local shouldBlock = getCharacterDecision(sender)
+    return shouldBlock
 end
 
 -- Register all filters
+local chatFiltersRegistered = false
 local function registerChatFilters()
+    if chatFiltersRegistered then return end
+    chatFiltersRegistered = true
+
     ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", systemMessageFilter)
     ChatFrame_AddMessageEventFilter("CHAT_MSG_WHISPER", whisperFilter)
-    ChatFrame_AddMessageEventFilter("CHAT_MSG_BN_WHISPER", whisperFilter)
+    ChatFrame_AddMessageEventFilter("CHAT_MSG_BN_WHISPER", bnetWhisperFilter)
     ChatFrame_AddMessageEventFilter("CHAT_MSG_SAY", sayFilter)
     ChatFrame_AddMessageEventFilter("CHAT_MSG_YELL", yellFilter)
     ChatFrame_AddMessageEventFilter("CHAT_MSG_EMOTE", emoteFilter)
     ChatFrame_AddMessageEventFilter("CHAT_MSG_TEXT_EMOTE", emoteFilter)
     ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", channelFilter)
 end
+
+-- Diagnostic-only observation of text that actually reaches a chat frame. This
+-- does not alter chat output; it lets the next debug report distinguish a
+-- Blizzard event-filter miss from another addon re-printing the same message
+-- directly through ChatFrame:AddMessage.
+local chatOutputHooked = setmetatable({}, { __mode = "k" })
+local function hookChatOutputDiagnostics()
+    for i = 1, 20 do
+        local chatFrame = _G["ChatFrame" .. i]
+        if chatFrame and not chatOutputHooked[chatFrame] and chatFrame.AddMessage then
+            local frameIndex = i
+            local ok = pcall(hooksecurefunc, chatFrame, "AddMessage", function(_, text)
+                if not SanctuaryDB or not SanctuaryDB.debugEnabled or type(text) ~= "string" then
+                    return
+                end
+
+                local inviterName, patternIndex = extractInviterFromSystemMessage(text)
+                if inviterName then
+                    local shouldBlock, reason, keyword = getCharacterDecision(inviterName)
+                    debugLog("CHAT_OUTPUT", {
+                        frame = frameIndex,
+                        msg = text:sub(1, 300),
+                        name = inviterName,
+                        pattern = patternIndex or "?",
+                        shouldBlock = shouldBlock and true or false,
+                        reason = reason or "nil",
+                        keyword = keyword or "none",
+                    })
+                end
+            end)
+            if ok then
+                chatOutputHooked[chatFrame] = true
+            end
+        end
+    end
+end
+
+ns.hookChatOutputDiagnostics = hookChatOutputDiagnostics
 
 -- Mute invite sounds permanently while filtering is active (safe API, no taint)
 -- FileDataIDs verified via Wowhead sound database + in-game testing
@@ -773,53 +924,79 @@ local INVITE_SOUND_FILES = {
 }
 
 local function muteInviteSounds()
+    if inviteSoundsMutedBySanctuary then return end
     for _, fileID in ipairs(INVITE_SOUND_FILES) do
         pcall(MuteSoundFile, fileID)
     end
+    inviteSoundsMutedBySanctuary = true
+    debugLog("SOUND", {
+        action = "MUTE",
+        files = #INVITE_SOUND_FILES,
+        addonEnabled = isEnabled(),
+        groupInviteFilter = getEffective("filters.groupInvite") == true,
+    })
 end
 
 local function unmuteInviteSounds()
+    if not inviteSoundsMutedBySanctuary then return end
     for _, fileID in ipairs(INVITE_SOUND_FILES) do
         pcall(UnmuteSoundFile, fileID)
+    end
+    inviteSoundsMutedBySanctuary = false
+    debugLog("SOUND", {
+        action = "UNMUTE",
+        files = #INVITE_SOUND_FILES,
+        addonEnabled = isEnabled(),
+        groupInviteFilter = getEffective("filters.groupInvite") == true,
+    })
+end
+
+local function refreshInviteSoundMuteState()
+    if isEnabled() and getEffective("filters.groupInvite") then
+        muteInviteSounds()
+    else
+        unmuteInviteSounds()
     end
 end
 
 ns.muteInviteSounds = muteInviteSounds
 ns.unmuteInviteSounds = unmuteInviteSounds
+ns.refreshInviteSoundMuteState = refreshInviteSoundMuteState
+ns.areInviteSoundsMuted = function()
+    return inviteSoundsMutedBySanctuary and true or false
+end
 
--- Close whisper/BNet chat tabs opened by blocked senders
--- Scans up to 20 ChatFrames (including non-visible/minimized ones)
-local function closeBlockedWhisperTabs()
+-- Close only the whisper/BNet tab that belongs to the blocked sender. The old
+-- implementation closed every non-whitelisted whisper tab and could destroy an
+-- unrelated conversation.
+local function closeBlockedWhisperTabs(blockedSender, isBNet)
+    if not blockedSender then return end
+
+    local normalizeTarget = isBNet and normalizeBNetName or normalizeName
+    local wanted = normalizeTarget(blockedSender)
+    if not wanted then return end
+
     C_Timer.After(0, function()
         for i = 1, 20 do
-            local frame = _G["ChatFrame" .. i]
-            if frame then
-                local ct = frame.chatType
-                if ct == "WHISPER" or ct == "BN_WHISPER" then
-                    local shouldClose = false
-
-                    -- Check chatTarget
-                    if frame.chatTarget then
-                        if not isWhitelisted(frame.chatTarget) then
-                            shouldClose = true
-                        end
+            local chatFrame = _G["ChatFrame" .. i]
+            if chatFrame then
+                local expectedType = isBNet and "BN_WHISPER" or "WHISPER"
+                if chatFrame.chatType == expectedType then
+                    local matches = false
+                    if chatFrame.chatTarget then
+                        matches = normalizeTarget(chatFrame.chatTarget) == wanted
                     end
 
-                    -- Check tab text as fallback
-                    if not shouldClose then
+                    if not matches then
                         local tab = _G["ChatFrame" .. i .. "Tab"]
-                        if tab then
-                            local tabText = tab.Text and tab.Text:GetText()
-                            if tabText then
-                                if not isWhitelisted(tabText) then
-                                    shouldClose = true
-                                end
-                            end
+                        local tabText = tab and tab.Text and tab.Text:GetText()
+                        if tabText then
+                            matches = normalizeTarget(tabText) == wanted
                         end
                     end
 
-                    if shouldClose then
-                        pcall(FCF_Close, frame)
+                    if matches then
+                        pcall(FCF_Close, chatFrame)
                     end
                 end
             end
@@ -828,133 +1005,276 @@ local function closeBlockedWhisperTabs()
 end
 
 -- Check if a BNet whisper sender has a character in the current group
-local function isBNetSenderInGroup(senderBNetName)
+isBNetSenderInGroup = function(senderBNetName)
     if not IsInGroup() then return false end
-    -- Try to find the BNet friend and check if their character is in our group
-    -- NOTE: BNGetNumFriends() may be deprecated in future; monitor for C_BattleNet replacement
-    local numFriends = BNGetNumFriends()
-    for i = 1, numFriends do
-        local info = C_BattleNet.GetFriendAccountInfo(i)
-        if info then
-            -- Check if the BNet name matches
-            local bnetName = info.accountName
-            if bnetName and normalizeName(bnetName) == normalizeName(senderBNetName) then
-                -- Found the BNet friend, check if their character is in our group
-                if info.gameAccountInfo and info.gameAccountInfo.characterName then
-                    local charName = normalizeName(info.gameAccountInfo.characterName)
-                    -- Check group members
-                    local numMembers = GetNumGroupMembers()
+    local senderKey = normalizeBNetName(senderBNetName)
+    if not senderKey then return false end
+
+    local found = false
+    pcall(function()
+        local numFriends = BNGetNumFriends() or 0
+        for i = 1, numFriends do
+            local info = C_BattleNet.GetFriendAccountInfo(i)
+            if info and normalizeBNetName(info.accountName) == senderKey then
+                local gameInfo = info.gameAccountInfo
+                local charName = gameInfo and normalizeName(gameInfo.characterName)
+                if charName then
+                    local numMembers = GetNumGroupMembers() or 0
                     local isRaid = IsInRaid()
                     for j = 1, numMembers do
                         local unit = isRaid and ("raid" .. j) or ("party" .. j)
                         local unitName = UnitName(unit)
                         if unitName and normalizeName(unitName) == charName then
-                            return true
+                            found = true
+                            return
                         end
                     end
                 end
             end
         end
+    end)
+    return found
+end
+
+-- ============================================================================
+-- Popup masking and event-order synchronization
+-- ============================================================================
+-- StaticPopup_Show runs synchronously inside Blizzard's event handling. A
+-- secure post-hook can therefore set alpha to zero before the next rendered
+-- frame. The PARTY_INVITE_REQUEST/DUEL_REQUESTED/GUILD_INVITE_REQUEST handler
+-- then supplies the trust decision. The small pending-decision bridge supports
+-- both possible handler orders: Sanctuary before Blizzard or Blizzard before
+-- Sanctuary.
+--
+-- Native decline APIs remain responsible for closing their own dialogs. Never
+-- call StaticPopup_Hide for these interactions: Midnight attaches stateful
+-- countdown tickers to some invite dialogs and direct hiding can leave them
+-- alive across popup reuse.
+local maskedPopupState = setmetatable({}, { __mode = "k" })
+local popupHideHooked = setmetatable({}, { __mode = "k" })
+local pendingPopupDecisions = {}
+local popupDecisionSerial = 0
+local POPUP_DECISION_MAX_AGE = 1.0
+
+local function restorePopup(dialog)
+    local state = maskedPopupState[dialog]
+    if not state then return end
+    maskedPopupState[dialog] = nil
+    if dialog and dialog.SetAlpha then
+        dialog:SetAlpha(state.alpha or 1)
+    end
+end
+
+local function maskPopupDialog(dialog, which)
+    if not dialog or not dialog.IsShown or not dialog:IsShown() then return false end
+    if dialog.which ~= which then return false end
+
+    if not maskedPopupState[dialog] then
+        maskedPopupState[dialog] = {
+            alpha = dialog.GetAlpha and dialog:GetAlpha() or 1,
+            which = which,
+        }
+    end
+
+    if not popupHideHooked[dialog] and dialog.HookScript then
+        popupHideHooked[dialog] = true
+        dialog:HookScript("OnHide", function(self)
+            restorePopup(self)
+        end)
+    end
+
+    dialog:SetAlpha(0)
+    return true
+end
+
+local function forEachStaticPopup(callback)
+    local count = tonumber(_G.STATICPOPUP_NUMDIALOGS) or 4
+    for i = 1, count do
+        local dialog = _G["StaticPopup" .. i]
+        if dialog then callback(dialog) end
+    end
+end
+
+local function countVisiblePopup(which)
+    local count = 0
+    forEachStaticPopup(function(dialog)
+        if dialog.IsShown and dialog:IsShown() and dialog.which == which then
+            count = count + 1
+        end
+    end)
+    return count
+end
+
+local function maskVisiblePopup(which)
+    local masked = 0
+    forEachStaticPopup(function(dialog)
+        if maskPopupDialog(dialog, which) then
+            masked = masked + 1
+        end
+    end)
+    return masked
+end
+
+local function unmaskVisiblePopup(which)
+    local restored = 0
+    forEachStaticPopup(function(dialog)
+        local state = maskedPopupState[dialog]
+        if state and (not which or state.which == which) then
+            restorePopup(dialog)
+            restored = restored + 1
+        end
+    end)
+    return restored
+end
+
+local function unmaskAllInteractionPopups()
+    unmaskVisiblePopup(nil)
+end
+
+local function clearPendingPopupDecision(which)
+    pendingPopupDecisions[which] = nil
+end
+
+local function applyPopupDecision(which, shouldBlock)
+    if shouldBlock then
+        return maskVisiblePopup(which)
+    end
+    return unmaskVisiblePopup(which)
+end
+
+local function synchronizePopupDecision(which, shouldBlock, name, reason)
+    popupDecisionSerial = popupDecisionSerial + 1
+    local decision = {
+        serial = popupDecisionSerial,
+        at = GetTime(),
+        shouldBlock = shouldBlock and true or false,
+        name = name,
+        reason = reason,
+    }
+    pendingPopupDecisions[which] = decision
+
+    -- If Blizzard already showed the popup, resolve it now. If Sanctuary ran
+    -- first, the StaticPopup_Show post-hook below consumes this decision later
+    -- in the same event dispatch.
+    local visible = countVisiblePopup(which)
+    if visible > 0 then
+        applyPopupDecision(which, decision.shouldBlock)
+    end
+
+    C_Timer.After(0, function()
+        if pendingPopupDecisions[which] == decision then
+            pendingPopupDecisions[which] = nil
+        end
+    end)
+end
+
+local function consumePendingPopupDecision(which)
+    local decision = pendingPopupDecisions[which]
+    if not decision then return nil end
+    pendingPopupDecisions[which] = nil
+    if (GetTime() - decision.at) > POPUP_DECISION_MAX_AGE then
+        return nil
+    end
+    return decision
+end
+
+local function isPopupProtectionActive(which)
+    if not isEnabled() then return false end
+    if which == "PARTY_INVITE" then
+        return getEffective("filters.groupInvite") == true
+    elseif which == "DUEL_REQUESTED" then
+        return getEffective("filters.duel") == true
+    elseif which == "GUILD_INVITE" then
+        return getEffective("filters.guildInvite") == true
     end
     return false
 end
+
+ns.maskVisiblePopup = maskVisiblePopup
+ns.unmaskVisiblePopup = unmaskVisiblePopup
+ns.unmaskAllInteractionPopups = unmaskAllInteractionPopups
+ns.clearPendingPopupDecision = clearPendingPopupDecision
 
 -- ============================================================================
 -- SECTION H: Event Handlers (side effects happen HERE, not in filters)
 -- ============================================================================
 
--- PARTY_INVITE_REQUEST: set flags for raw hooks (the raw hook on StaticPopup_Show
--- handles the actual decline + popup suppression, this handler is a safety net)
+-- PARTY_INVITE_REQUEST: classify the inviter, synchronize with the secure
+-- popup post-hook, then use Blizzard's native decline API when blocked.
 function handlers.PARTY_INVITE_REQUEST(name, isTank, isHealer, isDamage,
     isNativeRealm, allowMultipleRoles, inviterGUID, questSessionActive)
-    if not isEnabled() then return end
-    if not getEffective("filters.groupInvite") then return end
+    if not isEnabled() or not getEffective("filters.groupInvite") then
+        clearPendingPopupDecision("PARTY_INVITE")
+        unmaskVisiblePopup("PARTY_INVITE")
+        return
+    end
 
-    -- Compute debug data before acting
-    local wl = isWhitelisted(name)
-    local km, kw = matchesKeyword(name)
-    local action = wl and "ALLOW" or (km and "BLOCK_KEYWORD" or "BLOCK_WHITELIST")
+    local shouldBlock, reason, keyword = getCharacterDecision(name)
+    synchronizePopupDecision("PARTY_INVITE", shouldBlock, name, reason)
 
-    -- Debug: log invite event with full context
     debugLog("INVITE", {
         name = name,
         normalized = normalizeName(name),
         guid = inviterGUID or "nil",
-        isWL = wl,
-        keyword = km and kw or "none",
-        action = action,
+        isWL = reason == "whitelist",
+        keyword = keyword or "none",
+        action = shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_WHITELIST") or "ALLOW",
+        filterEnabled = getEffective("filters.groupInvite") == true,
+        popupProtectionActive = isPopupProtectionActive("PARTY_INVITE"),
+        soundMuted = inviteSoundsMutedBySanctuary and true or false,
         inGroup = IsInGroup() and true or false,
         groupSize = IsInGroup() and GetNumGroupMembers() or 0,
+        popupVisible = countVisiblePopup("PARTY_INVITE"),
         wlCache = ns.getWhitelistCacheSize(),
     })
 
-    -- Whitelisted players are never blocked
-    if wl then
-        -- Whitelisted: briefly unmute so the invite sound plays, then re-mute
-        unmuteInviteSounds()
-        C_Timer.After(0.5, muteInviteSounds)
-        return
-    end
+    if not shouldBlock then return end
 
-    -- Keyword blacklist
-    if km then
-        DeclineGroup()
-        StaticPopup_Hide("PARTY_INVITE")
-        C_Timer.After(0.05, function() StaticPopup_Hide("PARTY_INVITE") end)
-        logBlock("groupInvite", name, nil, inviterGUID, kw)
-        return
-    end
-
-    -- Block non-whitelisted: decline, hide popup, log (sound already muted permanently)
+    -- Keep the dialog invisible and use only Blizzard's native decline path.
     DeclineGroup()
-    StaticPopup_Hide("PARTY_INVITE")
-    C_Timer.After(0.05, function() StaticPopup_Hide("PARTY_INVITE") end)
-    logBlock("groupInvite", name, nil, inviterGUID)
+    logBlock("groupInvite", name, nil, inviterGUID, keyword)
 end
 
--- DUEL_REQUESTED: safety net (raw hook on StaticPopup_Show handles the popup)
+-- DUEL_REQUESTED follows the same event-order-safe popup path.
 function handlers.DUEL_REQUESTED(playerName)
-    if not isEnabled() then return end
-    if not getEffective("filters.duel") then return end
-
-    -- Whitelisted players are never blocked
-    if isWhitelisted(playerName) then return end
-
-    -- Keyword blacklist
-    local keyMatch, keyWord = matchesKeyword(playerName)
-    if keyMatch then
-        CancelDuel()
-        StaticPopup_Hide("DUEL_REQUESTED")
-        logBlock("duel", playerName, nil, nil, keyWord)
+    if not isEnabled() or not getEffective("filters.duel") then
+        clearPendingPopupDecision("DUEL_REQUESTED")
+        unmaskVisiblePopup("DUEL_REQUESTED")
         return
     end
 
-    -- Block non-whitelisted
+    local shouldBlock, reason, keyword = getCharacterDecision(playerName)
+    synchronizePopupDecision("DUEL_REQUESTED", shouldBlock, playerName, reason)
+    debugLog("DUEL", {
+        name = playerName,
+        action = shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_WHITELIST") or "ALLOW",
+    })
+
+    if not shouldBlock then return end
+
     CancelDuel()
-    StaticPopup_Hide("DUEL_REQUESTED")
-    logBlock("duel", playerName, nil, nil)
+    logBlock("duel", playerName, nil, nil, keyword)
 end
 
 function handlers.GUILD_INVITE_REQUEST(inviter, guildName)
-    if not isEnabled() then return end
-    if not getEffective("filters.guildInvite") then return end
-
-    -- Whitelisted players are never blocked
-    if isWhitelisted(inviter) then return end
-
-    -- Keyword blacklist
-    local keyMatch, keyWord = matchesKeyword(inviter)
-    if keyMatch then
-        DeclineGuild()
-        StaticPopup_Hide("GUILD_INVITE")
-        logBlock("guildInvite", inviter, guildName, nil, keyWord)
+    if not isEnabled() or not getEffective("filters.guildInvite") then
+        clearPendingPopupDecision("GUILD_INVITE")
+        unmaskVisiblePopup("GUILD_INVITE")
         return
     end
 
-    -- Block non-whitelisted
+    local shouldBlock, reason, keyword = getCharacterDecision(inviter)
+    synchronizePopupDecision("GUILD_INVITE", shouldBlock, inviter, reason)
+    debugLog("GUILD_INVITE", {
+        name = inviter,
+        guild = guildName or "nil",
+        action = shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_WHITELIST") or "ALLOW",
+    })
+
+    if not shouldBlock then return end
+
     DeclineGuild()
-    StaticPopup_Hide("GUILD_INVITE")
-    logBlock("guildInvite", inviter, guildName, nil)
+    logBlock("guildInvite", inviter, guildName, nil, keyword)
 end
 
 -- TRADE_SHOW: auto-close + log (P1)
@@ -962,48 +1282,69 @@ function handlers.TRADE_SHOW()
     if not isEnabled() then return end
     if not getEffective("filters.trade") then return end
 
-    -- Trade partner detection (imperfect — WoW API limitation)
+    -- Trade partner detection is limited by the WoW API. Prefer the unit token,
+    -- then fall back to the recipient label.
     local tradeName = UnitName("NPC")
         or (TradeFrameRecipientNameText and TradeFrameRecipientNameText:GetText())
         or nil
-    if not tradeName or tradeName == "" then return end
-
-    -- Whitelisted players are never blocked
-    if isWhitelisted(tradeName) then return end
-
-    -- Keyword blacklist
-    local keyMatch, keyWord = matchesKeyword(tradeName)
-    if keyMatch then
-        CloseTrade()
-        logBlock("trade", tradeName, nil, nil, keyWord)
+    if not tradeName or tradeName == "" then
+        debugLog("TRADE", { action = "NO_PARTNER_NAME" })
         return
     end
 
-    -- Block non-whitelisted
+    local shouldBlock, reason, keyword = getCharacterDecision(tradeName)
+    if not shouldBlock then return end
+
     CloseTrade()
-    logBlock("trade", tradeName, nil, nil)
+    logBlock("trade", tradeName, nil, nil, keyword)
+    debugLog("TRADE", {
+        name = tradeName,
+        action = reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_WHITELIST",
+    })
 end
 
--- Whitelist refresh events (with debug dedup to avoid log spam from WoW firing events in bursts)
-local lastSocialDebugKey = ""
-local lastSocialDebugTime = 0
+-- Whitelist refresh events. WoW fires roster events in bursts (and sometimes
+-- continuously); keep diagnostics useful by logging only changes or a 60s
+-- heartbeat per event type.
+local lastSocialDebugByEvent = {}
 
 local function debugLogSocial(eventName)
+    if not SanctuaryDB or not SanctuaryDB.debugEnabled then return end
+
     local gm = 0; pcall(function() gm = GetNumGuildMembers() end)
     local bn = 0; pcall(function() bn = BNGetNumFriends() end)
     local cf = 0; pcall(function() cf = C_FriendList.GetNumFriends() end)
-    -- Dedup: skip if same event + same counts within 2 seconds
-    local key = eventName .. ":" .. gm .. ":" .. bn .. ":" .. cf
+    local bnetCN = countBNetWithCharName()
+    local key = gm .. ":" .. bn .. ":" .. cf .. ":" .. bnetCN
     local now = GetTime()
-    if key == lastSocialDebugKey and (now - lastSocialDebugTime) < 2 then return end
-    lastSocialDebugKey = key
-    lastSocialDebugTime = now
-    debugLog("SOCIAL", { event = eventName, guild = gm, bnet = bn, friends = cf, bnetCN = countBNetWithCharName() })
+    local previous = lastSocialDebugByEvent[eventName]
+    if previous and previous.key == key and (now - previous.time) < 60 then
+        return
+    end
+
+    lastSocialDebugByEvent[eventName] = { key = key, time = now }
+    debugLog("SOCIAL", {
+        event = eventName,
+        guild = gm,
+        bnet = bn,
+        friends = cf,
+        bnetCN = bnetCN,
+    })
 end
 
 function handlers.GUILD_ROSTER_UPDATE()
     invalidateWhitelist()
     debugLogSocial("GUILD_ROSTER_UPDATE")
+end
+
+function handlers.PLAYER_GUILD_UPDATE()
+    invalidateWhitelist()
+    debugLogSocial("PLAYER_GUILD_UPDATE")
+    pcall(function()
+        if C_GuildInfo and C_GuildInfo.GuildRoster then
+            C_GuildInfo.GuildRoster()
+        end
+    end)
 end
 
 function handlers.FRIENDLIST_UPDATE()
@@ -1021,20 +1362,27 @@ function handlers.BN_FRIEND_LIST_SIZE_CHANGED()
     debugLogSocial("BN_FRIEND_LIST_SIZE_CHANGED")
 end
 
-function handlers.GROUP_ROSTER_UPDATE()
+local function refreshGroupTracker()
     invalidateWhitelist()
-    if not isEnabled() then return end
-    if not getEffective("filters.autoTrust") then return end
     if not SanctuaryCharDB or not SanctuaryCharDB.groupTracker then return end
+
+    if not isEnabled() or not getEffective("filters.autoTrust") then
+        wipe(SanctuaryCharDB.groupTracker)
+        return
+    end
 
     local currentMembers = {}
     if IsInGroup() then
-        local numMembers = GetNumGroupMembers()
+        local numMembers = GetNumGroupMembers() or 0
         local isRaid = IsInRaid()
         for i = 1, numMembers do
             local unit = isRaid and ("raid" .. i) or ("party" .. i)
-            local name = UnitName(unit)
-            if name and name ~= UnitName("player") and name ~= UNKNOWNOBJECT then
+            local isPlayer = UnitIsUnit and UnitIsUnit(unit, "player")
+            local name, realm = UnitName(unit)
+            if name and not isPlayer and name ~= UNKNOWNOBJECT then
+                if realm and realm ~= "" then
+                    name = name .. "-" .. realm
+                end
                 local normalized = normalizeName(name)
                 if normalized then
                     currentMembers[normalized] = true
@@ -1053,107 +1401,185 @@ function handlers.GROUP_ROSTER_UPDATE()
     end
 end
 
--- Whisper event handler for logging + tab closing
-function handlers.CHAT_MSG_WHISPER(msg, sender, ...)
-    if not isEnabled() then return end
-    -- Whitelisted players are never blocked
-    if isWhitelisted(sender) then return end
-    -- Keyword blacklist
-    local keyMatch, keyWord = matchesKeyword(sender)
-    if keyMatch then
-        logBlock("whisper", sender, msg, nil, keyWord)
-        closeBlockedWhisperTabs()
-        return
-    end
-    if not getEffective("filters.whisper") then return end
-    -- Block non-whitelisted
-    logBlock("whisper", sender, msg, nil)
-    closeBlockedWhisperTabs()
+function handlers.GROUP_ROSTER_UPDATE()
+    refreshGroupTracker()
 end
 
--- BNet whisper handler: BNet senders use account names, not character names,
--- so we need special group member detection via BNet API
-function handlers.CHAT_MSG_BN_WHISPER(msg, sender, ...)
-    if not isEnabled() then return end
-    -- Whitelisted players are never blocked (check BNet group membership too)
-    if isWhitelisted(sender) then return end
-    if isBNetSenderInGroup(sender) then return end
-    -- Keyword blacklist
-    local keyMatch, keyWord = matchesKeyword(sender)
-    if keyMatch then
-        logBlock("whisper", sender, msg, nil, keyWord)
-        closeBlockedWhisperTabs()
+ns.refreshGroupTracker = refreshGroupTracker
+
+-- CHAT_MSG_SYSTEM is also emitted when an invitation cannot create a popup
+-- (for example while already grouped/in a dungeon). This handler records that
+-- path once; the chat-frame filter above performs the actual suppression.
+function handlers.CHAT_MSG_SYSTEM(msg, ...)
+    if not isEnabled() or not getEffective("filters.groupInvite") then return end
+
+    local inviterName, patternIndex = extractInviterFromSystemMessage(msg)
+    if not inviterName then
+        if SanctuaryDB and SanctuaryDB.debugEnabled and msg
+            and (msg:lower():find("invit", 1, true) or msg:lower():find("group", 1, true)) then
+            debugLog("SYSTEM_INVITE", {
+                msg = msg:sub(1, 300),
+                result = "NO_MATCH",
+            })
+        end
         return
     end
-    if not getEffective("filters.whisper") then return end
-    -- Block non-whitelisted
-    logBlock("whisper", sender, msg, nil)
-    closeBlockedWhisperTabs()
+
+    local shouldBlock, reason, keyword = getCharacterDecision(inviterName)
+    debugLog("SYSTEM_INVITE", {
+        msg = msg:sub(1, 300),
+        name = inviterName,
+        pattern = patternIndex or "?",
+        isWL = reason == "whitelist",
+        keyword = keyword or "none",
+        result = shouldBlock and (reason == "keyword" and "SUPPRESS_KEYWORD" or "SUPPRESS_NOT_WHITELISTED") or "PASS_WHITELISTED",
+        inGroup = IsInGroup() and true or false,
+        soundMuted = inviteSoundsMutedBySanctuary and true or false,
+    })
+
+    if shouldBlock then
+        logBlock("groupInvite", inviterName, msg, nil, keyword)
+    end
+end
+
+-- Whisper event handler for logging + exact-tab closing
+function handlers.CHAT_MSG_WHISPER(msg, sender, ...)
+    if not isEnabled() then return end
+
+    local shouldBlock, reason, keyword = getCharacterDecision(sender)
+    local filterEnabled = getEffective("filters.whisper") == true
+    if reason ~= "keyword" and not filterEnabled then
+        debugLogChatDecision("whisper", sender, msg, "PASS_FILTER_DISABLED", reason, keyword, {
+            filterEnabled = false,
+        })
+        return
+    end
+    debugLogChatDecision("whisper", sender, msg,
+        shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
+        reason, keyword, {
+            filterEnabled = filterEnabled,
+        })
+    if not shouldBlock then return end
+
+    logBlock("whisper", sender, msg, nil, keyword)
+    closeBlockedWhisperTabs(sender, false)
+end
+
+function handlers.CHAT_MSG_BN_WHISPER(msg, sender, ...)
+    if not isEnabled() then return end
+
+    local keywordMatch, keyword = matchesKeyword(sender)
+    local filterEnabled = getEffective("filters.whisper") == true
+    if not keywordMatch and not filterEnabled then
+        debugLogChatDecision("bn_whisper", sender, msg, "PASS_FILTER_DISABLED", "filter_disabled", keyword, {
+            filterEnabled = false,
+        })
+        return
+    end
+
+    local action = "BLOCK_NOT_WHITELISTED"
+    local reason = "not_whitelisted"
+    if keywordMatch then
+        action = "BLOCK_KEYWORD"
+        reason = "keyword"
+    elseif isBNetWhitelisted(sender) then
+        action = "ALLOW"
+        reason = "bnet_whitelist"
+    elseif isBNetSenderInGroup(sender) then
+        action = "ALLOW"
+        reason = "bnet_group"
+    end
+
+    debugLogChatDecision("bn_whisper", sender, msg, action, reason, keyword, {
+        filterEnabled = filterEnabled,
+    })
+    if action == "ALLOW" then return end
+
+    logBlock("whisper", sender, msg, nil, keyword)
+    closeBlockedWhisperTabs(sender, true)
 end
 
 function handlers.CHAT_MSG_SAY(msg, sender, ...)
-    if not isEnabled() then return end
-    -- Whitelisted players are never blocked
-    if isWhitelisted(sender) then return end
-    -- Keyword blacklist
-    local keyMatch, keyWord = matchesKeyword(sender)
-    if keyMatch then
-        logBlock("say", sender, msg, nil, keyWord)
+    if not isEnabled() or isSelf(sender) then return end
+    local shouldBlock, reason, keyword = getCharacterDecision(sender)
+    local filterEnabled = getEffective("filters.say") == true
+    if reason ~= "keyword" and not filterEnabled then
+        debugLogChatDecision("say", sender, msg, "PASS_FILTER_DISABLED", reason, keyword, {
+            filterEnabled = false,
+        })
         return
     end
-    if not getEffective("filters.say") then return end
-    -- Block non-whitelisted
-    logBlock("say", sender, msg, nil)
+    debugLogChatDecision("say", sender, msg,
+        shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
+        reason, keyword, {
+            filterEnabled = filterEnabled,
+        })
+    if shouldBlock then logBlock("say", sender, msg, nil, keyword) end
 end
 
 function handlers.CHAT_MSG_YELL(msg, sender, ...)
-    if not isEnabled() then return end
-    -- Whitelisted players are never blocked
-    if isWhitelisted(sender) then return end
-    -- Keyword blacklist
-    local keyMatch, keyWord = matchesKeyword(sender)
-    if keyMatch then
-        logBlock("yell", sender, msg, nil, keyWord)
+    if not isEnabled() or isSelf(sender) then return end
+    local shouldBlock, reason, keyword = getCharacterDecision(sender)
+    local filterEnabled = getEffective("filters.yell") == true
+    if reason ~= "keyword" and not filterEnabled then
+        debugLogChatDecision("yell", sender, msg, "PASS_FILTER_DISABLED", reason, keyword, {
+            filterEnabled = false,
+        })
         return
     end
-    if not getEffective("filters.yell") then return end
-    -- Block non-whitelisted
-    logBlock("yell", sender, msg, nil)
+    debugLogChatDecision("yell", sender, msg,
+        shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
+        reason, keyword, {
+            filterEnabled = filterEnabled,
+        })
+    if shouldBlock then logBlock("yell", sender, msg, nil, keyword) end
 end
 
 function handlers.CHAT_MSG_EMOTE(msg, sender, ...)
-    if not isEnabled() then return end
-    -- Whitelisted players are never blocked
-    if isWhitelisted(sender) then return end
-    -- Keyword blacklist
-    local keyMatch, keyWord = matchesKeyword(sender)
-    if keyMatch then
-        logBlock("emote", sender, msg, nil, keyWord)
+    if not isEnabled() or isSelf(sender) then return end
+    local shouldBlock, reason, keyword = getCharacterDecision(sender)
+    local filterEnabled = getEffective("filters.emote") == true
+    if reason ~= "keyword" and not filterEnabled then
+        debugLogChatDecision("emote", sender, msg, "PASS_FILTER_DISABLED", reason, keyword, {
+            filterEnabled = false,
+        })
         return
     end
-    if not getEffective("filters.emote") then return end
-    -- Block non-whitelisted
-    logBlock("emote", sender, msg, nil)
+    debugLogChatDecision("emote", sender, msg,
+        shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
+        reason, keyword, {
+            filterEnabled = filterEnabled,
+        })
+    if shouldBlock then logBlock("emote", sender, msg, nil, keyword) end
 end
 
--- CHAT_MSG_TEXT_EMOTE: standard emotes (/dance, /wave, etc.) — same logic as custom emotes
 handlers.CHAT_MSG_TEXT_EMOTE = handlers.CHAT_MSG_EMOTE
 
 function handlers.CHAT_MSG_CHANNEL(msg, sender, ...)
-    if not isEnabled() then return end
+    if not isEnabled() or isSelf(sender) then return end
     local mode = getEffective("filters.channelMode") or "none"
-    if mode == "none" then return end
-    -- Whitelisted players are never blocked
-    if isWhitelisted(sender) then return end
-    -- Keyword blacklist
-    local keyMatch, keyWord = matchesKeyword(sender)
-    if keyMatch then
-        logBlock("channel", sender, msg, nil, keyWord)
+    if mode == "none" then
+        debugLogChatDecision("channel", sender, msg, "PASS_MODE_NONE", "channel_none", nil, {
+            channelMode = mode,
+        })
         return
     end
-    -- Block non-whitelisted in "all" mode
-    if mode == "all" then
+
+    local shouldBlock, reason, keyword = getCharacterDecision(sender)
+    if reason == "keyword" then
+        debugLogChatDecision("channel", sender, msg, "BLOCK_KEYWORD", reason, keyword, {
+            channelMode = mode,
+        })
+        logBlock("channel", sender, msg, nil, keyword)
+    elseif mode == "all" and shouldBlock then
+        debugLogChatDecision("channel", sender, msg, "BLOCK_NOT_WHITELISTED", reason, nil, {
+            channelMode = mode,
+        })
         logBlock("channel", sender, msg, nil)
+    else
+        debugLogChatDecision("channel", sender, msg, "ALLOW", reason, keyword, {
+            channelMode = mode,
+        })
     end
 end
 
@@ -1161,11 +1587,139 @@ end
 -- SECTION I: Slash Command Handler
 -- ============================================================================
 
--- /sanc and /sanctuary open the GUI. All configuration is done through the UI.
+local function trimCommandText(text)
+    if type(text) ~= "string" then return "" end
+    return (text:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function buildInviteSystemMessage(name, alreadyInGroup)
+    local template
+    if alreadyInGroup then
+        template = ERR_INVITED_ALREADY_IN_GROUP_SS or ERR_INVITED_ALREADY_IN_GROUP_S
+    else
+        template = ERR_INVITED_TO_GROUP_SS or ERR_INVITED_TO_GROUP_S
+    end
+
+    if type(template) == "string" and template ~= "" then
+        local ok, message = pcall(string.format, template, name, name)
+        if ok and type(message) == "string" then
+            return message
+        end
+    end
+
+    if alreadyInGroup then
+        return "[" .. name .. "] vous a invite a rejoindre un groupe, mais vous ne pouviez pas accepter car vous etes deja dans un groupe."
+    end
+    return "[" .. name .. "] vous a invite a rejoindre un groupe."
+end
+
+local function simulateInvite(name)
+    local target = trimCommandText(name)
+    if target == "" then
+        target = "SanctuaryTest"
+    end
+
+    local shouldBlock, reason, keyword = getCharacterDecision(target)
+    local normalMessage = buildInviteSystemMessage(target, false)
+    local alreadyGroupMessage = buildInviteSystemMessage(target, true)
+    local groupInviteFilterEnabled = isEnabled() and getEffective("filters.groupInvite") == true
+    local popupProtectionActive = isPopupProtectionActive("PARTY_INVITE")
+    local popupAction = "pass"
+
+    if groupInviteFilterEnabled then
+        if shouldBlock then
+            popupAction = popupProtectionActive and "mask" or "unprotected"
+        else
+            popupAction = "show"
+        end
+    end
+
+    local result = {
+        name = target,
+        normalized = normalizeName(target),
+        shouldBlock = shouldBlock and true or false,
+        reason = reason or "unknown",
+        keyword = keyword,
+        filterEnabled = groupInviteFilterEnabled and true or false,
+        popupProtectionActive = popupProtectionActive and true or false,
+        popupAction = popupAction,
+        systemMessage = normalMessage,
+        alreadyGroupMessage = alreadyGroupMessage,
+        systemSuppressed = systemMessageFilter(nil, "CHAT_MSG_SYSTEM", normalMessage) and true or false,
+        alreadyGroupSuppressed = systemMessageFilter(nil, "CHAT_MSG_SYSTEM", alreadyGroupMessage) and true or false,
+        wouldDecline = groupInviteFilterEnabled and shouldBlock and true or false,
+        declined = false,
+        inviteSoundsMuted = inviteSoundsMutedBySanctuary and true or false,
+    }
+
+    debugLog("SIMULATE_INVITE", {
+        name = result.name,
+        normalized = result.normalized or "nil",
+        reason = result.reason,
+        keyword = result.keyword or "none",
+        action = result.shouldBlock and "BLOCK" or "ALLOW",
+        popup = result.popupAction,
+        system = result.systemSuppressed and "SUPPRESS" or "PASS",
+        alreadyGroup = result.alreadyGroupSuppressed and "SUPPRESS" or "PASS",
+        wouldDecline = result.wouldDecline and true or false,
+        declined = false,
+    })
+
+    return result
+end
+
+local function formatSimulationResult(result)
+    local action = result.shouldBlock and "BLOCK" or "ALLOW"
+    local system = result.systemSuppressed and "blocked" or "visible"
+    local alreadyGroup = result.alreadyGroupSuppressed and "blocked" or "visible"
+    local wouldDecline = result.wouldDecline and "yes" or "no"
+    local soundMute = result.inviteSoundsMuted and "yes" or "no"
+    local reason = result.reason
+    if result.keyword then
+        reason = reason .. ":" .. result.keyword
+    end
+
+    return string.format(
+        "Simulation invite: %s -> %s (%s) | popup=%s | chat=%s | already-group=%s | would-decline=%s | API=not-called | sound-muted=%s",
+        result.name,
+        action,
+        reason,
+        result.popupAction,
+        system,
+        alreadyGroup,
+        wouldDecline,
+        soundMute
+    )
+end
+
+local function resolveSimulationTarget(args)
+    local text = trimCommandText(args)
+    local first, rest = text:match("^(%S+)%s*(.*)$")
+    if first and first:lower() == "invite" then
+        text = trimCommandText(rest)
+    end
+    if text == "" then
+        text = "SanctuaryTest"
+    end
+    return text
+end
+
+ns.simulateInvite = simulateInvite
+ns.formatSimulationResult = formatSimulationResult
+
+-- /sanc and /sanctuary open the GUI. Diagnostic subcommands stay hidden.
 SLASH_SANCTUARY1 = "/sanctuary"
 SLASH_SANCTUARY2 = "/sanc"
 SlashCmdList["SANCTUARY"] = function(msg)
     xpcall(function()
+        local command, rest = trimCommandText(msg):match("^(%S+)%s*(.*)$")
+        command = command and command:lower() or ""
+        if command == "simulate" or command == "sim" then
+            local result = simulateInvite(resolveSimulationTarget(rest))
+            printMsg(formatSimulationResult(result))
+            return
+        end
+
         if ns.ToggleUI then
             ns.ToggleUI()
         end
@@ -1198,8 +1752,9 @@ function handlers.ADDON_LOADED(addonName)
     buildInvitePatterns()
     ns.invitePatterns = invitePatterns
 
-    -- Register chat message filters
+    -- Register chat message filters and diagnostics observers.
     registerChatFilters()
+    hookChatOutputDiagnostics()
 
     -- Reset session stats
     SanctuaryCharDB.sessionStats = { blockedCount = 0, blockedByType = {} }
@@ -1222,10 +1777,8 @@ function handlers.ADDON_LOADED(addonName)
         printMsg(L["BADBOY_DETECTED"])
     end
 
-    -- Mute invite sounds permanently while filtering is active
-    if isEnabled() and getEffective("filters.groupInvite") then
-        muteInviteSounds()
-    end
+    -- Keep invite audio suppression aligned with the effective setting.
+    refreshInviteSoundMuteState()
 
     -- Debug: capture snapshot at load time (if debug was already enabled)
     captureDebugSnapshot()
@@ -1233,22 +1786,34 @@ function handlers.ADDON_LOADED(addonName)
     frame:UnregisterEvent("ADDON_LOADED")
 end
 
+local hasEnteredWorld = false
+
 function handlers.PLAYER_ENTERING_WORLD()
     invalidateWhitelist()
     debugLog("WORLD", {
         isInGuild = IsInGuild() and true or false,
         isInGroup = IsInGroup() and true or false,
+        initial = not hasEnteredWorld,
     })
-    -- Clean group tracker on login
-    if SanctuaryCharDB then
-        SanctuaryCharDB.groupTracker = {}
+
+    -- Reset session-only tracking once at login, not on every dungeon/loading
+    -- screen transition. The previous behavior restarted the five-minute timer
+    -- whenever PLAYER_ENTERING_WORLD fired inside an instance.
+    if SanctuaryCharDB and not hasEnteredWorld then
+        wipe(SanctuaryCharDB.groupTracker)
     end
-    -- Request friend/guild data refresh
+    hasEnteredWorld = true
+    refreshGroupTracker()
+    refreshInviteSoundMuteState()
+    hookChatOutputDiagnostics()
+
+    -- Request social data refresh. Both calls are pcall-wrapped because their
+    -- availability/state varies during login and loading transitions.
     pcall(function()
         C_FriendList.ShowFriends()
     end)
     pcall(function()
-        if IsInGuild() and C_GuildInfo then
+        if C_GuildInfo and C_GuildInfo.GuildRoster then
             C_GuildInfo.GuildRoster()
         end
     end)
@@ -1263,10 +1828,12 @@ local events = {
     "GUILD_INVITE_REQUEST",
     "TRADE_SHOW",
     "GUILD_ROSTER_UPDATE",
+    "PLAYER_GUILD_UPDATE",
     "FRIENDLIST_UPDATE",
     "BN_FRIEND_INFO_CHANGED",
     "BN_FRIEND_LIST_SIZE_CHANGED",
     "GROUP_ROSTER_UPDATE",
+    "CHAT_MSG_SYSTEM",
     "CHAT_MSG_WHISPER",
     "CHAT_MSG_BN_WHISPER",
     "CHAT_MSG_SAY",
@@ -1287,61 +1854,42 @@ frame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
--- Post-hook on StaticPopup_Show: hide blocked popups immediately after creation
--- Uses hooksecurefunc (safe, no taint) instead of raw hook
---
--- Note: text_arg1 format varies across WoW versions:
---   Old (MoP):     raw name           "PlayerName"
---   Modern:        formatted sentence  "PlayerName vous a invité à rejoindre un groupe."
---   Modern+friend: colored sentence    "|cff00aaffPlayerName|r vous a invité..."
---   Hypothetical:  hyperlink           "|Hplayer:PlayerName|h[PlayerName]|h"
--- extractPopupInviterName handles all these cases safely.
-local function extractPopupInviterName(text)
-    if not text or type(text) ~= "string" then return nil end
-    -- Strategy 1: pattern-based extraction (handles formatted sentences)
-    local name = extractInviterFromSystemMessage(text)
-    if name then return name end
-    -- Strategy 2: no space = not a sentence = raw name, hyperlink, or colored name
-    -- (WoW character names never contain spaces)
-    if not text:find(" ") then return text end
-    -- Can't extract → return nil (let the event handler deal with it)
-    return nil
-end
-
-hooksecurefunc("StaticPopup_Show", function(which, text_arg1)
-    if not isEnabled() then return end
-
-    if which == "PARTY_INVITE" and getEffective("filters.groupInvite") then
-        local name = extractPopupInviterName(text_arg1)
-        local wl = name and isWhitelisted(name) or false
-        -- Determine which extraction strategy was used
-        local strategy = "nil"
-        if name then
-            local fromPattern = extractInviterFromSystemMessage(tostring(text_arg1 or ""))
-            strategy = fromPattern and "pattern" or "raw"
-        end
-        debugLog("POPUP", {
-            which = which,
-            text_arg1 = tostring(text_arg1 or "nil"):sub(1, 200),
-            extracted = name or "nil",
-            strategy = strategy,
-            isWL = wl,
-            action = (not name) and "NIL_NAME" or (wl and "KEEP" or "HIDE"),
-        })
-        if name and not wl then
-            StaticPopup_Hide("PARTY_INVITE")
-        end
-    elseif which == "DUEL_REQUESTED" and getEffective("filters.duel") then
-        local name = extractPopupInviterName(text_arg1)
-        if name and not isWhitelisted(name) then
-            StaticPopup_Hide("DUEL_REQUESTED")
-        end
-    elseif which == "GUILD_INVITE" and getEffective("filters.guildInvite") then
-        local name = extractPopupInviterName(text_arg1)
-        if name and not isWhitelisted(name) then
-            StaticPopup_Hide("GUILD_INVITE")
-        end
+-- Secure post-hook: mask protected interaction popups before the next frame.
+-- The event-order bridge above makes this safe for trusted invitations too.
+hooksecurefunc("StaticPopup_Show", function(which, text_arg1, text_arg2, data)
+    if which ~= "PARTY_INVITE" and which ~= "DUEL_REQUESTED" and which ~= "GUILD_INVITE" then
+        return
     end
+
+    if not isPopupProtectionActive(which) then
+        clearPendingPopupDecision(which)
+        unmaskVisiblePopup(which)
+        return
+    end
+
+    local decision = consumePendingPopupDecision(which)
+    local affected
+    local action
+    if decision then
+        affected = applyPopupDecision(which, decision.shouldBlock)
+        action = decision.shouldBlock and "MASK_DECIDED_BLOCK" or "SHOW_DECIDED_ALLOW"
+    else
+        -- Blizzard ran first: hide immediately; Sanctuary's event handler will
+        -- resolve allow/block later in the same synchronous event dispatch.
+        affected = maskVisiblePopup(which)
+        action = "MASK_AWAITING_EVENT"
+    end
+
+    debugLog("POPUP", {
+        which = which,
+        action = action,
+        affected = affected or 0,
+        pendingName = decision and decision.name or "nil",
+        pendingReason = decision and decision.reason or "nil",
+        text_arg1 = tostring(text_arg1 or "nil"):sub(1, 200),
+        text_arg2 = tostring(text_arg2 or "nil"):sub(1, 100),
+        dataType = type(data),
+    })
 end)
 
 -- Auto-trust: check if group members passed the threshold
