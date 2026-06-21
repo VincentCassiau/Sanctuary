@@ -19,6 +19,14 @@ local function equal(actual, expected, message)
     end
 end
 
+local function makeSecretValue(label)
+    return setmetatable({ __secret = true, label = label }, {
+        __tostring = function()
+            error("secret value must not be stringified")
+        end,
+    })
+end
+
 local function lastDebug(cat, action)
     if not SanctuaryDB or not SanctuaryDB.debugLog then return nil end
     for i = #SanctuaryDB.debugLog, 1, -1 do
@@ -41,6 +49,8 @@ function time() return 1700000000 + math.floor(now) end
 function date(fmt, value) return "2026-06-20 12:00:00" end
 function GetLocale() return "frFR" end
 function GetNormalizedRealmName() return "TestRealm" end
+function issecretvalue(value) return type(value) == "table" and value.__secret == true end
+function canaccessvalue(value) return not issecretvalue(value) end
 
 UNKNOWNOBJECT = "Unknown"
 STATICPOPUP_NUMDIALOGS = 4
@@ -432,7 +442,8 @@ filtered = chatFilters.CHAT_MSG_BN_WHISPER(nil, "CHAT_MSG_BN_WHISPER", "hello", 
 check(filtered, "unknown BNet whisper blocked")
 
 -- Manual whitelist entries store a character-normalized key, but BNet account
--- display names may contain spaces. The displayName must feed the BNet cache.
+-- display names may contain spaces or be one-word names. UI/legacy manual
+-- entries do not carry source metadata, so they must feed the BNet cache too.
 bnetFriends = {}
 SanctuaryDB.manualWhitelist.manualbnet = { displayName = "Manual Battle" }
 ns.invalidateWhitelist()
@@ -440,12 +451,20 @@ check(ns.isBNetWhitelisted("Manual Battle"), "manual displayName cached as BNet 
 filtered = chatFilters.CHAT_MSG_BN_WHISPER(nil, "CHAT_MSG_BN_WHISPER", "hello", "Manual Battle")
 check(not filtered, "manual BNet displayName whisper passes")
 SanctuaryDB.manualWhitelist.manualbnet = nil
-SanctuaryDB.manualWhitelist.characteronly = { displayName = "Characteronly" }
+SanctuaryDB.manualWhitelist.onewordbnet = { displayName = "Zephos" }
 ns.invalidateWhitelist()
-check(not ns.isBNetWhitelisted("Characteronly"), "character-only manual whitelist does not become BNet account")
-filtered = chatFilters.CHAT_MSG_BN_WHISPER(nil, "CHAT_MSG_BN_WHISPER", "hello", "Characteronly")
-check(filtered, "character-only manual whitelist does not allow matching BNet display")
-SanctuaryDB.manualWhitelist.characteronly = nil
+check(ns.isBNetWhitelisted("Zephos"), "one-word manual displayName cached as BNet account")
+filtered = chatFilters.CHAT_MSG_BN_WHISPER(nil, "CHAT_MSG_BN_WHISPER", "hello", "Zephos")
+check(not filtered, "one-word manual BNet displayName whisper passes")
+SanctuaryDB.manualWhitelist.onewordbnet = nil
+SanctuaryDB.manualWhitelist.autotrustchar = { displayName = "AutoTrustChar", source = "trust" }
+ns.invalidateWhitelist()
+check(not ns.isBNetWhitelisted("AutoTrustChar"), "auto-trust character whitelist does not become BNet account")
+SanctuaryDB.manualWhitelist.autotrustchar = nil
+SanctuaryDB.manualWhitelist.legacycharacter = { displayName = "LegacyCharacter", source = "character" }
+ns.invalidateWhitelist()
+check(ns.isBNetWhitelisted("LegacyCharacter"), "legacy character-source manual entry still feeds BNet cache")
+SanctuaryDB.manualWhitelist.legacycharacter = nil
 bnetFriends = {
     { accountName = "Battle Friend", gameAccountInfo = { characterName = "Onlinechar" } },
 }
@@ -556,6 +575,44 @@ equal(#SanctuaryDB.debugLog, beforeChatDecisionDebug + 1, "blocked channel debug
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.kind, "channel", "channel decision kind")
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "BLOCK_NOT_WHITELISTED", "channel decision action")
 SanctuaryDB.filters.channelMode = "none"
+
+local secretChatPayload = makeSecretValue("chat")
+beforeChatDecisionDebug = #SanctuaryDB.debugLog
+local secretWhisperOk = pcall(function()
+    fire("CHAT_MSG_WHISPER", secretChatPayload, "Unknown")
+end)
+check(secretWhisperOk, "secret whisper payload does not break debug logging")
+equal(#SanctuaryDB.debugLog, beforeChatDecisionDebug + 1, "secret whisper debug decision logged")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.msg, "<secret>", "secret whisper payload is redacted")
+
+local secretSender = makeSecretValue("sender")
+beforeChatDecisionDebug = #SanctuaryDB.debugLog
+local beforeSecretSenderLogs = #SanctuaryDB.log
+local secretSenderOk = pcall(function()
+    fire("CHAT_MSG_WHISPER", "hello", secretSender)
+end)
+check(secretSenderOk, "secret whisper sender does not break debug logging")
+equal(#SanctuaryDB.debugLog, beforeChatDecisionDebug + 1, "secret whisper sender debug decision logged")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.sender, "<secret>", "secret whisper sender is redacted")
+equal(#SanctuaryDB.log, beforeSecretSenderLogs + 1, "secret whisper sender durable block logged")
+equal(SanctuaryDB.log[#SanctuaryDB.log].name, "<secret>", "secret whisper sender durable log is redacted")
+
+beforeChatDecisionDebug = #SanctuaryDB.debugLog
+local secretBNetSenderOk = pcall(function()
+    fire("CHAT_MSG_BN_WHISPER", "hello", secretSender)
+end)
+check(secretBNetSenderOk, "secret BNet whisper sender does not break debug logging")
+equal(#SanctuaryDB.debugLog, beforeChatDecisionDebug + 1, "secret BNet sender debug decision logged")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.kind, "bn_whisper", "secret BNet sender decision kind")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.sender, "<secret>", "secret BNet sender is redacted")
+
+local beforeSecretSystemDebug = #SanctuaryDB.debugLog
+local secretSystemOk = pcall(function()
+    fire("CHAT_MSG_SYSTEM", secretChatPayload)
+end)
+check(secretSystemOk, "secret system payload does not break invite diagnostics")
+equal(#SanctuaryDB.debugLog, beforeSecretSystemDebug + 1, "secret system payload is diagnosed once")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.result, "SECRET_VALUE", "secret system diagnostic result")
 
 SanctuaryDB.filters.say = true
 filtered = chatFilters.CHAT_MSG_SAY(nil, "CHAT_MSG_SAY", "hello", "Victim-OtherRealm")

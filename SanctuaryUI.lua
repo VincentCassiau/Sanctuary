@@ -1097,6 +1097,7 @@ buildWhitelistTab = function(parent)
             SanctuaryDB.manualWhitelist[normalized] = {
                 displayName = text,
                 addedAt = time(),
+                source = "manual",
             }
             ns.invalidateWhitelist()
             ns.printSuccess(string.format(L["WHITELIST_ADDED"], text))

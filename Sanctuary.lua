@@ -121,9 +121,85 @@ local function getPlayerRealm()
     return playerRealm or ""
 end
 
+local SECRET_VALUE_PLACEHOLDER = "<secret>"
+local UNPRINTABLE_VALUE_PLACEHOLDER = "<unprintable>"
+
+local function isRestrictedValue(value)
+    if value == nil then return false end
+
+    if type(canaccessvalue) == "function" then
+        local ok, accessible = pcall(canaccessvalue, value)
+        if ok and accessible == false then
+            return true
+        end
+    end
+
+    if type(issecretvalue) == "function" then
+        local ok, secret = pcall(issecretvalue, value)
+        if ok and secret == true then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function safeText(value, maxLen, nilText)
+    if value == nil then return nilText end
+    if isRestrictedValue(value) then return SECRET_VALUE_PLACEHOLDER end
+
+    local valueType = type(value)
+    local text
+    if valueType == "string" then
+        text = value
+    else
+        local ok, converted = pcall(tostring, value)
+        if not ok then return UNPRINTABLE_VALUE_PLACEHOLDER end
+        text = converted
+    end
+
+    if maxLen and #text > maxLen then
+        return text:sub(1, maxLen)
+    end
+    return text
+end
+
+local function sanitizeDebugValue(value, depth)
+    if value == nil then return nil end
+    if isRestrictedValue(value) then return SECRET_VALUE_PLACEHOLDER end
+
+    local valueType = type(value)
+    if valueType == "string" or valueType == "number" or valueType == "boolean" then
+        return value
+    end
+
+    if valueType == "table" then
+        if (depth or 0) >= 3 then return "<table>" end
+        local sanitized = {}
+        local ok = pcall(function()
+            for key, child in pairs(value) do
+                local safeKey = sanitizeDebugValue(key, (depth or 0) + 1)
+                if safeKey ~= nil then
+                    if type(safeKey) == "table" then
+                        safeKey = "<table-key>"
+                    end
+                    sanitized[safeKey] = sanitizeDebugValue(child, (depth or 0) + 1)
+                end
+            end
+        end)
+        if not ok then return UNPRINTABLE_VALUE_PLACEHOLDER end
+        return sanitized
+    end
+
+    return safeText(value, nil, nil)
+end
+
+ns.isRestrictedValue = isRestrictedValue
+
 local function stripWoWFormatting(value)
+    if value == nil or isRestrictedValue(value) then return nil end
+    value = safeText(value, nil, nil)
     if not value or value == "" then return nil end
-    value = tostring(value)
     -- |Hplayer:Name-Realm:...|h[Name]|h -> [Name]
     value = value:gsub("|H.-|h", "")
     value = value:gsub("|h", "")
@@ -320,29 +396,37 @@ local function rebuildWhitelist()
         end
     end
 
+    local function manualEntryAllowsBNet(data)
+        if type(data) ~= "table" then return true end
+        -- UI/legacy manual entries historically had no source. Treat those as
+        -- explicit user trust for character and Battle.net display names; exclude
+        -- auto-trust entries, which are known character-only contacts.
+        return data.source ~= "trust"
+    end
+
+    local function addManualEntry(key, data)
+        addCharacterName(key)
+        if type(data) == "table" then
+            addCharacterName(data.displayName)
+            if manualEntryAllowsBNet(data) then
+                addBNetAccountName(data.displayName or key)
+            end
+        elseif manualEntryAllowsBNet(data) then
+            addBNetAccountName(key)
+        end
+    end
+
     -- Manual whitelist (account-wide)
     if SanctuaryDB and SanctuaryDB.manualWhitelist then
         for key, data in pairs(SanctuaryDB.manualWhitelist) do
-            addCharacterName(key)
-            if type(data) == "table" then
-                addCharacterName(data.displayName)
-                if data.source == "bnet" or (type(data.displayName) == "string" and data.displayName:find("%s")) then
-                    addBNetAccountName(data.displayName)
-                end
-            end
+            addManualEntry(key, data)
         end
     end
 
     -- Manual whitelist (per-character)
     if SanctuaryCharDB and SanctuaryCharDB.manualWhitelist then
         for key, data in pairs(SanctuaryCharDB.manualWhitelist) do
-            addCharacterName(key)
-            if type(data) == "table" then
-                addCharacterName(data.displayName)
-                if data.source == "bnet" or (type(data.displayName) == "string" and data.displayName:find("%s")) then
-                    addBNetAccountName(data.displayName)
-                end
-            end
+            addManualEntry(key, data)
         end
     end
 
@@ -494,8 +578,10 @@ local function logBlock(blockType, sourceName, message, guid, keyword)
     if not SanctuaryDB then return end
     if not SanctuaryDB.logging.enabled then return end
 
+    local sourceText = safeText(sourceName, nil, nil)
+
     -- Dedup: skip if same event logged within 1 second
-    local logKey = blockType .. ":" .. (sourceName or "")
+    local logKey = blockType .. ":" .. (sourceText or "")
     local now = GetTime()
     if logKey == lastLogKey and (now - lastLogTime) < 1 then
         return
@@ -506,7 +592,7 @@ local function logBlock(blockType, sourceName, message, guid, keyword)
     local playerName = UnitName("player")
     local charRealm = getPlayerRealm()
     local sourceRealm = ""
-    local cleanName = sourceName or "Unknown"
+    local cleanName = sourceText or "Unknown"
 
     -- Extract realm from "Name-Realm" format. Character names cannot contain
     -- hyphens, so the first hyphen is the unambiguous separator.
@@ -523,7 +609,7 @@ local function logBlock(blockType, sourceName, message, guid, keyword)
         name  = cleanName,
         realm = sourceRealm,
         guid  = guid or "",
-        msg   = message,
+        msg   = safeText(message, nil, nil),
         char  = (playerName or "?") .. "-" .. (charRealm or "?"),
         keyword = keyword or nil,
     }
@@ -555,7 +641,7 @@ local function logBlock(blockType, sourceName, message, guid, keyword)
     if SanctuaryDB.notifications.mode == "verbose" then
         printMsg(string.format(L["BLOCKED_VERBOSE"],
             COLOR_HIGHLIGHT .. blockType .. COLOR_RESET,
-            COLOR_HIGHLIGHT .. (sourceName or "?") .. COLOR_RESET))
+            COLOR_HIGHLIGHT .. (sourceText or "?") .. COLOR_RESET))
     end
 end
 
@@ -578,7 +664,7 @@ debugLog = function(cat, data)
         t = GetTime(),
         ts = date("%H:%M:%S"),
         cat = cat,
-        data = data or {},
+        data = sanitizeDebugValue(data or {}, 0) or {},
     })
 
     -- Rotation: keep max 500 entries without replacing the SavedVariables
@@ -607,12 +693,12 @@ local function debugLogChatDecision(kind, sender, msg, action, reason, keyword, 
 
     local data = {
         kind = kind,
-        sender = sender or "nil",
+        sender = safeText(sender, 200, "nil"),
         normalized = normalized or "nil",
         action = action or "UNKNOWN",
         reason = reason or "nil",
-        keyword = keyword or "none",
-        msg = type(msg) == "string" and msg:sub(1, 300) or "nil",
+        keyword = safeText(keyword, 200, "none"),
+        msg = safeText(msg, 300, "nil"),
     }
 
     if extra then
@@ -779,7 +865,7 @@ local function buildInvitePatterns()
 end
 
 local function extractInviterFromSystemMessage(msg)
-    if type(msg) ~= "string" or msg == "" then return nil, nil, nil end
+    if isRestrictedValue(msg) or type(msg) ~= "string" or msg == "" then return nil, nil, nil end
     for idx, pattern in ipairs(invitePatterns) do
         local name = msg:match(pattern)
         if name then
@@ -944,7 +1030,8 @@ local function hookChatOutputDiagnostics()
         if chatFrame and not chatOutputHooked[chatFrame] and chatFrame.AddMessage then
             local frameIndex = i
             local ok = pcall(hooksecurefunc, chatFrame, "AddMessage", function(_, text)
-                if not SanctuaryDB or not SanctuaryDB.debugEnabled or type(text) ~= "string" then
+                if not SanctuaryDB or not SanctuaryDB.debugEnabled
+                    or isRestrictedValue(text) or type(text) ~= "string" then
                     return
                 end
 
@@ -953,7 +1040,7 @@ local function hookChatOutputDiagnostics()
                     local shouldBlock, reason, keyword = getCharacterDecision(inviterName)
                     debugLog("CHAT_OUTPUT", {
                         frame = frameIndex,
-                        msg = text:sub(1, 300),
+                        msg = safeText(text, 300, "nil"),
                         name = inviterName,
                         pattern = patternIndex or "?",
                         shouldBlock = shouldBlock and true or false,
@@ -2134,19 +2221,26 @@ function handlers.CHAT_MSG_SYSTEM(msg, ...)
 
     local inviterName, patternIndex, patternKind = extractInviterFromSystemMessage(msg)
     if not inviterName then
-        if SanctuaryDB and SanctuaryDB.debugEnabled and msg
-            and (msg:lower():find("invit", 1, true) or msg:lower():find("group", 1, true)) then
+        if SanctuaryDB and SanctuaryDB.debugEnabled and isRestrictedValue(msg) then
             debugLog("SYSTEM_INVITE", {
-                msg = msg:sub(1, 300),
-                result = "NO_MATCH",
+                msg = SECRET_VALUE_PLACEHOLDER,
+                result = "SECRET_VALUE",
             })
+        elseif SanctuaryDB and SanctuaryDB.debugEnabled and type(msg) == "string" then
+            local lowerMsg = msg:lower()
+            if lowerMsg:find("invit", 1, true) or lowerMsg:find("group", 1, true) then
+                debugLog("SYSTEM_INVITE", {
+                    msg = safeText(msg, 300, "nil"),
+                    result = "NO_MATCH",
+                })
+            end
         end
         return
     end
 
     local shouldBlock, reason, keyword = getCharacterDecision(inviterName)
     debugLog("SYSTEM_INVITE", {
-        msg = msg:sub(1, 300),
+        msg = safeText(msg, 300, "nil"),
         name = inviterName,
         pattern = patternIndex or "?",
         isWL = reason == "whitelist",
@@ -3066,8 +3160,8 @@ hooksecurefunc("StaticPopup_Show", function(which, text_arg1, text_arg2, data)
         soundRestored = soundRestored and true or false,
         pendingName = decision and decision.name or "nil",
         pendingReason = decision and decision.reason or "nil",
-        text_arg1 = tostring(text_arg1 or "nil"):sub(1, 200),
-        text_arg2 = tostring(text_arg2 or "nil"):sub(1, 100),
+        text_arg1 = safeText(text_arg1, 200, "nil"),
+        text_arg2 = safeText(text_arg2, 100, "nil"),
         dataType = type(data),
     })
 end)
