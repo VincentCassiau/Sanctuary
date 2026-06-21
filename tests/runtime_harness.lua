@@ -27,6 +27,10 @@ local function makeSecretValue(label)
     })
 end
 
+local function bnetWhisperPayload(bnSenderID)
+    return "", "", "|Kq2|k", "", 0, 0, "", 0, 123, "Player-BNet-0", bnSenderID
+end
+
 local function lastDebug(cat, action)
     if not SanctuaryDB or not SanctuaryDB.debugLog then return nil end
     for i = #SanctuaryDB.debugLog, 1, -1 do
@@ -89,6 +93,14 @@ function GetGuildRosterInfo(index) return guildMembers[index] end
 function BNGetNumFriends() return #bnetFriends end
 C_BattleNet = {}
 function C_BattleNet.GetFriendAccountInfo(index) return bnetFriends[index] end
+function C_BattleNet.GetAccountInfoByID(bnSenderID)
+    for _, info in ipairs(bnetFriends) do
+        if info.bnetAccountID == bnSenderID then
+            return info
+        end
+    end
+    return nil
+end
 C_FriendList = {}
 function C_FriendList.GetNumFriends() return #charFriends end
 function C_FriendList.GetFriendInfoByIndex(index)
@@ -430,7 +442,7 @@ check(not block, "populated guild roster trusted during IsInGuild transition")
 
 -- Battle.net whispers are matched by account display name, not character name.
 bnetFriends = {
-    { accountName = "Battle Friend", gameAccountInfo = { characterName = "Onlinechar" } },
+    { bnetAccountID = 101, accountName = "Battle Friend", gameAccountInfo = { characterName = "Onlinechar" } },
 }
 ns.invalidateWhitelist()
 check(ns.isBNetWhitelisted("Battle Friend"), "BNet account cached")
@@ -438,6 +450,8 @@ local filtered = chatFilters.CHAT_MSG_BN_WHISPER(nil, "CHAT_MSG_BN_WHISPER", "he
 check(not filtered, "BNet friend whisper passes")
 filtered = chatFilters.CHAT_MSG_BN_WHISPER(nil, "CHAT_MSG_BN_WHISPER", "hello", "Battle Friend")
 check(not filtered, "BNet friend whisper remains allowed by cached account name")
+filtered = chatFilters.CHAT_MSG_BN_WHISPER(nil, "CHAT_MSG_BN_WHISPER", "hello", "|Kq2|k", bnetWhisperPayload(101))
+check(not filtered, "BNet friend whisper resolves protected sender token through sender ID")
 filtered = chatFilters.CHAT_MSG_BN_WHISPER(nil, "CHAT_MSG_BN_WHISPER", "hello", "Unknown Battle")
 check(filtered, "unknown BNet whisper blocked")
 
@@ -466,7 +480,7 @@ ns.invalidateWhitelist()
 check(ns.isBNetWhitelisted("LegacyCharacter"), "legacy character-source manual entry still feeds BNet cache")
 SanctuaryDB.manualWhitelist.legacycharacter = nil
 bnetFriends = {
-    { accountName = "Battle Friend", gameAccountInfo = { characterName = "Onlinechar" } },
+    { bnetAccountID = 101, accountName = "Battle Friend", gameAccountInfo = { characterName = "Onlinechar" } },
 }
 ns.invalidateWhitelist()
 
@@ -560,13 +574,26 @@ equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.kind, "whisper", "whisper
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "BLOCK_NOT_WHITELISTED", "whisper decision action")
 
 beforeChatDecisionDebug = #SanctuaryDB.debugLog
-fire("CHAT_MSG_BN_WHISPER", "hello", "Battle Friend")
+fire("CHAT_MSG_BN_WHISPER", "hello", "|Kq2|k", bnetWhisperPayload(101))
 equal(#SanctuaryDB.debugLog, beforeChatDecisionDebug + 1, "allowed BNet whisper debug decision logged")
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.kind, "bn_whisper", "BNet decision kind")
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "ALLOW", "BNet decision action")
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.reason, "bnet_whitelist", "BNet decision reason")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.sender, "Battle Friend", "BNet decision logs resolved account name")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.rawSender, "|Kq2|k", "BNet decision logs raw protected sender token")
+check(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.bnetResolvedByID, "BNet decision reports sender ID resolution")
 check(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.bnetWhitelisted, "BNet decision reports cache hit")
 check(tonumber(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.bnetCache) >= 1, "BNet decision reports cache size")
+
+beforeChatDecisionDebug = #SanctuaryDB.debugLog
+fire("CHAT_MSG_BN_WHISPER", "hello", "|Kq2|k", bnetWhisperPayload(999))
+equal(#SanctuaryDB.debugLog, beforeChatDecisionDebug + 1, "unresolved BNet sender ID debug decision logged")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.kind, "bn_whisper", "unresolved BNet decision kind")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "BLOCK_NOT_WHITELISTED", "unresolved BNet decision action")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.reason, "not_whitelisted", "unresolved BNet decision reason")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.bnetSenderID, "present", "unresolved BNet decision reports sender ID presence")
+check(not SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.bnetResolvedByID, "unresolved BNet decision reports missing ID resolution")
+check(not SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.bnetWhitelisted, "unresolved BNet decision reports cache miss")
 
 SanctuaryDB.filters.channelMode = "all"
 beforeChatDecisionDebug = #SanctuaryDB.debugLog
@@ -632,7 +659,7 @@ bnetFriends = { { accountName = "Diag", gameAccountInfo = { characterName = "Dia
 fire("BN_FRIEND_INFO_CHANGED")
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].cat, "SOCIAL", "BNet social debug logged")
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.bnetCN, 1, "BNet character count logged")
-bnetFriends = { { accountName = "Battle Friend", gameAccountInfo = { characterName = "Onlinechar" } } }
+bnetFriends = { { bnetAccountID = 101, accountName = "Battle Friend", gameAccountInfo = { characterName = "Onlinechar" } } }
 ns.invalidateWhitelist()
 
 fire("CHAT_MSG_SYSTEM", "invitation group text that does not match localized patterns")
@@ -1043,6 +1070,16 @@ bnetSimulation = ns.simulateBNetFriend("1")
 check(bnetSimulation.available, "BNet friend-index simulation uses live accountName")
 check(not bnetSimulation.filtered, "BNet friend-index simulation allowed")
 equal(bnetSimulation.label, "friend #1", "BNet friend-index simulation hides account label")
+check(bnetSimulation.resolvedByID, "BNet friend-index simulation resolves through sender ID")
+
+local originalBNetInfoByID = C_BattleNet.GetAccountInfoByID
+C_BattleNet.GetAccountInfoByID = function() return nil end
+bnetSimulation = ns.simulateBNetFriend("1")
+check(bnetSimulation.available, "BNet friend-index simulation still reaches friend API when ID lookup fails")
+check(bnetSimulation.filtered, "BNet friend-index simulation blocks unresolved protected sender ID")
+equal(bnetSimulation.reason, "not_whitelisted", "BNet unresolved sender ID simulation reason")
+check(not bnetSimulation.resolvedByID, "BNet unresolved sender ID simulation reports missing ID resolution")
+C_BattleNet.GetAccountInfoByID = originalBNetInfoByID
 
 local originalBNetInfo = C_BattleNet.GetFriendAccountInfo
 C_BattleNet.GetFriendAccountInfo = nil

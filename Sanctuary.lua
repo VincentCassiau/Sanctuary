@@ -378,6 +378,19 @@ local function getBNetFriendInfo(index)
     return nil
 end
 
+local function getBNetAccountInfoByID(bnSenderID)
+    if not bnSenderID or isRestrictedValue(bnSenderID) then return nil end
+    if not C_BattleNet or type(C_BattleNet.GetAccountInfoByID) ~= "function" then
+        return nil
+    end
+
+    local ok, info = pcall(C_BattleNet.GetAccountInfoByID, bnSenderID)
+    if ok and type(info) == "table" then
+        return info
+    end
+    return nil
+end
+
 local function rebuildWhitelist()
     local cache = {}
     local bnetCache = {}
@@ -524,6 +537,45 @@ local function isBNetWhitelisted(name)
     local normalized = normalizeBNetName(name)
     if not normalized then return false end
     return Sanctuary.bnetWhitelistCache[normalized] == true
+end
+
+local function isBNetProtectedPlayerName(sender)
+    if isRestrictedValue(sender) then return false end
+    local text = safeText(sender, nil, nil)
+    return type(text) == "string" and text:match("^|K.-|k$") ~= nil
+end
+
+local function getBNetWhisperPayloadSenderID(...)
+    -- Retail ChatInfoDocumentation names CHAT_MSG_BN_WHISPER arg13
+    -- `bnSenderID`; after `(msg, sender, ...)` that is select(11, ...).
+    local bnSenderID = select(11, ...)
+    if isRestrictedValue(bnSenderID) then return nil end
+    return bnSenderID
+end
+
+local function getBNetWhisperPayloadArgs(rawSender, bnSenderID)
+    return "", "", rawSender, "", 0, 0, "", 0, 0, "Player-Sanctuary-0", bnSenderID
+end
+
+local function resolveBNetWhisperSender(sender, ...)
+    local bnSenderID = getBNetWhisperPayloadSenderID(...)
+    local accountInfo = getBNetAccountInfoByID(bnSenderID)
+    local accountName = accountInfo and accountInfo.accountName
+    local resolvedByID = accountName ~= nil and accountName ~= ""
+
+    if not resolvedByID and not isRestrictedValue(sender) and not isBNetProtectedPlayerName(sender) then
+        accountName = sender
+    end
+
+    return {
+        accountName = accountName,
+        accountInfo = accountInfo,
+        rawSender = sender,
+        rawSenderText = safeText(sender, 200, "nil"),
+        bnSenderID = bnSenderID,
+        bnSenderIDState = bnSenderID ~= nil and "present" or "nil",
+        resolvedByID = resolvedByID,
+    }
 end
 
 local function invalidateWhitelist()
@@ -909,12 +961,14 @@ end
 local function bnetWhisperFilter(self, event, msg, sender, ...)
     if not isEnabled() then return false end
 
-    local keywordMatch = matchesKeyword(sender)
+    local bnetSender = resolveBNetWhisperSender(sender, ...)
+    local decisionName = bnetSender.accountName or sender
+    local keywordMatch = matchesKeyword(decisionName)
     if keywordMatch then return true end
     if not getEffective("filters.whisper") then return false end
 
-    if isBNetWhitelisted(sender) then return false end
-    if isBNetSenderInGroup and isBNetSenderInGroup(sender) then return false end
+    if isBNetWhitelisted(decisionName) then return false end
+    if isBNetSenderInGroup and isBNetSenderInGroup(decisionName) then return false end
     return true
 end
 
@@ -2286,18 +2340,23 @@ end
 function handlers.CHAT_MSG_BN_WHISPER(msg, sender, ...)
     if not isEnabled() then return end
 
-    local keywordMatch, keyword = matchesKeyword(sender)
+    local bnetSender = resolveBNetWhisperSender(sender, ...)
+    local decisionName = bnetSender.accountName or sender
+    local keywordMatch, keyword = matchesKeyword(decisionName)
     local filterEnabled = getEffective("filters.whisper") == true
     if not keywordMatch and not filterEnabled then
-        debugLogChatDecision("bn_whisper", sender, msg, "PASS_FILTER_DISABLED", "filter_disabled", keyword, {
+        debugLogChatDecision("bn_whisper", decisionName, msg, "PASS_FILTER_DISABLED", "filter_disabled", keyword, {
             filterEnabled = false,
+            rawSender = bnetSender.rawSenderText,
+            bnetSenderID = bnetSender.bnSenderIDState,
+            bnetResolvedByID = bnetSender.resolvedByID,
         })
         return
     end
 
     local action = "BLOCK_NOT_WHITELISTED"
     local reason = "not_whitelisted"
-    local bnetWhitelisted = isBNetWhitelisted(sender)
+    local bnetWhitelisted = isBNetWhitelisted(decisionName)
     local bnetGroup = false
     if keywordMatch then
         action = "BLOCK_KEYWORD"
@@ -2306,22 +2365,25 @@ function handlers.CHAT_MSG_BN_WHISPER(msg, sender, ...)
         action = "ALLOW"
         reason = "bnet_whitelist"
     else
-        bnetGroup = isBNetSenderInGroup(sender) and true or false
+        bnetGroup = isBNetSenderInGroup(decisionName) and true or false
         if bnetGroup then
             action = "ALLOW"
             reason = "bnet_group"
         end
     end
 
-    debugLogChatDecision("bn_whisper", sender, msg, action, reason, keyword, {
+    debugLogChatDecision("bn_whisper", decisionName, msg, action, reason, keyword, {
         filterEnabled = filterEnabled,
         bnetWhitelisted = bnetWhitelisted and true or false,
         inGroup = bnetGroup,
         bnetCache = ns.getBNetWhitelistCacheSize and ns.getBNetWhitelistCacheSize() or "?",
+        rawSender = bnetSender.rawSenderText,
+        bnetSenderID = bnetSender.bnSenderIDState,
+        bnetResolvedByID = bnetSender.resolvedByID,
     })
     if action == "ALLOW" then return end
 
-    logBlock("whisper", sender, msg, nil, keyword)
+    logBlock("whisper", decisionName, msg, nil, keyword)
     closeBlockedWhisperTabs(sender, true)
 end
 
@@ -2494,17 +2556,21 @@ local function simulateInvite(name)
     return result
 end
 
-local function simulateBNetWhisper(sender, sourceLabel)
+local function simulateBNetWhisper(sender, sourceLabel, bnSenderID)
     local target = trimCommandText(sender)
     if target == "" then
         target = "SanctuaryBNetTest"
     end
 
-    local keywordMatch, keyword = matchesKeyword(target)
+    local rawSender = bnSenderID and "|Ksanctuary|k" or target
+    local bnetSender = resolveBNetWhisperSender(rawSender, getBNetWhisperPayloadArgs(rawSender, bnSenderID))
+    local decisionName = bnetSender.accountName or (bnSenderID and rawSender) or target
+    local keywordMatch, keyword = matchesKeyword(decisionName)
     local filterEnabled = isEnabled() and getEffective("filters.whisper") == true
-    local bnetWhitelisted = isBNetWhitelisted(target)
-    local inGroup = isBNetSenderInGroup and isBNetSenderInGroup(target) or false
-    local filtered = bnetWhisperFilter(nil, "CHAT_MSG_BN_WHISPER", "Sanctuary diagnostic", target) and true or false
+    local bnetWhitelisted = isBNetWhitelisted(decisionName)
+    local inGroup = isBNetSenderInGroup and isBNetSenderInGroup(decisionName) or false
+    local filtered = bnetWhisperFilter(nil, "CHAT_MSG_BN_WHISPER", "Sanctuary diagnostic", rawSender,
+        getBNetWhisperPayloadArgs(rawSender, bnSenderID)) and true or false
     local reason = "not_whitelisted"
 
     if keywordMatch then
@@ -2522,8 +2588,8 @@ local function simulateBNetWhisper(sender, sourceLabel)
     local result = {
         kind = "bnet",
         label = sourceLabel or target,
-        name = target,
-        normalized = normalizeBNetName(target),
+        name = decisionName,
+        normalized = normalizeBNetName(decisionName),
         filtered = filtered,
         shouldBlock = filtered,
         reason = reason,
@@ -2531,6 +2597,7 @@ local function simulateBNetWhisper(sender, sourceLabel)
         filterEnabled = filterEnabled,
         bnetWhitelisted = bnetWhitelisted and true or false,
         inGroup = inGroup and true or false,
+        resolvedByID = bnetSender.resolvedByID,
     }
 
     debugLog("SIMULATE_BNET_WHISPER", {
@@ -2542,6 +2609,8 @@ local function simulateBNetWhisper(sender, sourceLabel)
         filterEnabled = filterEnabled,
         bnetWhitelisted = result.bnetWhitelisted,
         inGroup = result.inGroup,
+        bnetSenderID = bnetSender.bnSenderIDState,
+        bnetResolvedByID = bnetSender.resolvedByID,
     })
 
     return result
@@ -2574,7 +2643,7 @@ local function simulateBNetFriend(indexText)
         return result
     end
 
-    local result = simulateBNetWhisper(info.accountName, "friend #" .. friendIndex)
+    local result = simulateBNetWhisper(info.accountName, "friend #" .. friendIndex, info.bnetAccountID)
     result.friendIndex = friendIndex
     result.available = true
     return result
@@ -2622,12 +2691,13 @@ local function formatBNetSimulationResult(result)
     end
 
     return string.format(
-        "Simulation bnet whisper: %s -> %s (%s) | filter=%s | bnet-cache=%s | group=%s | chat=%s",
+        "Simulation bnet whisper: %s -> %s (%s) | filter=%s | bnet-cache=%s | id=%s | group=%s | chat=%s",
         result.label or result.name or "?",
         action,
         reason,
         result.filterEnabled and "on" or "off",
         result.bnetWhitelisted and "yes" or "no",
+        result.resolvedByID and "yes" or "no",
         result.inGroup and "yes" or "no",
         chat
     )
