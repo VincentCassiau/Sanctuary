@@ -273,6 +273,10 @@ ns.invalidateWhitelist()
 check(ns.isBNetWhitelisted("Battle Friend"), "BNet account cached")
 local filtered = chatFilters.CHAT_MSG_BN_WHISPER(nil, "CHAT_MSG_BN_WHISPER", "hello", "Battle Friend")
 check(not filtered, "BNet friend whisper passes")
+filtered = chatFilters.CHAT_MSG_BN_WHISPER(nil, "CHAT_MSG_BN_WHISPER", "hello", "Battle Friend")
+check(not filtered, "BNet friend whisper remains allowed by cached account name")
+filtered = chatFilters.CHAT_MSG_BN_WHISPER(nil, "CHAT_MSG_BN_WHISPER", "hello", "Unknown Battle")
+check(filtered, "unknown BNet whisper blocked")
 
 -- Core chat filters: unknown players are blocked only when the relevant filter
 -- says so, while suspicious keywords always win and self messages always pass.
@@ -505,11 +509,39 @@ equal(simulation.reason, "whitelist", "trusted invite simulation reason")
 check(not simulation.systemSuppressed, "trusted invite system message simulated as visible")
 equal(simulation.popupAction, "show", "trusted invite popup simulation action")
 
+local bnetSimulation = ns.simulateBNetWhisper("Battle Friend")
+check(not bnetSimulation.filtered, "BNet friend simulation allowed")
+equal(bnetSimulation.reason, "bnet_whitelist", "BNet friend simulation reason")
+check(bnetSimulation.bnetWhitelisted, "BNet friend simulation reports cache hit")
+
+bnetSimulation = ns.simulateBNetWhisper("Unknown Battle")
+check(bnetSimulation.filtered, "unknown BNet simulation blocked")
+equal(bnetSimulation.reason, "not_whitelisted", "unknown BNet simulation reason")
+
+bnetSimulation = ns.simulateBNetFriend("1")
+check(bnetSimulation.available, "BNet friend-index simulation uses live accountName")
+check(not bnetSimulation.filtered, "BNet friend-index simulation allowed")
+equal(bnetSimulation.label, "friend #1", "BNet friend-index simulation hides account label")
+
+local originalBNetInfo = C_BattleNet.GetFriendAccountInfo
+C_BattleNet.GetFriendAccountInfo = nil
+ns.invalidateWhitelist()
+bnetSimulation = ns.simulateBNetFriend("1")
+check(not bnetSimulation.available, "BNet friend-index simulation reports unavailable API")
+equal(bnetSimulation.reason, "bnet_api_unavailable", "BNet unavailable simulation reason")
+C_BattleNet.GetFriendAccountInfo = originalBNetInfo
+ns.invalidateWhitelist()
+
 local beforeSlashMessages = #chatMessages
 SlashCmdList["SANCTUARY"]("simulate Simulatedbad")
 check(#chatMessages == beforeSlashMessages + 1, "slash simulation prints one diagnostic line")
 check(chatMessages[#chatMessages]:find("Simulation invite", 1, true) ~= nil, "slash simulation output label")
 equal(declinedGroups, beforeSimulationDeclines, "slash simulation does not decline groups")
+
+beforeSlashMessages = #chatMessages
+SlashCmdList["SANCTUARY"]("simulate bnetfriend 1")
+check(#chatMessages == beforeSlashMessages + 1, "slash BNet simulation prints one diagnostic line")
+check(chatMessages[#chatMessages]:find("Simulation bnet whisper", 1, true) ~= nil, "slash BNet simulation output label")
 
 local uiToggles = 0
 ns.ToggleUI = function() uiToggles = uiToggles + 1 end

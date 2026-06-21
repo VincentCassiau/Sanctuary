@@ -266,6 +266,17 @@ Sanctuary.whitelistCache = {}
 Sanctuary.bnetWhitelistCache = {}
 Sanctuary.whitelistDirty = true
 
+local function getBNetFriendInfo(index)
+    if not C_BattleNet or type(C_BattleNet.GetFriendAccountInfo) ~= "function" then
+        return nil
+    end
+    local ok, info = pcall(C_BattleNet.GetFriendAccountInfo, index)
+    if ok and type(info) == "table" then
+        return info
+    end
+    return nil
+end
+
 local function rebuildWhitelist()
     local cache = {}
     local bnetCache = {}
@@ -314,7 +325,7 @@ local function rebuildWhitelist()
     pcall(function()
         local numFriends = BNGetNumFriends() or 0
         for i = 1, numFriends do
-            local info = C_BattleNet.GetFriendAccountInfo(i)
+            local info = getBNetFriendInfo(i)
             if info then
                 addBNetAccountName(info.accountName)
                 local gameInfo = info.gameAccountInfo
@@ -432,6 +443,8 @@ ns.getBNetWhitelistCacheSize = function()
     end
     return count
 end
+
+ns.getBNetFriendInfo = getBNetFriendInfo
 
 -- ============================================================================
 -- SECTION F: Logging Engine
@@ -579,7 +592,7 @@ countBNetWithCharName = function()
     local count = 0
     pcall(function()
         for i = 1, BNGetNumFriends() do
-            local info = C_BattleNet.GetFriendAccountInfo(i)
+            local info = ns.getBNetFriendInfo and ns.getBNetFriendInfo(i)
             if info and info.gameAccountInfo
                 and info.gameAccountInfo.characterName
                 and info.gameAccountInfo.characterName ~= "" then
@@ -1014,7 +1027,7 @@ isBNetSenderInGroup = function(senderBNetName)
     pcall(function()
         local numFriends = BNGetNumFriends() or 0
         for i = 1, numFriends do
-            local info = C_BattleNet.GetFriendAccountInfo(i)
+            local info = ns.getBNetFriendInfo and ns.getBNetFriendInfo(i)
             if info and normalizeBNetName(info.accountName) == senderKey then
                 local gameInfo = info.gameAccountInfo
                 local charName = gameInfo and normalizeName(gameInfo.characterName)
@@ -1668,6 +1681,92 @@ local function simulateInvite(name)
     return result
 end
 
+local function simulateBNetWhisper(sender, sourceLabel)
+    local target = trimCommandText(sender)
+    if target == "" then
+        target = "SanctuaryBNetTest"
+    end
+
+    local keywordMatch, keyword = matchesKeyword(target)
+    local filterEnabled = isEnabled() and getEffective("filters.whisper") == true
+    local bnetWhitelisted = isBNetWhitelisted(target)
+    local inGroup = isBNetSenderInGroup and isBNetSenderInGroup(target) or false
+    local filtered = bnetWhisperFilter(nil, "CHAT_MSG_BN_WHISPER", "Sanctuary diagnostic", target) and true or false
+    local reason = "not_whitelisted"
+
+    if keywordMatch then
+        reason = "keyword"
+    elseif not isEnabled() then
+        reason = "addon_disabled"
+    elseif not filterEnabled then
+        reason = "filter_disabled"
+    elseif bnetWhitelisted then
+        reason = "bnet_whitelist"
+    elseif inGroup then
+        reason = "bnet_group"
+    end
+
+    local result = {
+        kind = "bnet",
+        label = sourceLabel or target,
+        name = target,
+        normalized = normalizeBNetName(target),
+        filtered = filtered,
+        shouldBlock = filtered,
+        reason = reason,
+        keyword = keyword,
+        filterEnabled = filterEnabled,
+        bnetWhitelisted = bnetWhitelisted and true or false,
+        inGroup = inGroup and true or false,
+    }
+
+    debugLog("SIMULATE_BNET_WHISPER", {
+        source = result.label,
+        normalized = result.normalized or "nil",
+        action = filtered and "BLOCK" or "ALLOW",
+        reason = reason,
+        keyword = keyword or "none",
+        filterEnabled = filterEnabled,
+        bnetWhitelisted = result.bnetWhitelisted,
+        inGroup = result.inGroup,
+    })
+
+    return result
+end
+
+local function simulateBNetFriend(indexText)
+    local friendIndex = tonumber(trimCommandText(indexText)) or 1
+    if friendIndex < 1 then friendIndex = 1 end
+
+    local info = getBNetFriendInfo(friendIndex)
+    if not info or not info.accountName or info.accountName == "" then
+        local result = {
+            kind = "bnet",
+            label = "friend #" .. friendIndex,
+            friendIndex = friendIndex,
+            available = false,
+            filtered = true,
+            shouldBlock = true,
+            reason = "bnet_api_unavailable",
+            filterEnabled = isEnabled() and getEffective("filters.whisper") == true,
+            bnetWhitelisted = false,
+            inGroup = false,
+        }
+        debugLog("SIMULATE_BNET_WHISPER", {
+            source = result.label,
+            action = "ERROR",
+            reason = result.reason,
+            filterEnabled = result.filterEnabled,
+        })
+        return result
+    end
+
+    local result = simulateBNetWhisper(info.accountName, "friend #" .. friendIndex)
+    result.friendIndex = friendIndex
+    result.available = true
+    return result
+end
+
 local function formatSimulationResult(result)
     local action = result.shouldBlock and "BLOCK" or "ALLOW"
     local system = result.systemSuppressed and "blocked" or "visible"
@@ -1692,6 +1791,35 @@ local function formatSimulationResult(result)
     )
 end
 
+local function formatBNetSimulationResult(result)
+    if result.available == false then
+        return string.format(
+            "Simulation bnet whisper: %s -> ERROR (%s) | filter=%s",
+            result.label or "friend",
+            result.reason or "unknown",
+            result.filterEnabled and "on" or "off"
+        )
+    end
+
+    local action = result.filtered and "BLOCK" or "ALLOW"
+    local chat = result.filtered and "blocked" or "visible"
+    local reason = result.reason or "unknown"
+    if result.keyword then
+        reason = reason .. ":" .. result.keyword
+    end
+
+    return string.format(
+        "Simulation bnet whisper: %s -> %s (%s) | filter=%s | bnet-cache=%s | group=%s | chat=%s",
+        result.label or result.name or "?",
+        action,
+        reason,
+        result.filterEnabled and "on" or "off",
+        result.bnetWhitelisted and "yes" or "no",
+        result.inGroup and "yes" or "no",
+        chat
+    )
+end
+
 local function resolveSimulationTarget(args)
     local text = trimCommandText(args)
     local first, rest = text:match("^(%S+)%s*(.*)$")
@@ -1706,6 +1834,9 @@ end
 
 ns.simulateInvite = simulateInvite
 ns.formatSimulationResult = formatSimulationResult
+ns.simulateBNetWhisper = simulateBNetWhisper
+ns.simulateBNetFriend = simulateBNetFriend
+ns.formatBNetSimulationResult = formatBNetSimulationResult
 
 -- /sanc and /sanctuary open the GUI. Diagnostic subcommands stay hidden.
 SLASH_SANCTUARY1 = "/sanctuary"
@@ -1715,8 +1846,18 @@ SlashCmdList["SANCTUARY"] = function(msg)
         local command, rest = trimCommandText(msg):match("^(%S+)%s*(.*)$")
         command = command and command:lower() or ""
         if command == "simulate" or command == "sim" then
-            local result = simulateInvite(resolveSimulationTarget(rest))
-            printMsg(formatSimulationResult(result))
+            local simKind, simRest = trimCommandText(rest):match("^(%S+)%s*(.*)$")
+            simKind = simKind and simKind:lower() or ""
+            if simKind == "bnet" then
+                local result = simulateBNetWhisper(simRest)
+                printMsg(formatBNetSimulationResult(result))
+            elseif simKind == "bnetfriend" then
+                local result = simulateBNetFriend(simRest)
+                printMsg(formatBNetSimulationResult(result))
+            else
+                local result = simulateInvite(resolveSimulationTarget(rest))
+                printMsg(formatSimulationResult(result))
+            end
             return
         end
 

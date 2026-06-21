@@ -53,7 +53,7 @@ The GUI has 5 tabs:
 - **Logs** -- Browse blocked interactions, export logs
 - **About** -- Version information and opt-in diagnostics export
 
-Developer diagnostic: `/sanc simulate <name>` runs the group-invite decision and chat-filter path without calling WoW decline APIs or showing the real `PARTY_INVITE` popup.
+Developer diagnostics: `/sanc simulate <name>` runs the group-invite decision and chat-filter path without calling WoW decline APIs or showing the real `PARTY_INVITE` popup. `/sanc simulate bnetfriend 1` checks the first Battle.net friend against the BNet-whisper filter without printing the account name.
 
 ## How the whitelist works
 
@@ -136,7 +136,7 @@ L'interface comporte 5 onglets :
 - **Logs** -- Consulter les interactions bloquees, exporter les logs
 - **A propos** -- Version et export de diagnostics active manuellement
 
-Diagnostic developpeur : `/sanc simulate <name>` execute la decision d'invitation de groupe et le filtre de chat sans appeler les APIs de refus WoW ni afficher la vraie popup `PARTY_INVITE`.
+Diagnostics developpeur : `/sanc simulate <name>` execute la decision d'invitation de groupe et le filtre de chat sans appeler les APIs de refus WoW ni afficher la vraie popup `PARTY_INVITE`. `/sanc simulate bnetfriend 1` teste le premier ami Battle.net contre le filtre de whisper BNet sans afficher le nom du compte.
 
 ### Fonctionnement de la whitelist
 
