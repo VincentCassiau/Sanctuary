@@ -86,6 +86,8 @@ local npcName = nil
 local inGuild = false
 local inGroup = false
 local inRaid = false
+local inInstance = false
+local currentInstanceType = "none"
 
 function IsInGuild() return inGuild end
 function GetNumGuildMembers() return #guildMembers end
@@ -113,6 +115,7 @@ C_AddOns = { IsAddOnLoaded = function() return false end }
 
 function IsInGroup() return inGroup end
 function IsInRaid() return inRaid end
+function IsInInstance() return inInstance, currentInstanceType end
 function GetNumGroupMembers()
     if not inGroup then return 0 end
     return #groupMembers + (inRaid and 0 or 1)
@@ -517,19 +520,32 @@ SanctuaryDB.filters.channelMode = "none"
 -- System messages for invitations rejected because the player is already in a
 -- group are suppressed and logged even though PARTY_INVITE_REQUEST never fires.
 inGroup = true
+inRaid = true
+inInstance = true
+currentInstanceType = "raid"
 groupMembers = { "Dungeonmate-TestRealm" }
 local systemMessage = "[Harasser-TestRealm] vous a invité à rejoindre un groupe, mais vous ne pouviez pas accepter car vous êtes déjà dans un groupe."
 filtered = chatFilters.CHAT_MSG_SYSTEM(nil, "CHAT_MSG_SYSTEM", systemMessage)
 check(filtered, "already-in-group invite system message suppressed")
+SanctuaryDB.debugEnabled = true
+SanctuaryDB.debugLog = {}
 local beforeLogs = #SanctuaryDB.log
 fire("CHAT_MSG_SYSTEM", systemMessage)
 equal(#SanctuaryDB.log, beforeLogs + 1, "already-in-group invite logged")
 equal(SanctuaryDB.log[#SanctuaryDB.log].type, "groupInvite", "system invite log type")
+local systemInviteLog = lastDebug("SYSTEM_INVITE")
+check(systemInviteLog ~= nil, "already-in-group invite debug logged")
+check(systemInviteLog.data.inRaid, "already-in-group invite debug reports raid context")
+check(systemInviteLog.data.inInstance, "already-in-group invite debug reports instance context")
+equal(systemInviteLog.data.instanceType, "raid", "already-in-group invite debug reports instance type")
 
 -- Popup-backed system messages are filtered from chat but not block-logged from
 -- CHAT_MSG_SYSTEM; PARTY_INVITE_REQUEST owns the durable log because it carries
 -- the inviter GUID.
 inGroup = false
+inRaid = false
+inInstance = false
+currentInstanceType = "none"
 local normalSystemMessage = "[Normalbad] vous a invité à rejoindre un groupe."
 beforeLogs = #SanctuaryDB.log
 filtered = chatFilters.CHAT_MSG_SYSTEM(nil, "CHAT_MSG_SYSTEM", normalSystemMessage)
@@ -551,6 +567,8 @@ equal(SanctuaryDB.debugLog[1].cat, "SNAPSHOT", "debug snapshot category")
 equal(SanctuaryDB.debugLog[1].data.version, "0.3.2", "debug snapshot version")
 check(SanctuaryDB.debugLog[1].data.groupInviteFilter, "debug snapshot reports group invite filter")
 check(SanctuaryDB.debugLog[1].data.partyInviteSoundGuardActive, "debug snapshot reports active invite sound guard")
+equal(SanctuaryDB.debugLog[1].data.chatFramesSeen, 1, "debug snapshot reports chat frames seen")
+equal(SanctuaryDB.debugLog[1].data.chatFramesWrapped, 1, "debug snapshot reports wrapped chat frames")
 equal(SanctuaryDB.debugLog[1].data.filters.whisper, true, "debug snapshot reports whisper filter")
 equal(SanctuaryDB.debugLog[1].data.filters.channelMode, "none", "debug snapshot reports channel mode")
 local beforeDebug = #SanctuaryDB.debugLog
@@ -559,12 +577,76 @@ chatFilters.CHAT_MSG_SYSTEM(nil, "CHAT_MSG_SYSTEM", systemMessage)
 equal(#SanctuaryDB.debugLog, beforeDebug, "system filter has no side effects")
 
 local beforeOutputDebug = #SanctuaryDB.debugLog
+local beforeOutputMessages = #chatMessages
 ChatFrame1:AddMessage(systemMessage)
-equal(#SanctuaryDB.debugLog, beforeOutputDebug + 1, "chat output diagnostic logs visible invite text")
+equal(#chatMessages, beforeOutputMessages, "chat output guard suppresses blocked already-in-group invite text")
+equal(#SanctuaryDB.debugLog, beforeOutputDebug + 1, "chat output diagnostic logs blocked invite text")
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].cat, "CHAT_OUTPUT", "chat output diagnostic category")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "SUPPRESS_BLOCKED_INVITE", "chat output diagnostic reports suppression")
 ns.hookChatOutputDiagnostics()
 ChatFrame1:AddMessage(systemMessage)
+equal(#chatMessages, beforeOutputMessages, "chat output guard remains single after rehook")
 equal(#SanctuaryDB.debugLog, beforeOutputDebug + 2, "chat output diagnostic hook is not duplicated")
+
+local trustedOutputMessage = "[Friend] vous a invité à rejoindre un groupe, mais vous ne pouviez pas accepter car vous êtes déjà dans un groupe."
+SanctuaryDB.manualWhitelist.chatfriend = { displayName = "Friend" }
+ns.invalidateWhitelist()
+ns.getCharacterDecision("Friend")
+beforeOutputDebug = #SanctuaryDB.debugLog
+beforeOutputMessages = #chatMessages
+ChatFrame1:AddMessage(trustedOutputMessage)
+equal(#chatMessages, beforeOutputMessages + 1, "chat output guard preserves trusted invite text")
+equal(#SanctuaryDB.debugLog, beforeOutputDebug + 1, "chat output diagnostic logs trusted invite text")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "ALLOW_INVITE_OUTPUT", "trusted invite output diagnostic reports allow")
+SanctuaryDB.manualWhitelist.chatfriend = nil
+ns.invalidateWhitelist()
+ns.getCharacterDecision("Harasser-TestRealm")
+
+local lateFrameMessages = {}
+ChatFrame2 = { AddMessage = function(self, message) lateFrameMessages[#lateFrameMessages + 1] = message end }
+ns.hookChatOutputDiagnostics()
+beforeOutputDebug = #SanctuaryDB.debugLog
+ChatFrame2:AddMessage(systemMessage)
+equal(#lateFrameMessages, 0, "late chat frame output guard suppresses blocked invite text")
+equal(#SanctuaryDB.debugLog, beforeOutputDebug + 1, "late chat frame blocked output diagnostic logged")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.frame, 2, "late chat frame diagnostic reports frame index")
+
+beforeOutputDebug = #SanctuaryDB.debugLog
+local beforeNoMatchMessages = #chatMessages
+ChatFrame1:AddMessage("invitation group text that does not match localized patterns")
+equal(#chatMessages, beforeNoMatchMessages + 1, "chat output no-match invite-like text stays visible")
+equal(#SanctuaryDB.debugLog, beforeOutputDebug + 1, "chat output no-match diagnostic logged")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "NO_MATCH", "chat output no-match diagnostic action")
+
+local sanctuaryWrappedAddMessage = ChatFrame1.AddMessage
+local externalWrapperCalls = 0
+ChatFrame1.AddMessage = function(self, message, ...)
+    externalWrapperCalls = externalWrapperCalls + 1
+    return sanctuaryWrappedAddMessage(self, message, ...)
+end
+ns.hookChatOutputDiagnostics()
+SanctuaryDB.manualWhitelist.chatfriend = { displayName = "Friend" }
+ns.invalidateWhitelist()
+ns.getCharacterDecision("Friend")
+beforeOutputDebug = #SanctuaryDB.debugLog
+beforeOutputMessages = #chatMessages
+externalWrapperCalls = 0
+ChatFrame1:AddMessage(trustedOutputMessage)
+equal(#chatMessages, beforeOutputMessages + 1, "rewrapped chat output preserves trusted invite text")
+equal(externalWrapperCalls, 1, "rewrapped trusted output calls external wrapper once")
+equal(#SanctuaryDB.debugLog, beforeOutputDebug + 1, "rewrapped trusted output logs only once")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "ALLOW_INVITE_OUTPUT", "rewrapped trusted output diagnostic reports allow")
+SanctuaryDB.manualWhitelist.chatfriend = nil
+ns.invalidateWhitelist()
+ns.getCharacterDecision("Harasser-TestRealm")
+beforeOutputDebug = #SanctuaryDB.debugLog
+beforeOutputMessages = #chatMessages
+externalWrapperCalls = 0
+ChatFrame1:AddMessage(systemMessage)
+equal(#chatMessages, beforeOutputMessages, "rewrapped chat output suppresses blocked invite text")
+equal(externalWrapperCalls, 0, "rewrapped blocked output stops before external wrapper")
+equal(#SanctuaryDB.debugLog, beforeOutputDebug + 1, "rewrapped blocked output logs only once")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "SUPPRESS_BLOCKED_INVITE", "rewrapped blocked output diagnostic reports suppression")
 
 local beforeChatDecisionDebug = #SanctuaryDB.debugLog
 fire("CHAT_MSG_WHISPER", "secret", "Unknown")
@@ -634,12 +716,36 @@ equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.kind, "bn_whisper", "secr
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.sender, "<secret>", "secret BNet sender is redacted")
 
 local beforeSecretSystemDebug = #SanctuaryDB.debugLog
+inGroup = true
+inRaid = true
+inInstance = true
+currentInstanceType = "raid"
 local secretSystemOk = pcall(function()
-    fire("CHAT_MSG_SYSTEM", secretChatPayload)
+    fire("CHAT_MSG_SYSTEM", secretChatPayload, "extra1", "extra2")
 end)
 check(secretSystemOk, "secret system payload does not break invite diagnostics")
 equal(#SanctuaryDB.debugLog, beforeSecretSystemDebug + 1, "secret system payload is diagnosed once")
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.result, "SECRET_VALUE", "secret system diagnostic result")
+check(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.inRaid, "secret system diagnostic reports raid context")
+check(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.inInstance, "secret system diagnostic reports instance context")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.instanceType, "raid", "secret system diagnostic reports instance type")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.argCount, 2, "secret system diagnostic reports extra arg count")
+
+beforeOutputDebug = #SanctuaryDB.debugLog
+beforeOutputMessages = #chatMessages
+local secretOutputOk = pcall(function()
+    ChatFrame1:AddMessage(secretChatPayload)
+end)
+check(secretOutputOk, "secret chat output payload does not break diagnostics")
+equal(#chatMessages, beforeOutputMessages + 1, "secret chat output keeps native display path")
+equal(#SanctuaryDB.debugLog, beforeOutputDebug + 1, "secret chat output diagnostic logged once")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].cat, "CHAT_OUTPUT", "secret chat output diagnostic category")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "SECRET_VALUE", "secret chat output diagnostic result")
+check(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.inRaid, "secret chat output diagnostic reports raid context")
+inGroup = false
+inRaid = false
+inInstance = false
+currentInstanceType = "none"
 
 SanctuaryDB.filters.say = true
 filtered = chatFilters.CHAT_MSG_SAY(nil, "CHAT_MSG_SAY", "hello", "Victim-OtherRealm")
@@ -676,11 +782,13 @@ equal(#chatMessages, beforeMinimalMessages + 1, "minimal notification throttled"
 SanctuaryDB.notifications.mode = "silent"
 
 SanctuaryDB.debugLog = {}
-for i = 1, 505 do
+SanctuaryDB.logging.maxEntries = 7
+for i = 1, 10 do
     ns.debugLog("ROTATE", { i = i })
 end
-equal(#SanctuaryDB.debugLog, 500, "debug log rotates to 500 entries")
-equal(SanctuaryDB.debugLog[1].data.i, 6, "debug log keeps newest entries after rotation")
+equal(#SanctuaryDB.debugLog, 7, "debug log rotates to configured max entries")
+equal(SanctuaryDB.debugLog[1].data.i, 4, "debug log keeps newest entries after configured rotation")
+SanctuaryDB.logging.maxEntries = 5000
 
 -- Popup helpers must handle multiple simultaneous StaticPopup frames and
 -- restore their original alpha values.
@@ -728,6 +836,13 @@ equal(popupDecision.data.affected, 1, "blocked party invite reports affected pop
 local inviteApi = lastDebug("INVITE_API")
 check(inviteApi ~= nil, "blocked party invite logs native decline API")
 check(inviteApi.data.ok, "blocked party invite native decline API succeeded")
+local inviteLog = lastDebug("INVITE")
+check(inviteLog ~= nil, "blocked party invite logs invite decision")
+equal(inviteLog.data.decisionId, popupDecision.data.decisionId, "invite decision log shares popup decision id")
+equal(inviteApi.data.decisionId, popupDecision.data.decisionId, "invite API log shares popup decision id")
+check(not inviteLog.data.inRaid, "blocked party invite debug reports non-raid context")
+check(not inviteLog.data.inInstance, "blocked party invite debug reports non-instance context")
+equal(inviteLog.data.instanceType, "none", "blocked party invite debug reports instance type")
 equal(forbiddenStaticHides, 0, "no direct StaticPopup_Hide")
 runTimers()
 equal(declinedGroups, beforeBlockedDeclines + 1, "blocked group invite silent hide does not decline twice")
@@ -753,6 +868,10 @@ equal(declinedGroups, beforeTrustedDeclines, "trusted invite not declined by San
 equal(#playedSounds, 2, "trusted party invite replays native popup sounds after allow")
 equal(playedSounds[1], SOUNDKIT.IG_MAINMENU_OPEN, "trusted party invite replays native popup-open sound first")
 equal(playedSounds[2], 880, "trusted party invite replays native Blizzard invite sound second")
+local trustedInviteLog = lastDebug("INVITE")
+check(trustedInviteLog ~= nil, "trusted popup-first invite logs invite decision")
+check(trustedInviteLog.data.replayedSound, "trusted popup-first invite reports replayed native sound")
+check(tonumber(trustedInviteLog.data.releasedSoundGuards) > 0, "trusted popup-first invite reports released sound guard")
 local allowedSound = lastDebug("SOUND", "PLAY_ALLOWED_POPUP")
 check(allowedSound ~= nil, "trusted popup-first invite logs native sound replay")
 equal(allowedSound.data.popupSound, "880", "trusted popup-first invite logs captured native sound")
@@ -771,6 +890,10 @@ popupDecision = lastDebug("POPUP_DECISION")
 check(popupDecision ~= nil, "trusted Sanctuary-first invite logs popup decision")
 equal(popupDecision.data.order, "event_first", "trusted Sanctuary-first invite reports event-first ordering")
 equal(#playedSounds, 0, "Sanctuary-first trusted invite does not synthesize sound before popup")
+trustedInviteLog = lastDebug("INVITE")
+check(trustedInviteLog ~= nil, "trusted Sanctuary-first invite logs invite decision")
+check(not trustedInviteLog.data.replayedSound, "trusted Sanctuary-first invite does not report replayed sound before popup")
+equal(trustedInviteLog.data.releasedSoundGuards, 0, "trusted Sanctuary-first invite reports no released sound guard")
 StaticPopup_Show("PARTY_INVITE", "Friend vous invite dans un groupe.")
 equal(popup.alpha, 1, "trusted decision survives Sanctuary-first ordering")
 equal(#playedSounds, 2, "Sanctuary-first trusted invite uses native popup sounds")
@@ -1111,6 +1234,33 @@ beforeSlashMessages = #chatMessages
 SlashCmdList["SANCTUARY"]("simulate bnetfriend 1")
 check(#chatMessages == beforeSlashMessages + 1, "slash BNet simulation prints one diagnostic line")
 check(chatMessages[#chatMessages]:find("Simulation bnet whisper", 1, true) ~= nil, "slash BNet simulation output label")
+
+beforeSlashMessages = #chatMessages
+SanctuaryDB.debugLog = {}
+SlashCmdList["SANCTUARY"]("diag chat invite")
+check(#chatMessages == beforeSlashMessages + 1, "slash chat diagnostic prints one diagnostic line")
+check(chatMessages[#chatMessages]:find("Diagnostic chat invite", 1, true) ~= nil, "slash chat diagnostic output label")
+local chatOutputLog = lastDebug("CHAT_OUTPUT")
+check(chatOutputLog ~= nil, "slash chat diagnostic triggers chat output guard")
+equal(chatOutputLog.data.action, "SUPPRESS_BLOCKED_INVITE", "slash chat diagnostic suppresses direct invite output")
+local chatTestLog = lastDebug("CHAT_TEST")
+check(chatTestLog ~= nil, "slash chat diagnostic logs result")
+equal(chatTestLog.data.output, "guarded", "slash chat diagnostic reports guarded output")
+check(chatTestLog.data.observed, "slash chat diagnostic reports observed guard")
+
+local savedDefaultChatFrame = DEFAULT_CHAT_FRAME
+local rawDiagnosticMessages = {}
+DEFAULT_CHAT_FRAME = {
+    AddMessage = function(self, message)
+        rawDiagnosticMessages[#rawDiagnosticMessages + 1] = message
+    end,
+}
+SanctuaryDB.debugLog = {}
+local unguardedDiagnostic = ns.runChatDiagnostic("invite")
+equal(unguardedDiagnostic.output, "unguarded", "chat diagnostic reports unguarded when wrapper is absent")
+check(not unguardedDiagnostic.observed, "chat diagnostic does not fake observation when wrapper is absent")
+equal(#rawDiagnosticMessages, 1, "unguarded chat diagnostic would print the probe message")
+DEFAULT_CHAT_FRAME = savedDefaultChatFrame
 
 beforeSlashMessages = #chatMessages
 playedSounds = {}

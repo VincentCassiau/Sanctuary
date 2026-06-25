@@ -164,6 +164,57 @@ local function safeText(value, maxLen, nilText)
     return text
 end
 
+local function getRuntimeContext()
+    local inGroupValue = false
+    if type(IsInGroup) == "function" then
+        local ok, value = pcall(IsInGroup)
+        inGroupValue = ok and value and true or false
+    end
+
+    local inRaidValue = false
+    if type(IsInRaid) == "function" then
+        local ok, value = pcall(IsInRaid)
+        inRaidValue = ok and value and true or false
+    end
+
+    local groupSizeValue = 0
+    if inGroupValue and type(GetNumGroupMembers) == "function" then
+        local ok, value = pcall(GetNumGroupMembers)
+        groupSizeValue = ok and tonumber(value) or 0
+    end
+
+    local inInstanceValue = false
+    local instanceTypeValue = "none"
+    if type(IsInInstance) == "function" then
+        local ok, isInstance, instanceType = pcall(IsInInstance)
+        if ok then
+            inInstanceValue = isInstance and true or false
+            instanceTypeValue = safeText(instanceType, 40, "nil") or "nil"
+        else
+            instanceTypeValue = "error"
+        end
+    end
+
+    return {
+        inGroup = inGroupValue,
+        inRaid = inRaidValue,
+        groupSize = groupSizeValue,
+        inInstance = inInstanceValue,
+        instanceType = instanceTypeValue,
+    }
+end
+
+local function addRuntimeContext(data)
+    data = data or {}
+    local context = getRuntimeContext()
+    data.inGroup = context.inGroup
+    data.inRaid = context.inRaid
+    data.groupSize = context.groupSize
+    data.inInstance = context.inInstance
+    data.instanceType = context.instanceType
+    return data
+end
+
 local function sanitizeDebugValue(value, depth)
     if value == nil then return nil end
     if isRestrictedValue(value) then return SECRET_VALUE_PLACEHOLDER end
@@ -354,6 +405,7 @@ ns.matchesKeyword = matchesKeyword
 
 -- Forward declarations for helpers used before their concrete section.
 local debugLog, countBNetWithCharName, captureDebugSnapshot, isBNetSenderInGroup
+local chatOutputWrapped
 local pendingPopupDecisions
 local unmaskVisiblePopup
 local capturePartyInviteOriginalSound
@@ -719,9 +771,10 @@ debugLog = function(cat, data)
         data = sanitizeDebugValue(data or {}, 0) or {},
     })
 
-    -- Rotation: keep max 500 entries without replacing the SavedVariables
-    -- table reference used by the diagnostics UI.
-    local overflow = #SanctuaryDB.debugLog - 500
+    -- Rotation without replacing the SavedVariables table reference used by the
+    -- diagnostics UI.
+    local maxEntries = math.max(1, SanctuaryDB.logging and SanctuaryDB.logging.maxEntries or 5000)
+    local overflow = #SanctuaryDB.debugLog - maxEntries
     if overflow > 0 then
         local oldCount = #SanctuaryDB.debugLog
         for i = 1, oldCount - overflow do
@@ -825,6 +878,17 @@ captureDebugSnapshot = function()
     if SanctuaryCharDB and SanctuaryCharDB.manualWhitelist then
         for _ in pairs(SanctuaryCharDB.manualWhitelist) do manualChar = manualChar + 1 end
     end
+    local chatFramesSeen = 0
+    local chatFramesWrapped = 0
+    for i = 1, 20 do
+        local chatFrame = _G["ChatFrame" .. i]
+        if chatFrame then
+            chatFramesSeen = chatFramesSeen + 1
+            if chatOutputWrapped and chatOutputWrapped[chatFrame] == chatFrame.AddMessage then
+                chatFramesWrapped = chatFramesWrapped + 1
+            end
+        end
+    end
 
     debugLog("SNAPSHOT", {
         version = VERSION,
@@ -846,6 +910,8 @@ captureDebugSnapshot = function()
         groupInviteFilter = getEffective("filters.groupInvite") == true,
         partyInviteOriginalSound = tostring(capturePartyInviteOriginalSound() or "nil"),
         partyInviteSoundGuardActive = partyInviteSoundGuardDepth > 0,
+        chatFramesSeen = chatFramesSeen,
+        chatFramesWrapped = chatFramesWrapped,
     })
 end
 
@@ -1059,6 +1125,7 @@ end
 
 -- Register all filters
 local chatFiltersRegistered = false
+local isStaticPopupSoundSuppressed
 local function registerChatFilters()
     if chatFiltersRegistered then return end
     chatFiltersRegistered = true
@@ -1073,38 +1140,95 @@ local function registerChatFilters()
     ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", channelFilter)
 end
 
--- Diagnostic-only observation of text that actually reaches a chat frame. This
--- does not alter chat output; it lets the next debug report distinguish a
--- Blizzard event-filter miss from another addon re-printing the same message
--- directly through ChatFrame:AddMessage.
-local chatOutputHooked = setmetatable({}, { __mode = "k" })
+-- Last-resort guard for invite text printed directly through ChatFrame:AddMessage.
+-- The event filter remains the primary path, but Retail/other addons can still
+-- print directly to a frame. Keep this wrapper narrow: no native API calls, no
+-- sound/popup changes, and only exact localized invite-system text is suppressed.
+chatOutputWrapped = setmetatable({}, { __mode = "k" })
+local activeChatOutputProbe
 local function hookChatOutputDiagnostics()
     for i = 1, 20 do
         local chatFrame = _G["ChatFrame" .. i]
-        if chatFrame and not chatOutputHooked[chatFrame] and chatFrame.AddMessage then
+        if chatFrame and chatOutputWrapped[chatFrame] ~= chatFrame.AddMessage and chatFrame.AddMessage then
             local frameIndex = i
-            local ok = pcall(hooksecurefunc, chatFrame, "AddMessage", function(_, text)
-                if not SanctuaryDB or not SanctuaryDB.debugEnabled
-                    or isRestrictedValue(text) or type(text) ~= "string" then
-                    return
+            local original = chatFrame.AddMessage
+            local function wrappedAddMessage(self, text, ...)
+                if chatOutputWrapped[self] ~= wrappedAddMessage then
+                    return original(self, text, ...)
                 end
 
-                local inviterName, patternIndex = extractInviterFromSystemMessage(text)
+                if isRestrictedValue(text) then
+                    debugLog("CHAT_OUTPUT", addRuntimeContext({
+                        frame = frameIndex,
+                        action = "SECRET_VALUE",
+                        msg = SECRET_VALUE_PLACEHOLDER,
+                        filterEnabled = isEnabled() and getEffective("filters.groupInvite") == true,
+                        soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
+                    }))
+                    return original(self, text, ...)
+                end
+
+                local inviterName, patternIndex, patternKind = extractInviterFromSystemMessage(text)
                 if inviterName then
                     local shouldBlock, reason, keyword = getCharacterDecision(inviterName)
-                    debugLog("CHAT_OUTPUT", {
+                    local filterEnabled = isEnabled() and getEffective("filters.groupInvite") == true
+                    local suppress = filterEnabled and shouldBlock
+                    if activeChatOutputProbe and activeChatOutputProbe.message == text then
+                        activeChatOutputProbe.observed = true
+                        activeChatOutputProbe.frame = frameIndex
+                        activeChatOutputProbe.action = suppress and "SUPPRESS_BLOCKED_INVITE" or "ALLOW_INVITE_OUTPUT"
+                        activeChatOutputProbe.suppressed = suppress and true or false
+                    end
+                    debugLog("CHAT_OUTPUT", addRuntimeContext({
                         frame = frameIndex,
+                        action = suppress and "SUPPRESS_BLOCKED_INVITE" or "ALLOW_INVITE_OUTPUT",
                         msg = safeText(text, 300, "nil"),
                         name = inviterName,
                         pattern = patternIndex or "?",
+                        patternKind = patternKind or "unknown",
                         shouldBlock = shouldBlock and true or false,
                         reason = reason or "nil",
                         keyword = keyword or "none",
-                    })
+                        filterEnabled = filterEnabled and true or false,
+                        soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
+                    }))
+                    if suppress then
+                        return
+                    end
+                elseif type(text) == "string" and SanctuaryDB and SanctuaryDB.debugEnabled
+                    and not text:find("[Sanctuary]", 1, true) then
+                    local lowerText = text:lower()
+                    if lowerText:find("invit", 1, true) or lowerText:find("group", 1, true) then
+                        if activeChatOutputProbe and activeChatOutputProbe.message == text then
+                            activeChatOutputProbe.observed = true
+                            activeChatOutputProbe.frame = frameIndex
+                            activeChatOutputProbe.action = "NO_MATCH"
+                            activeChatOutputProbe.suppressed = false
+                        end
+                        debugLog("CHAT_OUTPUT", addRuntimeContext({
+                            frame = frameIndex,
+                            action = "NO_MATCH",
+                            msg = safeText(text, 300, "nil"),
+                            filterEnabled = isEnabled() and getEffective("filters.groupInvite") == true,
+                            soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
+                        }))
+                    end
                 end
+
+                return original(self, text, ...)
+            end
+
+            local ok, err = pcall(function()
+                chatFrame.AddMessage = wrappedAddMessage
             end)
             if ok then
-                chatOutputHooked[chatFrame] = true
+                chatOutputWrapped[chatFrame] = wrappedAddMessage
+            else
+                debugLog("CHAT_OUTPUT", addRuntimeContext({
+                    frame = frameIndex,
+                    action = "WRAP_FAILED",
+                    error = tostring(err),
+                }))
             end
         end
     end
@@ -1168,7 +1292,7 @@ local function captureStaticPopupSound(which)
     return state.originalSound
 end
 
-local function isStaticPopupSoundSuppressed(which)
+isStaticPopupSoundSuppressed = function(which)
     local state = staticPopupSoundGuardStates[which]
     return state and state.active or false
 end
@@ -1512,19 +1636,17 @@ isBNetSenderInGroup = function(senderBNetName)
         end
     end)
     if accountMatched or not ok then
-        debugLog("BNET_GROUP", {
+        debugLog("BNET_GROUP", addRuntimeContext({
             sender = senderBNetName or "nil",
             normalized = senderKey,
             accountMatched = accountMatched and true or false,
             character = normalizedCharacter or "nil",
             missingCharacterName = missingCharacterName and true or false,
-            inGroup = IsInGroup() and true or false,
-            groupSize = IsInGroup() and GetNumGroupMembers() or 0,
             membersChecked = membersChecked,
             result = found and true or false,
             ok = ok and true or false,
             error = ok and "none" or tostring(err),
-        })
+        }))
     end
     return found
 end
@@ -1740,6 +1862,7 @@ local function synchronizePopupDecision(which, shouldBlock, name, reason)
         affected = applyPopupDecision(which, decision.shouldBlock) or 0
     end
     debugLog("POPUP_DECISION", {
+        decisionId = decision.serial,
         which = which,
         name = name or "nil",
         normalized = name and (normalizeName(name) or "nil") or "nil",
@@ -1755,6 +1878,8 @@ local function synchronizePopupDecision(which, shouldBlock, name, reason)
             pendingPopupDecisions[which] = nil
         end
     end)
+
+    return decision.serial
 end
 
 local function consumePendingPopupDecision(which)
@@ -1909,6 +2034,7 @@ local function synchronizeGuildInviteFrameDecision(shouldBlock, inviter, reason)
     end
 
     debugLog("POPUP_DECISION", {
+        decisionId = decision.serial,
         which = GUILD_INVITE_FRAME_KEY,
         frame = "GuildInviteFrame",
         name = inviter or "nil",
@@ -1926,6 +2052,8 @@ local function synchronizeGuildInviteFrameDecision(shouldBlock, inviter, reason)
             pendingPopupDecisions[GUILD_INVITE_FRAME_KEY] = nil
         end
     end)
+
+    return decision.serial
 end
 
 local function installGuildInviteFrameGuard()
@@ -2008,16 +2136,18 @@ function handlers.PARTY_INVITE_REQUEST(name, isTank, isHealer, isDamage,
     end
 
     local shouldBlock, reason, keyword = getCharacterDecision(name)
-    synchronizePopupDecision("PARTY_INVITE", shouldBlock, name, reason)
+    local decisionId = synchronizePopupDecision("PARTY_INVITE", shouldBlock, name, reason)
     local replayedSound = false
+    local releasedSoundGuards = 0
     if not shouldBlock then
-        local releasedGuards = releaseProtectedPopupSoundGuards("PARTY_INVITE", "allowed_invite")
-        if releasedGuards > 0 then
+        releasedSoundGuards = releaseProtectedPopupSoundGuards("PARTY_INVITE", "allowed_invite")
+        if releasedSoundGuards > 0 then
             replayedSound = playAllowedProtectedPopupSounds("PARTY_INVITE", "allowed_invite_after_guard")
         end
     end
 
-    debugLog("INVITE", {
+    debugLog("INVITE", addRuntimeContext({
+        decisionId = decisionId or "nil",
         name = name,
         normalized = normalizeName(name),
         guid = inviterGUID or "nil",
@@ -2028,17 +2158,17 @@ function handlers.PARTY_INVITE_REQUEST(name, isTank, isHealer, isDamage,
         popupProtectionActive = isPopupProtectionActive("PARTY_INVITE"),
         soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
         replayedSound = replayedSound and true or false,
-        inGroup = IsInGroup() and true or false,
-        groupSize = IsInGroup() and GetNumGroupMembers() or 0,
+        releasedSoundGuards = releasedSoundGuards,
         popupVisible = countVisiblePopup("PARTY_INVITE"),
         wlCache = ns.getWhitelistCacheSize(),
-    })
+    }))
 
     if not shouldBlock then return end
 
     -- Keep the dialog invisible and use only Blizzard's native decline path.
     local declineOk, declineErr = pcall(DeclineGroup)
     debugLog("INVITE_API", {
+        decisionId = decisionId or "nil",
         api = "DeclineGroup",
         ok = declineOk and true or false,
         error = declineOk and "none" or tostring(declineErr),
@@ -2276,34 +2406,41 @@ function handlers.CHAT_MSG_SYSTEM(msg, ...)
     local inviterName, patternIndex, patternKind = extractInviterFromSystemMessage(msg)
     if not inviterName then
         if SanctuaryDB and SanctuaryDB.debugEnabled and isRestrictedValue(msg) then
-            debugLog("SYSTEM_INVITE", {
+            debugLog("SYSTEM_INVITE", addRuntimeContext({
                 msg = SECRET_VALUE_PLACEHOLDER,
                 result = "SECRET_VALUE",
-            })
+                filterEnabled = getEffective("filters.groupInvite") == true,
+                soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
+                argCount = select("#", ...),
+            }))
         elseif SanctuaryDB and SanctuaryDB.debugEnabled and type(msg) == "string" then
             local lowerMsg = msg:lower()
             if lowerMsg:find("invit", 1, true) or lowerMsg:find("group", 1, true) then
-                debugLog("SYSTEM_INVITE", {
+                debugLog("SYSTEM_INVITE", addRuntimeContext({
                     msg = safeText(msg, 300, "nil"),
                     result = "NO_MATCH",
-                })
+                    filterEnabled = getEffective("filters.groupInvite") == true,
+                    soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
+                    argCount = select("#", ...),
+                }))
             end
         end
         return
     end
 
     local shouldBlock, reason, keyword = getCharacterDecision(inviterName)
-    debugLog("SYSTEM_INVITE", {
+    debugLog("SYSTEM_INVITE", addRuntimeContext({
         msg = safeText(msg, 300, "nil"),
         name = inviterName,
         pattern = patternIndex or "?",
         isWL = reason == "whitelist",
         keyword = keyword or "none",
         result = shouldBlock and (reason == "keyword" and "SUPPRESS_KEYWORD" or "SUPPRESS_NOT_WHITELISTED") or "PASS_WHITELISTED",
-        inGroup = IsInGroup() and true or false,
+        filterEnabled = getEffective("filters.groupInvite") == true,
         soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
         patternKind = patternKind or "unknown",
-    })
+        argCount = select("#", ...),
+    }))
 
     -- Normal invite system messages are popup-backed and are followed by
     -- PARTY_INVITE_REQUEST, which carries the GUID. Only the no-popup
@@ -2703,6 +2840,78 @@ local function formatBNetSimulationResult(result)
     )
 end
 
+local function runChatDiagnostic(kind)
+    local normalizedKind = trimCommandText(kind):lower()
+    if normalizedKind == "" then normalizedKind = "invite" end
+    if normalizedKind ~= "invite" then
+        return {
+            available = false,
+            kind = normalizedKind,
+            reason = "unknown_chat_diagnostic",
+        }
+    end
+
+    local target = "SanctuaryDiagnosticBlocked"
+    local message = buildInviteSystemMessage(target, true)
+    local inviterName = extractInviterFromSystemMessage(message)
+    local shouldBlock, reason = getCharacterDecision(inviterName or target)
+    local filterEnabled = isEnabled() and getEffective("filters.groupInvite") == true
+    local expectedGuarded = filterEnabled and shouldBlock
+
+    local probe = { message = message }
+    local addMessageOk, addMessageErr = false, "missing_default_chat_frame"
+    if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
+        activeChatOutputProbe = probe
+        addMessageOk, addMessageErr = pcall(function()
+            DEFAULT_CHAT_FRAME:AddMessage(message)
+        end)
+        activeChatOutputProbe = nil
+    end
+
+    local output = "unavailable"
+    if not addMessageOk then
+        output = "error"
+    elseif probe.suppressed then
+        output = "guarded"
+    elseif probe.observed then
+        output = "visible"
+    elseif expectedGuarded then
+        output = "unguarded"
+    else
+        output = "visible"
+    end
+
+    local result = {
+        available = true,
+        kind = "invite",
+        filterEnabled = filterEnabled,
+        shouldBlock = shouldBlock and true or false,
+        reason = reason or "unknown",
+        output = output,
+        observed = probe.observed and true or false,
+        action = probe.action or "none",
+        error = addMessageOk and "none" or tostring(addMessageErr),
+    }
+    debugLog("CHAT_TEST", result)
+    return result
+end
+
+local function formatChatDiagnosticResult(result)
+    if not result.available then
+        return string.format("Diagnostic chat %s: ERROR (%s)",
+            result.kind or "unknown",
+            result.reason or "unknown"
+        )
+    end
+    return string.format(
+        "Diagnostic chat invite: output=%s observed=%s filter=%s reason=%s",
+        result.output or "unknown",
+        result.observed and "yes" or "no",
+        result.filterEnabled and "on" or "off",
+        result.reason or "unknown"
+    )
+end
+
 local function runSoundDiagnostic()
     local inviteSound = capturePartyInviteOriginalSound()
     local openSound = (SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPEN) or "igMainMenuOpen"
@@ -3001,6 +3210,8 @@ ns.formatSimulationResult = formatSimulationResult
 ns.simulateBNetWhisper = simulateBNetWhisper
 ns.simulateBNetFriend = simulateBNetFriend
 ns.formatBNetSimulationResult = formatBNetSimulationResult
+ns.runChatDiagnostic = runChatDiagnostic
+ns.formatChatDiagnosticResult = formatChatDiagnosticResult
 ns.runSoundDiagnostic = runSoundDiagnostic
 ns.formatSoundDiagnosticResult = formatSoundDiagnosticResult
 ns.runPopupDiagnostic = runPopupDiagnostic
@@ -3035,7 +3246,11 @@ SlashCmdList["SANCTUARY"] = function(msg)
             local diagKind, diagRest = trimCommandText(rest):match("^(%S+)%s*(.*)$")
             diagKind = diagKind and diagKind:lower() or ""
             diagRest = trimCommandText(diagRest)
-            if diagKind == "sound" then
+            if diagKind == "chat" then
+                local chatKind = diagRest:match("^(%S+)") or "invite"
+                printMsg(formatChatDiagnosticResult(runChatDiagnostic(chatKind)))
+                return
+            elseif diagKind == "sound" then
                 local soundKind = diagRest:match("^(%S+)") or "invite"
                 if soundKind:lower() ~= "invite" then
                     printError("Diagnostic inconnu. Utilisez /sanc diag sound invite.")
@@ -3127,11 +3342,11 @@ local hasEnteredWorld = false
 
 function handlers.PLAYER_ENTERING_WORLD()
     invalidateWhitelist()
-    debugLog("WORLD", {
+    debugLog("WORLD", addRuntimeContext({
         isInGuild = IsInGuild() and true or false,
         isInGroup = IsInGroup() and true or false,
         initial = not hasEnteredWorld,
-    })
+    }))
 
     -- Reset session-only tracking once at login, not on every dungeon/loading
     -- screen transition. The previous behavior restarted the five-minute timer
