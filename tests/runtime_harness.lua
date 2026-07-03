@@ -720,6 +720,29 @@ inGroup = true
 inRaid = true
 inInstance = true
 currentInstanceType = "raid"
+equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false, "strict secret system invite filter defaults off")
+filtered = chatFilters.CHAT_MSG_SYSTEM(nil, "CHAT_MSG_SYSTEM", secretChatPayload)
+check(not filtered, "secret system payload stays visible when strict mode is off")
+SanctuaryDB.filters.strictGroupInviteSystemMessages = true
+filtered = chatFilters.CHAT_MSG_SYSTEM(nil, "CHAT_MSG_SYSTEM", secretChatPayload)
+check(filtered, "strict mode suppresses secret system payload while grouped in raid")
+local beforeStrictSecretSystemDebug = #SanctuaryDB.debugLog
+fire("CHAT_MSG_SYSTEM", secretChatPayload, "extra1", "extra2")
+equal(#SanctuaryDB.debugLog, beforeStrictSecretSystemDebug + 1, "strict secret system payload is diagnosed once")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.result, "SUPPRESS_SECRET_SYSTEM_STRICT", "strict secret system diagnostic result")
+equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.strictGroupInviteSystemMessages, true, "strict secret system diagnostic reports setting")
+inGroup = false
+inRaid = false
+inInstance = false
+currentInstanceType = "none"
+filtered = chatFilters.CHAT_MSG_SYSTEM(nil, "CHAT_MSG_SYSTEM", secretChatPayload)
+check(not filtered, "strict mode does not suppress secret system payload outside group or instance")
+SanctuaryDB.filters.strictGroupInviteSystemMessages = false
+inGroup = true
+inRaid = true
+inInstance = true
+currentInstanceType = "raid"
+beforeSecretSystemDebug = #SanctuaryDB.debugLog
 local secretSystemOk = pcall(function()
     fire("CHAT_MSG_SYSTEM", secretChatPayload, "extra1", "extra2")
 end)

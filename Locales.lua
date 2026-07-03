@@ -74,6 +74,7 @@ L["FILTER_EMOTE"] = "Block emotes"
 L["FILTER_DUEL"] = "Auto-decline duels"
 L["FILTER_TRADE"] = "Auto-close trades"
 L["FILTER_GUILD_INVITE"] = "Auto-decline guild invitations"
+L["FILTER_STRICT_GROUP_INVITE_SYSTEM"] = "Enhanced filtering in instances"
 
 -- Filter tooltips
 L["TIP_GROUP_INVITE"] = "Blocks and auto-declines group invitations from unauthorized players.\nThe system message in chat is also suppressed.\n\nExample: a stranger invites you => nothing appears."
@@ -84,6 +85,7 @@ L["TIP_EMOTE"] = "Hides emote messages in chat from unauthorized players.\nNote:
 L["TIP_DUEL"] = "Auto-declines duel requests from unauthorized players."
 L["TIP_TRADE"] = "Auto-closes the trade window with unauthorized players."
 L["TIP_GUILD_INVITE"] = "Auto-declines guild invitations from unauthorized players."
+L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Advanced mode: enable only if you still receive unwanted group invites while you are in a dungeon, raid, or instance.\n\nSanctuary will hide protected WoW system messages it cannot read while the group-invite filter is active. This may hide some legitimate system messages."
 
 -- Auto-trust
 L["GROUP_AUTO_TRUST"] = "Auto-trust"
@@ -253,6 +255,7 @@ L["FILTER_EMOTE"] = "Bloquer les emotes"
 L["FILTER_DUEL"] = "Refuser automatiquement les duels"
 L["FILTER_TRADE"] = "Fermer automatiquement les \195\169changes"
 L["FILTER_GUILD_INVITE"] = "Refuser automatiquement les invitations de guilde"
+L["FILTER_STRICT_GROUP_INVITE_SYSTEM"] = "Filtrage renforce en instance"
 
 -- Filter tooltips
 L["TIP_GROUP_INVITE"] = "Bloque et refuse les invitations de groupe des joueurs non autoris\195\169s.\nLe message syst\195\168me dans le chat est aussi supprim\195\169.\n\nExemple : un inconnu vous invite => rien ne s'affiche."
@@ -263,6 +266,7 @@ L["TIP_EMOTE"] = "Masque les messages d'emotes dans le chat des joueurs non auto
 L["TIP_DUEL"] = "Refuse automatiquement les demandes de duel des joueurs non autoris\195\169s."
 L["TIP_TRADE"] = "Ferme automatiquement la fen\195\170tre d'\195\169change avec un joueur non autoris\195\169."
 L["TIP_GUILD_INVITE"] = "Refuse automatiquement les invitations de guilde des joueurs non autoris\195\169s."
+L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Mode avance : a activer seulement si vous recevez quand meme des invitations indesirables en donjon, raid ou instance.\n\nSanctuary masquera certains messages systeme proteges que WoW ne laisse pas lire pendant que le filtre d'invitations de groupe est actif. Cela peut masquer quelques messages systeme WoW legitimes."
 
 -- Auto-trust
 L["GROUP_AUTO_TRUST"] = "Trust automatique"
