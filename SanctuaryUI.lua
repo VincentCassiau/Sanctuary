@@ -45,6 +45,7 @@ local FILTER_LABELS = {
     duel           = L["FILTER_DUEL"],
     trade          = L["FILTER_TRADE"],
     guildInvite    = L["FILTER_GUILD_INVITE"],
+    strictGroupInviteSystemMessages = L["FILTER_STRICT_GROUP_INVITE_SYSTEM"],
 }
 
 local FILTER_TOOLTIPS = {
@@ -56,6 +57,7 @@ local FILTER_TOOLTIPS = {
     duel           = L["TIP_DUEL"],
     trade          = L["TIP_TRADE"],
     guildInvite    = L["TIP_GUILD_INVITE"],
+    strictGroupInviteSystemMessages = L["TIP_STRICT_GROUP_INVITE_SYSTEM"],
 }
 
 
@@ -63,7 +65,7 @@ local FILTER_TOOLTIPS = {
 local FILTER_GROUPS = {
     {
         title = L["GROUP_MAIN_PROTECTION"],
-        keys  = { "groupInvite" },
+        keys  = { "groupInvite", "strictGroupInviteSystemMessages" },
     },
     {
         title = L["GROUP_COMMUNICATION"],
@@ -1536,6 +1538,7 @@ local function showDebugExport()
     result = result .. "CharFriends: " .. cf .. "\n"
     local partyInviteSoundGuard = ns.isPartyInviteSoundGuardActive and ns.isPartyInviteSoundGuardActive() or "?"
     result = result .. "GroupInviteFilter: " .. tostring(ns.getEffective("filters.groupInvite"))
+        .. " | StrictGroupInviteSystemMessages: " .. tostring(ns.getEffective("filters.strictGroupInviteSystemMessages"))
         .. " | PartyInviteSoundGuard: " .. tostring(partyInviteSoundGuard) .. "\n"
     if ns.getEffectiveFilterState then
         result = result .. "Filters: " .. serializeDebugData(ns.getEffectiveFilterState()) .. "\n"

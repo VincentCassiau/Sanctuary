@@ -48,6 +48,7 @@ local ACCOUNT_DEFAULTS = {
         emote              = false,
         channelMode        = "none",  -- "none" | "keywords" | "all"
         autoTrust          = false,
+        strictGroupInviteSystemMessages = false,
     },
 
     temporalGroupTrust = {
@@ -362,6 +363,7 @@ local FILTER_STATE_KEYS = {
     "emote",
     "channelMode",
     "autoTrust",
+    "strictGroupInviteSystemMessages",
 }
 
 local function getEffectiveFilterState()
@@ -998,11 +1000,22 @@ local function extractInviterFromSystemMessage(msg)
     return nil, nil, nil
 end
 
+local function shouldSuppressSecretGroupInviteSystemMessage(msg)
+    if not isRestrictedValue(msg) then return false end
+    if not isEnabled() or getEffective("filters.groupInvite") ~= true then return false end
+    if getEffective("filters.strictGroupInviteSystemMessages") ~= true then return false end
+
+    local context = getRuntimeContext()
+    return context.inGroup or context.inRaid or context.inInstance
+end
+
 -- System-message filters are invoked once per destination chat frame, so they
 -- must stay side-effect free. Logging/debugging happens in CHAT_MSG_SYSTEM.
 local function systemMessageFilter(self, event, msg, ...)
     if not isEnabled() then return false end
     if not getEffective("filters.groupInvite") then return false end
+
+    if shouldSuppressSecretGroupInviteSystemMessage(msg) then return true end
 
     local inviterName = extractInviterFromSystemMessage(msg)
     if not inviterName then return false end
@@ -2406,10 +2419,12 @@ function handlers.CHAT_MSG_SYSTEM(msg, ...)
     local inviterName, patternIndex, patternKind = extractInviterFromSystemMessage(msg)
     if not inviterName then
         if SanctuaryDB and SanctuaryDB.debugEnabled and isRestrictedValue(msg) then
+            local strictSuppressed = shouldSuppressSecretGroupInviteSystemMessage(msg)
             debugLog("SYSTEM_INVITE", addRuntimeContext({
                 msg = SECRET_VALUE_PLACEHOLDER,
-                result = "SECRET_VALUE",
+                result = strictSuppressed and "SUPPRESS_SECRET_SYSTEM_STRICT" or "SECRET_VALUE",
                 filterEnabled = getEffective("filters.groupInvite") == true,
+                strictGroupInviteSystemMessages = getEffective("filters.strictGroupInviteSystemMessages") == true,
                 soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
                 argCount = select("#", ...),
             }))

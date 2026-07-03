@@ -53,6 +53,8 @@ The GUI has 5 tabs:
 - **Logs** -- Browse blocked interactions, export logs
 - **About** -- Version information and opt-in diagnostics export
 
+For severe invite spam while already grouped or in an instance, the Filters tab includes enhanced instance filtering that can hide protected system messages Sanctuary cannot read. Leave it off unless unwanted invites still appear during dungeons, raids, or instances.
+
 Developer diagnostics: `/sanc simulate <name>` runs the group-invite decision and chat-filter path without calling WoW decline APIs or showing the real `PARTY_INVITE` popup. `/sanc simulate bnetfriend 1` checks the first Battle.net friend against the BNet-whisper filter without printing the account name. `/sanc diag sound invite`, `/sanc diag popup duel`, and `/sanc diag popup guild` exercise focused live-client diagnostics for protected sounds/popups.
 
 ## How the whitelist works
@@ -136,6 +138,8 @@ L'interface comporte 5 onglets :
 - **Whitelist** -- Ajouter manuellement des joueurs de confiance
 - **Logs** -- Consulter les interactions bloquees, exporter les logs
 - **A propos** -- Version et export de diagnostics active manuellement
+
+Pour les spams d'invitations severes quand vous etes deja en groupe ou en instance, l'onglet Filtres contient un filtrage renforce en instance qui peut masquer les messages systeme proteges que Sanctuary ne peut pas lire. Laissez-le desactive sauf si vous recevez quand meme des invitations indesirables en donjon, raid ou instance.
 
 Diagnostics developpeur : `/sanc simulate <name>` execute la decision d'invitation de groupe et le filtre de chat sans appeler les APIs de refus WoW ni afficher la vraie popup `PARTY_INVITE`. `/sanc simulate bnetfriend 1` teste le premier ami Battle.net contre le filtre de whisper BNet sans afficher le nom du compte. `/sanc diag sound invite`, `/sanc diag popup duel` et `/sanc diag popup guild` lancent des diagnostics client cibles sur les sons/popups proteges.
 
