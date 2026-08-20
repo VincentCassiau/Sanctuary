@@ -2,6 +2,8 @@
 --
 -- Usage: lua tests/check_qa_run.lua <SavedVariables/Sanctuary.lua>
 --
+-- Exit codes: 0 complete, 1 blocking failure, 2 unusable input, 3 reserves.
+--
 -- The settings file the game writes on exit is the record. This reads it and
 -- applies the closing checks that used to be done by scrolling an exported text
 -- by hand: which build produced it, whether the instrumentation was running,
@@ -75,7 +77,27 @@ local db = saved.SanctuaryDB
 local log = db.debugLog or {}
 local manifest = db.reportManifest
 local markers = ns.getReportMarkers(log)
-local verdict, verdictDetail = ns.getInstrumentationVerdict(markers)
+
+-- The instrumentation is graded on the manifest when there is one, and only
+-- falls back to the last SNAPSHOT still in the log otherwise. The log rotates
+-- at its retention limit and is not guaranteed to still hold a snapshot at the
+-- end of a session; the manifest is rewritten at PLAYER_LOGOUT from the live
+-- values. Reading the build from one and the instrumentation from the other is
+-- how a perfectly usable recording got declared unexploitable.
+--
+-- The grading rule itself is not duplicated: whichever source is used, the same
+-- ns.getInstrumentationVerdict decides.
+local instrumentation, instrumentationSource = markers, "journal"
+if manifest and manifest.chatFilterApiUsed ~= nil then
+    instrumentation = {
+        chatFilterApiUsed = manifest.chatFilterApiUsed,
+        chatFramesSeen = manifest.chatFramesSeen,
+        chatFramesWrapped = manifest.chatFramesWrapped,
+        systemChatTypeID = manifest.systemChatTypeID,
+    }
+    instrumentationSource = "manifeste"
+end
+local verdict, verdictDetail = ns.getInstrumentationVerdict(instrumentation)
 
 -- ---------------------------------------------------------------------------
 -- Report
@@ -117,27 +139,70 @@ else
         tostring(markers.addonMetaBuild), tostring(markers.addonMetaVersion),
         tostring(markers.addonMetaInterface)))
 end
+line(string.format("Source    : instrumentation lue dans le %s", instrumentationSource))
 line("")
 
--- Instrumentation: the one value that can void a whole session.
-state("API de filtrage chat", tostring(markers.chatFilterApiUsed),
-    verdict == "blocking" and "blocking" or (verdict == "unknown" and "warn" or nil))
+-- Instrumentation: the one value that can void a whole session. An unknown
+-- verdict marks every line it rests on -- a missing value printed as `ok` in a
+-- table read to spot what is wrong works against the reader.
+local unknownInstrumentation = (verdict == "unknown") and "warn" or nil
+state("API de filtrage chat", tostring(instrumentation.chatFilterApiUsed),
+    verdict == "blocking" and "blocking" or unknownInstrumentation)
 state("Frames de chat observees",
-    tostring(markers.chatFramesWrapped) .. " / " .. tostring(markers.chatFramesSeen),
-    (verdict == "degraded" and (verdictDetail or ""):find("chat_frames", 1, true)) and "warn" or nil)
-state("Type de message systeme", tostring(markers.systemChatTypeID),
-    (markers.systemChatTypeID == nil or markers.systemChatTypeID == "unknown") and "warn" or nil)
-state("Snapshots enregistres", markers.snapshots, markers.snapshots == 0 and "blocking" or nil)
+    tostring(instrumentation.chatFramesWrapped) .. " / " .. tostring(instrumentation.chatFramesSeen),
+    ((verdict == "degraded" and (verdictDetail or ""):find("chat_frames", 1, true))
+        and "warn") or unknownInstrumentation)
+state("Type de message systeme", tostring(instrumentation.systemChatTypeID),
+    (instrumentation.systemChatTypeID == nil or instrumentation.systemChatTypeID == "unknown")
+        and "warn" or nil)
+-- With a manifest, a log holding no snapshot only means it rotated past the
+-- last one. Without one, there is nothing left to grade at all.
+state("Snapshots dans le journal", markers.snapshots,
+    markers.snapshots == 0 and (instrumentationSource == "manifeste" and "warn" or "blocking") or nil)
+
+-- The markers below are read from the whole persistent log, which survives a
+-- reload, a relog and a session. Two guards keep them from crediting a step
+-- somebody did not play during this run.
+--
+-- First: the log must be about one build, and that build must be the one the
+-- manifest names. A complete recording from a previous build would otherwise
+-- read as a complete recording of this one.
+local expectedBuild = manifest and (manifest.build or manifest.addonMetaBuild)
+local logBuilds = markers.builds or {}
+local buildLabel, buildLevel
+if #logBuilds == 0 then
+    buildLabel, buildLevel = "inconnu (aucun snapshot)", "warn"
+elseif #logBuilds > 1 then
+    buildLabel, buildLevel = table.concat(logBuilds, " + ") .. " (journal melange)", "blocking"
+elseif expectedBuild and logBuilds[1] ~= expectedBuild then
+    buildLabel, buildLevel = logBuilds[1] .. " != " .. tostring(expectedBuild), "blocking"
+else
+    buildLabel, buildLevel = logBuilds[1], nil
+end
+state("Build du journal", buildLabel, buildLevel)
+
+-- Second: the log has to have been started for this run. It is not cleared by a
+-- reload or a relog, so one that was never cleared may still hold the scenarios
+-- of an earlier passage -- and credit steps skipped this time.
+local clearedAt = manifest and manifest.debugLogClearedAt
+state("Journal vide le", clearedAt or "jamais",
+    clearedAt == nil and "warn" or nil)
 line("")
 
--- Scenario markers: one line each, instead of five searches through the export.
-state("F1 ligne chat non filtree", markers.chatOutputNoMatch and "presente" or "absente",
-    not markers.chatOutputNoMatch and "warn" or nil)
-state("F2 fenetre d'invitation masquee", markers.popupMaskAwaitingEvent and "presente" or "absente",
+-- Produced by the diagnostic panel itself, not by a scenario: clicking "run
+-- them all" writes this entry. Kept apart from the scenario block so its
+-- presence is never read as proof that something was played.
+state("C.1 fenetre d'invitation masquee", markers.popupMaskAwaitingEvent and "presente" or "absente",
     not markers.popupMaskAwaitingEvent and "warn" or nil)
-state("F3 entree en instance", markers.worldInInstance and "presente" or "absente",
+line("")
+
+-- Scenario markers, numbered as the checklist numbers them. One line each,
+-- instead of four searches through the export.
+state("F.1 ligne chat non filtree", markers.chatOutputNoMatch and "presente" or "absente",
+    not markers.chatOutputNoMatch and "warn" or nil)
+state("F.2 entree en instance", markers.worldInInstance and "presente" or "absente",
     not markers.worldInInstance and "warn" or nil)
-state("F4 mort / resurrection", markers.playerState and "presente" or "absente",
+state("F.3 mort / resurrection", markers.playerState and "presente" or "absente",
     not markers.playerState and "warn" or nil)
 line("")
 
@@ -151,11 +216,17 @@ state("Entrees de debug", string.format("%d gardees / %d produites / %d perdues"
 state("Journal de blocages", tostring(db.log and #db.log or 0))
 line("")
 
+-- Three outcomes, three exit codes. Reserves used to exit 0, so any caller
+-- testing $? read "conforme" on a recording where no scenario had been played
+-- at all. Only a clean recording exits 0.
+--   0 = complete   1 = blocking failure   2 = unusable input   3 = reserves
 if blocking > 0 then
     line("VERDICT : ECHEC BLOQUANT -- ce releve n'est pas exploitable.")
     os.exit(1)
 elseif warnings > 0 then
     line(string.format("VERDICT : EXPLOITABLE AVEC RESERVES (%d point(s) a signaler).", warnings))
+    line("Ce n'est pas un releve complet : remontez les lignes marquees warn avant d'aller plus loin.")
+    os.exit(3)
 else
     line("VERDICT : RELEVE COMPLET ET EXPLOITABLE.")
 end

@@ -126,7 +126,7 @@ function C_FriendList.ShowFriends() end
 C_GuildInfo = { GuildRoster = function() end }
 local addonMetadata = {
     Version = "0.3.2",
-    ["X-Sanctuary-Build"] = "20260820-3",
+    ["X-Sanctuary-Build"] = "20260820-5",
     Interface = "120007",
 }
 C_AddOns = {
@@ -698,12 +698,12 @@ ns.captureDebugSnapshot()
 equal(#SanctuaryDB.debugLog, 1, "debug snapshot captured")
 equal(SanctuaryDB.debugLog[1].cat, "SNAPSHOT", "debug snapshot category")
 equal(SanctuaryDB.debugLog[1].data.version, "0.3.2", "debug snapshot version")
-equal(SanctuaryDB.debugLog[1].data.build, "20260820-3", "debug snapshot reports the diagnostic build id")
+equal(SanctuaryDB.debugLog[1].data.build, "20260820-5", "debug snapshot reports the diagnostic build id")
 equal(SanctuaryDB.debugLog[1].data.clientVersion, "12.0.7", "debug snapshot reports the client version")
 equal(SanctuaryDB.debugLog[1].data.clientBuild, "62119", "debug snapshot reports the client build")
 equal(SanctuaryDB.debugLog[1].data.clientInterface, 120007, "debug snapshot reports the client interface number")
 equal(SanctuaryDB.debugLog[1].data.addonMetaVersion, "0.3.2", "debug snapshot reports the loaded addon version metadata")
-equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, "20260820-3", "debug snapshot reports the loaded addon build metadata")
+equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, "20260820-5", "debug snapshot reports the loaded addon build metadata")
 equal(SanctuaryDB.debugLog[1].data.addonMetaInterface, "120007", "debug snapshot reports the loaded addon interface metadata")
 check(SanctuaryDB.debugLog[1].data.chatLockdownKnown, "debug snapshot reports a readable chat messaging lockdown state")
 check(not SanctuaryDB.debugLog[1].data.chatLockdown, "debug snapshot reports chat messaging lockdown off")
@@ -2239,6 +2239,47 @@ equal(strandedResult.leftOnScreen, true,
 StaticPopup1.Hide = savedHide
 StaticPopup1:Hide()
 
+-- Retail's PARTY_INVITE OnHide declines the group when `inviteAccepted` is nil.
+-- A probe that closes its own dialog with a raw Hide would therefore call the
+-- native decline -- and an invitation the server already had pending would be
+-- refused by a diagnostic. The guild probe was already checked for this; the
+-- invite probe was not, and did it.
+local beforeDiagDeclines = declinedGroups
+ns.resetDebugLog()
+playedSounds = {}
+local declineProbe = ns.runDiagnosticById("diag_popup_invite")
+check(declineProbe.text:find("hidden=yes", 1, true) ~= nil,
+    "the invite probe still closes the dialog it opened")
+equal(declinedGroups, beforeDiagDeclines,
+    "and closes it without calling the native decline")
+equal(#playedSounds, 0, "and without making a sound")
+
+-- The dangerous shape is not a missing Hide, it is a Hide that exists and does
+-- nothing: the dialog stays up at alpha 0, invisible and clickable, while the
+-- diagnostic claims it closed it. `hidden` is therefore read back off the
+-- screen, never deduced from the call.
+StaticPopup1.Hide = function() end
+local silentlyStranded = ns.runDiagnosticById("diag_popup_invite")
+equal(silentlyStranded.leftOnScreen, true,
+    "a Hide that exists but does nothing is still a popup left on screen")
+check(silentlyStranded.text:find("hidden=no", 1, true) ~= nil,
+    "and the line says hidden=no rather than claiming success")
+StaticPopup1.Hide = savedHide
+StaticPopup1:Hide()
+
+-- Running the probe over a real pending request would close it without
+-- accepting or declining it: StaticPopup_Show reuses the slot of the same
+-- `which`. The guild path already refused; this one does too now.
+StaticPopup_Show("PARTY_INVITE", "RealInviter")
+local busyResult = ns.runDiagnosticById("diag_popup_invite")
+check(busyResult.text:find("SKIP (popup_busy)", 1, true) ~= nil,
+    "the invite probe refuses to run over a pending request")
+equal(busyResult.leftOnScreen, false, "a refused probe leaves nothing behind")
+equal(StaticPopup1:IsShown(), true, "and the pending request is still there")
+equal(StaticPopup1.which, "PARTY_INVITE", "untouched, on its own slot")
+StaticPopup1:Hide()
+runTimers()
+
 -- ===========================================================================
 -- SECTION: Whitelist readback
 -- ===========================================================================
@@ -2369,6 +2410,16 @@ equal(markers.chatFilterApiUsed, "legacy", "the last snapshot wins")
 equal(select(1, ns.getInstrumentationVerdict(markers)), "ok",
     "a session that caught up is exploitable")
 
+-- The death scenario is proven by the death. A lone PLAYER_ALIVE means the
+-- character was alive at some point, which every session can say.
+equal(ns.getReportMarkers({
+    { seq = 1, cat = "PLAYER_STATE", data = { event = "PLAYER_ALIVE" } },
+    { seq = 2, cat = "PLAYER_STATE", data = { event = "PLAYER_UNGHOST" } },
+}).playerState, false, "coming back alive is not proof of having died")
+equal(ns.getReportMarkers({
+    { seq = 1, cat = "PLAYER_STATE", data = { event = "PLAYER_DEAD" } },
+}).playerState, true, "the death itself is")
+
 -- A mask that covered nothing is not the marker the step is looking for.
 equal(ns.getReportMarkers({
     { seq = 1, cat = "POPUP", data = { action = "MASK_AWAITING_EVENT", affected = 0 } },
@@ -2393,9 +2444,15 @@ fire("PLAYER_LOGOUT")
 local manifest = SanctuaryDB.reportManifest
 check(type(manifest) == "table", "logging out stamps a manifest into the settings file")
 equal(manifest.trigger, "logout", "the manifest says what wrote it")
-equal(manifest.build, "20260820-3", "the manifest carries the build id")
+equal(manifest.build, "20260820-5", "the manifest carries the build id")
 equal(manifest.version, ns.VERSION, "the manifest carries the addon version")
 check(manifest.savedAt ~= nil and manifest.savedAt ~= "", "the manifest is dated")
+-- The log is the record and nothing clears it on its own. When it was last
+-- started for a fresh run travels with the file, so a closing check can say
+-- whether it may still hold an earlier passage.
+check(SanctuaryDB.debugLogClearedAt ~= nil, "clearing the debug log is dated")
+equal(manifest.debugLogClearedAt, SanctuaryDB.debugLogClearedAt,
+    "and the manifest carries that date")
 check(manifest.verdict ~= nil, "the manifest carries the instrumentation verdict")
 
 -- A settings file has to identify its build even when nothing was recorded.
@@ -2413,7 +2470,7 @@ SanctuaryDB.debugEnabled = true
 ns.resetDebugLog()
 ns.captureDebugSnapshot("export")
 local summary = ns.buildDebugSummaryText()
-check(summary:find("20260820-3", 1, true) ~= nil, "the summary names the build")
+check(summary:find("20260820-5", 1, true) ~= nil, "the summary names the build")
 check(summary:find("Version: " .. ns.VERSION, 1, true) ~= nil, "the summary names the version")
 check(summary:find("ChatFilterApi:", 1, true) ~= nil, "the summary reports the filter API")
 check(summary:find("ChatFrames:", 1, true) ~= nil, "the summary reports the observed chat frames")
@@ -2426,6 +2483,37 @@ check(#summary < 2000,
     "the summary stays short enough to read on screen (" .. #summary .. " chars)")
 check(#ns.buildDebugReportText() > #summary,
     "the full report is still available and is the larger of the two")
+
+-- The summary reports live instrumentation, so it must grade live
+-- instrumentation. Grading the last SNAPSHOT still in the log instead printed
+-- `ChatFilterApi: legacy` under `Verdict: BLOCKING` once the addon had caught
+-- up mid-session -- and, in the dangerous direction, `OK` over degraded
+-- counters.
+ns.resetDebugLog()
+SanctuaryDB.debugLog[1] = { seq = 1, ts = "00:00:00", cat = "SNAPSHOT", data = {
+    chatFilterApiUsed = "unregistered", chatFramesSeen = 10, chatFramesWrapped = 0,
+    systemChatTypeID = "unknown" } }
+summary = ns.buildDebugSummaryText()
+check(summary:find("Verdict: OK", 1, true) ~= nil,
+    "a stale failed snapshot does not condemn a session that caught up")
+equal(SanctuaryDB.reportManifest.verdict, "ok",
+    "and the manifest records the verdict on the health it carries")
+
+-- The reverse direction is the one that costs a session: a good old snapshot
+-- must not vouch for degraded live counters.
+local savedAddMessage = ChatFrame1.AddMessage
+ChatFrame1.AddMessage = function() end
+ns.resetDebugLog()
+SanctuaryDB.debugLog[1] = { seq = 1, ts = "00:00:00", cat = "SNAPSHOT", data = {
+    chatFilterApiUsed = "legacy", chatFramesSeen = 10, chatFramesWrapped = 10,
+    systemChatTypeID = 90 } }
+summary = ns.buildDebugSummaryText()
+equal(summary:find("Verdict: OK", 1, true), nil,
+    "a good old snapshot does not vouch for a chat that is no longer observed")
+check(summary:find("Verdict: DEGRADED", 1, true) ~= nil,
+    "the summary grades the frames it actually reports")
+ChatFrame1.AddMessage = savedAddMessage
+ns.resetDebugLog()
 
 -- Opening the summary refreshes the manifest, so the file describes the session
 -- rather than the moment the addon loaded.
@@ -2750,19 +2838,46 @@ check(resultText ~= nil, "the panel has somewhere to show a result")
 equal(resultText and resultText:GetText(), ns.L["DIAG_RESULT_EMPTY"],
     "an untouched panel says so instead of showing a blank box")
 
+-- The invariant is anchored on fixed values, never on the catalogue's own
+-- `sensitive` flag: a test that branches on the data it is testing cannot
+-- notice that data disappearing -- it just takes the other branch and asserts
+-- the opposite, which is true as well. Removing the flag would then let a real
+-- Battle.net account name reach the log on a bulk run, silently.
+local SENSITIVE_DIAGNOSTIC_ID = "sim_bnetfriend"
+local BULK_DIAGNOSTIC_IDS = { "sim_invite", "sim_bnet", "diag_chat", "diag_sound",
+    "diag_popup_invite", "diag_popup_duel", "diag_popup_guild", "diag_popup_list" }
+
+local sensitiveCount = 0
+for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG) do
+    if entry.sensitive then sensitiveCount = sensitiveCount + 1 end
+end
+equal(sensitiveCount, 1, "exactly one diagnostic is marked as naming a real contact")
+equal(ns.getDiagnosticEntry(SENSITIVE_DIAGNOSTIC_ID).sensitive, true,
+    "and it is " .. SENSITIVE_DIAGNOSTIC_ID)
+equal(#ns.DIAGNOSTIC_CATALOG, #BULK_DIAGNOSTIC_IDS + 1,
+    "the catalogue is the bulk set plus that one")
+
 local runAllBtn = findButtonByLabel(diagContent, ns.L["DIAG_RUN_ALL"])
 check(runAllBtn ~= nil, "the panel offers a single button that runs them all")
+-- A bulk run starts from an empty box, so the first of the eight blocks the
+-- checklist asks for is the first one on screen.
+ns.runDiagnosticById("diag_chat")
+findButtonByLabel(diagContent, ns.L["DIAG_CHAT_INVITE"]):Click()
 runAllBtn:Click()
 local shown = resultText:GetText()
-for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG) do
-    if entry.sensitive then
-        equal(shown:find(ns.L[entry.labelKey], 1, true), nil,
-            "running them all skips " .. entry.id .. ", which names a real contact")
-    else
-        check(shown:find(ns.L[entry.labelKey], 1, true) ~= nil,
-            "running them all covers " .. entry.id)
-    end
+
+-- Each result block is prefixed with the same colour code, so counting them is
+-- how the test notices a bulk run that silently stopped covering things.
+local blockCount = select(2, shown:gsub("|cFF88CCFF", ""))
+equal(blockCount, #BULK_DIAGNOSTIC_IDS,
+    "running them all produces one block per bulk diagnostic")
+for _, id in ipairs(BULK_DIAGNOSTIC_IDS) do
+    local entry = ns.getDiagnosticEntry(id)
+    check(entry ~= nil and shown:find(ns.L[entry.labelKey], 1, true) ~= nil,
+        "running them all covers " .. id)
 end
+equal(shown:find(ns.L[ns.getDiagnosticEntry(SENSITIVE_DIAGNOSTIC_ID).labelKey], 1, true), nil,
+    "and never " .. SENSITIVE_DIAGNOSTIC_ID .. ", which names a real contact")
 
 local restoreBtn = findButtonByLabel(diagContent, ns.L["DIAG_RESTORE_BTN"])
 check(restoreBtn ~= nil, "the way back exists")
@@ -2778,12 +2893,22 @@ StaticPopup1.Hide = panelSavedHide
 check(resultText:GetText():find(ns.L["DIAG_LEFT_ON_SCREEN"], 1, true) ~= nil,
     "a stranded popup is reported in the panel")
 equal(restoreBtn:IsShown(), true, "and the way back appears")
-StaticPopup1:Hide()
 
+-- Clearing the results must not clear the screen. It used to: the button that
+-- was the only way back disappeared while the dialog was still up, invisible
+-- and clickable -- at the exact moment it was needed.
 local clearBtn = findButtonByLabel(diagContent, ns.L["DIAG_CLEAR"])
 clearBtn:Click()
+equal(StaticPopup1:IsShown(), true, "the dialog is still there")
+check(resultText:GetText():find(ns.L["DIAG_LEFT_ON_SCREEN"], 1, true) ~= nil,
+    "so the warning survives clearing the results")
+equal(restoreBtn:IsShown(), true, "and so does the way back")
+
+-- Once the dialog is actually gone, both go with it.
+StaticPopup1:Hide()
+clearBtn:Click()
 equal(resultText:GetText(), ns.L["DIAG_RESULT_EMPTY"], "clearing empties the result box")
-equal(restoreBtn:IsShown(), false, "and takes the way back with it")
+equal(restoreBtn:IsShown(), false, "and the way back goes when the dialog does")
 
 -- ---------------------------------------------------------------------------
 -- The Whitelist tab, driven by its own fields
@@ -2835,7 +2960,15 @@ check(guildRow ~= nil, "the group header is clickable")
 guildRow:Click()
 check(whitelistRowTexts():find("Officer-TestRealm", 1, true) ~= nil,
     "expanding a group lists its members")
-guildRow:Click()
+
+-- Folding back is the default on every opening, not just the first of the
+-- session: the window can be opened in public, and an expansion made once must
+-- not spill a roster on every later /sanc.
+mainFrame:Hide()
+mainFrame:Show()
+_G["SanctuaryTab_whitelist"]:Click()
+check(whitelistRowTexts():find("Officer-TestRealm", 1, true) == nil,
+    "closing the window folds the automatic groups again")
 
 _G.SanctuaryWhitelistSearchInput:SetText("officer")
 _G.SanctuaryWhitelistSearchInput:GetScript("OnTextChanged")(_G.SanctuaryWhitelistSearchInput)
@@ -2844,8 +2977,16 @@ check(rendered:find("Officer-TestRealm", 1, true) ~= nil,
     "a search opens the groups it matches")
 check(rendered:find("Guildmate-TestRealm", 1, true) == nil,
     "and shows only what it matched")
-_G.SanctuaryWhitelistSearchInput:SetText("")
-_G.SanctuaryWhitelistSearchInput:GetScript("OnTextChanged")(_G.SanctuaryWhitelistSearchInput)
+-- Closing the window clears the search too. A non-empty search forces its
+-- groups open, so leaving the text behind put the filtered names straight back
+-- on screen at the next opening -- in a window that can be opened in public.
+mainFrame:Hide()
+mainFrame:Show()
+_G["SanctuaryTab_whitelist"]:Click()
+equal(_G.SanctuaryWhitelistSearchInput:GetText(), "",
+    "closing the window clears the whitelist search")
+check(whitelistRowTexts():find("Officer-TestRealm", 1, true) == nil,
+    "so a search does not survive as an expanded group at the next opening")
 
 -- "Does this person get through?" answered in the tab.
 local checkBtn = findButtonByLabel(whitelistContent, ns.L["WL_CHECK_BTN"])
@@ -2883,7 +3024,43 @@ ns.invalidateWhitelist()
 -- entries: it runs tests/check_qa_run.lua on the settings file. That tool is
 -- therefore part of the deliverable, and it is exercised end to end here --
 -- including its exit code, which is what makes it usable without reading it.
-local function writeFixture(chatFilterApi)
+-- opts.chatFilterApi   value carried by the SNAPSHOT in the log ("" for none)
+-- opts.manifestHealth  instrumentation carried by the manifest, or nil
+-- opts.scenarios       false to write a log where nothing was played
+-- opts.logBuild        build stamped in the SNAPSHOT (defaults to the manifest's)
+-- opts.extraBuild      a second build stamped in a second SNAPSHOT
+-- opts.neverCleared    true to write a manifest with no debug-log clear date
+local function writeFixture(opts)
+    local snapshot = ""
+    if opts.chatFilterApi then
+        snapshot = ([[
+        { ["seq"] = 5, ["cat"] = "SNAPSHOT", ["data"] = { ["chatFilterApiUsed"] = "%s",
+            ["build"] = "%s",
+            ["chatFramesSeen"] = 10, ["chatFramesWrapped"] = 10, ["systemChatTypeID"] = 90 } },]])
+            :format(opts.chatFilterApi, opts.logBuild or "20260820-5")
+    end
+    if opts.extraBuild then
+        snapshot = snapshot .. ([[
+
+        { ["seq"] = 6, ["cat"] = "SNAPSHOT", ["data"] = { ["chatFilterApiUsed"] = "legacy",
+            ["build"] = "%s",
+            ["chatFramesSeen"] = 10, ["chatFramesWrapped"] = 10, ["systemChatTypeID"] = 90 } },]])
+            :format(opts.extraBuild)
+    end
+    local scenarios = ""
+    if opts.scenarios ~= false then
+        scenarios = [[
+        { ["seq"] = 1, ["cat"] = "CHAT_OUTPUT", ["data"] = { ["action"] = "NO_MATCH" } },
+        { ["seq"] = 2, ["cat"] = "POPUP", ["data"] = { ["action"] = "MASK_AWAITING_EVENT", ["affected"] = 1 } },
+        { ["seq"] = 3, ["cat"] = "WORLD", ["data"] = { ["inInstance"] = true } },
+        { ["seq"] = 4, ["cat"] = "PLAYER_STATE", ["data"] = { ["event"] = "PLAYER_DEAD" } },]]
+    end
+    local health = ""
+    if opts.manifestHealth then
+        health = ([[ ["chatFilterApiUsed"] = "%s", ["chatFramesSeen"] = 10,
+        ["chatFramesWrapped"] = 10, ["systemChatTypeID"] = 90,]]):format(opts.manifestHealth)
+    end
+
     local fixturePath = os.tmpname()
     local handle = assert(io.open(fixturePath, "w"))
     handle:write(([[
@@ -2891,19 +3068,16 @@ SanctuaryDB = {
     ["debugLogStats"] = { ["produced"] = 6, ["dropped"] = 0 },
     ["log"] = {},
     ["reportManifest"] = { ["trigger"] = "logout", ["savedAt"] = "2026-08-20 18:12:00",
-        ["version"] = "0.3.2", ["build"] = "20260820-3", ["addonMetaBuild"] = "20260820-3",
+        ["version"] = "0.3.2", ["build"] = "20260820-5", ["addonMetaBuild"] = "20260820-5",
         ["addonMetaInterface"] = "120100", ["clientVersion"] = "12.1.0",
-        ["clientBuild"] = "61234", ["clientInterface"] = 120100, ["verdict"] = "ok" },
+        ["clientBuild"] = "61234", ["clientInterface"] = 120100,%s%s ["verdict"] = "ok" },
     ["debugLog"] = {
-        { ["seq"] = 1, ["cat"] = "CHAT_OUTPUT", ["data"] = { ["action"] = "NO_MATCH" } },
-        { ["seq"] = 2, ["cat"] = "POPUP", ["data"] = { ["action"] = "MASK_AWAITING_EVENT", ["affected"] = 1 } },
-        { ["seq"] = 3, ["cat"] = "WORLD", ["data"] = { ["inInstance"] = true } },
-        { ["seq"] = 4, ["cat"] = "PLAYER_STATE", ["data"] = { ["event"] = "PLAYER_DEAD" } },
-        { ["seq"] = 5, ["cat"] = "SNAPSHOT", ["data"] = { ["chatFilterApiUsed"] = "%s",
-            ["chatFramesSeen"] = 10, ["chatFramesWrapped"] = 10, ["systemChatTypeID"] = 90 } },
+%s
+%s
     },
 }
-]]):format(chatFilterApi))
+]]):format(health, opts.neverCleared and "" or ' ["debugLogClearedAt"] = "2026-08-20 17:50:00",',
+        scenarios, snapshot))
     handle:close()
     return fixturePath
 end
@@ -2918,25 +3092,83 @@ local function runChecker(fixturePath)
     return output or "", code
 end
 
-local goodFixture = writeFixture("legacy")
-local goodOutput, goodCode = runChecker(goodFixture)
-os.remove(goodFixture)
+local function checkFixture(opts)
+    local fixturePath = writeFixture(opts)
+    local output, code = runChecker(fixturePath)
+    os.remove(fixturePath)
+    return output, code
+end
+
+local goodOutput, goodCode = checkFixture({ chatFilterApi = "legacy" })
 equal(goodCode, 0, "the checker accepts a complete recording")
 check(goodOutput:find("RELEVE COMPLET", 1, true) ~= nil,
     "the checker says so in one line")
-check(goodOutput:find("20260820-3", 1, true) ~= nil,
+check(goodOutput:find("20260820-5", 1, true) ~= nil,
     "the checker reads the build out of the file, so nobody transcribes it")
-for _, marker in ipairs({ "F1", "F2", "F3", "F4" }) do
+-- Numbered as the checklist numbers them: C.1 is the panel, F.1 to F.3 are the
+-- scenarios. A report blaming "F3" used to send the reader to the wrong step.
+for _, marker in ipairs({ "C%.1", "F%.1", "F%.2", "F%.3" }) do
     check(goodOutput:find("%[  ok  %] " .. marker) ~= nil,
-        "the checker reports scenario marker " .. marker)
+        "the checker reports marker " .. marker:gsub("%%", ""))
 end
 
-local badFixture = writeFixture("unregistered")
-local badOutput, badCode = runChecker(badFixture)
-os.remove(badFixture)
+local badOutput, badCode = checkFixture({ chatFilterApi = "unregistered" })
 equal(badCode, 1, "the checker fails a recording that filtered nothing")
 check(badOutput:find("ECHEC BLOQUANT", 1, true) ~= nil,
     "and says why in terms the checklist can quote")
+
+-- A recording where nothing was played must not exit 0: any caller testing $?
+-- would read "conforme" on a session where phase F was skipped entirely.
+local emptyOutput, emptyCode = checkFixture({ chatFilterApi = "legacy", scenarios = false })
+equal(emptyCode, 3, "a recording with no scenario played exits on its own code")
+check(emptyOutput:find("EXPLOITABLE AVEC RESERVES", 1, true) ~= nil,
+    "and is named as reserves, not as a complete recording")
+check(emptyOutput:find("RELEVE COMPLET", 1, true) == nil,
+    "and never as complete")
+
+-- The log rotates; the manifest does not. A recording whose log outlived its
+-- last snapshot is still gradeable, and used to be declared unexploitable.
+local rotatedOutput, rotatedCode = checkFixture({ manifestHealth = "legacy" })
+check(rotatedOutput:find("instrumentation lue dans le manifeste", 1, true) ~= nil,
+    "a log that rotated past its last snapshot is graded on the manifest")
+check(rotatedOutput:find("%[  ok  %] API de filtrage chat +legacy") ~= nil,
+    "reading the instrumentation the manifest actually carries")
+check(rotatedOutput:find("%[  ok  %] Frames de chat observees +10 / 10") ~= nil,
+    "including the counts the log no longer holds")
+check(rotatedOutput:find("ECHEC BLOQUANT", 1, true) == nil,
+    "so a usable recording is no longer declared unexploitable")
+-- It is still a reserve, and only that: the log did lose entries.
+equal(rotatedCode, 3, "a rotated log is a reserve, not a clean recording")
+check(rotatedOutput:find("%[ warn %] Snapshots dans le journal") ~= nil,
+    "and the missing snapshot is what is flagged")
+
+-- The persistent log survives reloads, relogs and sessions. A complete
+-- recording made under an earlier build must never read as a complete recording
+-- of this one: that is how a step skipped today gets credited by a passage from
+-- last week.
+local staleOutput, staleCode = checkFixture({ chatFilterApi = "legacy", logBuild = "20260820-4" })
+equal(staleCode, 1, "a log written by another build is refused")
+check(staleOutput:find("20260820-4 != 20260820-5", 1, true) ~= nil,
+    "and the report names both builds rather than just failing")
+
+local mixedOutput, mixedCode = checkFixture({ chatFilterApi = "legacy", extraBuild = "20260820-4" })
+equal(mixedCode, 1, "a log holding two builds is refused")
+check(mixedOutput:find("journal melange", 1, true) ~= nil,
+    "and says that it is mixed")
+
+-- A log that was never cleared may still hold an earlier passage. That does not
+-- void it, but it has to be visible rather than silently credited.
+local uncleanedOutput, uncleanedCode = checkFixture({ chatFilterApi = "legacy", neverCleared = true })
+equal(uncleanedCode, 3, "a log that was never cleared is a reserve")
+check(uncleanedOutput:find("%[ warn %] Journal vide le +jamais") ~= nil,
+    "and the report says so on its own line")
+
+-- Without a manifest AND without a snapshot there is nothing left to grade, and
+-- no value may be printed as `ok`.
+local blindOutput, blindCode = checkFixture({ scenarios = false })
+equal(blindCode, 1, "a recording with neither manifest health nor snapshot is blocking")
+check(blindOutput:find("[ warn ] Frames de chat observees", 1, true) ~= nil,
+    "and an unknown value is never presented as conforming")
 
 -- ---------------------------------------------------------------------------
 -- Two more checklist steps the machine can make

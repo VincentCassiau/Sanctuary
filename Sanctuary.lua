@@ -18,7 +18,7 @@ local VERSION = "0.3.2"
 -- and nothing else: it is printed verbatim in every report, and a report can be
 -- handed to a third party, so the identifier must not leak what is being
 -- investigated or which internal item it belongs to.
-local BUILD_ID = "20260820-3"
+local BUILD_ID = "20260820-5"
 
 local PREFIX = "|cFF66CCFF[Sanctuary]|r "
 local COLOR_ON = "|cFF00FF00"
@@ -1128,6 +1128,11 @@ resetDebugLog = function()
     if not SanctuaryDB then return end
     SanctuaryDB.debugLog = {}
     SanctuaryDB.debugLogStats = { produced = 0, dropped = 0 }
+    -- Dated, because the log is the record and it is not cleared by a reload or
+    -- a relog. Without this, a closing check has no way to tell a scenario
+    -- played during this run from the same scenario played days ago, and would
+    -- credit a step that was skipped.
+    SanctuaryDB.debugLogClearedAt = date("%Y-%m-%d %H:%M:%S")
 end
 
 -- `force` writes the entry even when debug mode is off. It exists for one
@@ -1494,6 +1499,10 @@ function ns.getReportMarkers(log)
         worldInInstance = false,
         playerState = false,
         snapshots = 0,
+        -- Every distinct build that wrote a snapshot into this log. A recording
+        -- is only about one build; more than one means entries from an earlier
+        -- one are still in there and could credit a step nobody played.
+        builds = {},
     }
     for i = 1, #log do
         local entry = log[i]
@@ -1512,6 +1521,15 @@ function ns.getReportMarkers(log)
                 markers.addonMetaBuild = data.addonMetaBuild
                 markers.addonMetaVersion = data.addonMetaVersion
                 markers.addonMetaInterface = data.addonMetaInterface
+                if data.build ~= nil then
+                    local seen = false
+                    for _, known in ipairs(markers.builds) do
+                        if known == data.build then seen = true end
+                    end
+                    if not seen then
+                        markers.builds[#markers.builds + 1] = data.build
+                    end
+                end
             elseif cat == "CHAT_OUTPUT" and data.action == "NO_MATCH" then
                 markers.chatOutputNoMatch = true
             elseif cat == "POPUP" and data.action == "MASK_AWAITING_EVENT"
@@ -1519,7 +1537,10 @@ function ns.getReportMarkers(log)
                 markers.popupMaskAwaitingEvent = true
             elseif cat == "WORLD" and data.inInstance == true then
                 markers.worldInInstance = true
-            elseif cat == "PLAYER_STATE" then
+            elseif cat == "PLAYER_STATE" and data.event == "PLAYER_DEAD" then
+                -- The scenario is "die, stay a ghost, resurrect". A lone
+                -- PLAYER_ALIVE or PLAYER_UNGHOST proves none of it, and used to
+                -- credit the step anyway.
                 markers.playerState = true
             end
         end
@@ -1562,7 +1583,12 @@ function ns.captureReportManifest(trigger)
     local health = ns.getInstrumentationHealth()
     local context = getClientBuildContext()
     local stats = getDebugLogStats() or { produced = 0, dropped = 0 }
-    local verdict, detail = ns.getInstrumentationVerdict(ns.getReportMarkers())
+    -- Graded on the health this manifest is about to carry, not on the last
+    -- SNAPSHOT still in the log. Grading one and reporting the other let the
+    -- summary print `ChatFilterApi: legacy` under `Verdict: BLOCKING` after the
+    -- addon caught up mid-session -- and the reverse, `OK` over degraded
+    -- counters, which is the dangerous direction.
+    local verdict, detail = ns.getInstrumentationVerdict(health)
     local manifest = {
         trigger = trigger or "unknown",
         savedAt = date("%Y-%m-%d %H:%M:%S"),
@@ -1581,6 +1607,7 @@ function ns.captureReportManifest(trigger)
         chatFramesSeen = health.chatFramesSeen,
         chatFramesWrapped = health.chatFramesWrapped,
         systemChatTypeID = health.systemChatTypeID,
+        debugLogClearedAt = SanctuaryDB.debugLogClearedAt,
         debugKept = SanctuaryDB.debugLog and #SanctuaryDB.debugLog or 0,
         debugProduced = stats.produced,
         debugDropped = stats.dropped,
@@ -4209,23 +4236,45 @@ local function runPopupDiagnostic(kind)
         return result
     end
 
+    -- The guild path already refuses to run over a frame that is already up;
+    -- this one did not. StaticPopup_Show reuses the slot of the same `which`,
+    -- so probing while a real invitation or duel is pending would close that
+    -- request without accepting or declining it, leaving the other player
+    -- waiting on a timeout. The checklist warned about it in prose -- which is
+    -- exactly the kind of rule this panel exists to take off the operator.
+    if countVisiblePopup(config.which) > 0 then
+        local result = {
+            available = true,
+            skipped = true,
+            kind = config.label,
+            which = config.which,
+            filterEnabled = true,
+            shown = true,
+            masked = false,
+            hidden = false,
+            reason = "popup_busy",
+        }
+        debugLog("POPUP_TEST", result)
+        return result
+    end
+
     local dialog = StaticPopup_Show(config.which, config.text)
     local shown = dialog and dialog.IsShown and dialog:IsShown() or false
     local alpha = dialog and dialog.GetAlpha and dialog:GetAlpha() or nil
     local masked = alpha == 0
-    local hidden = false
 
-    if dialog and dialog.Hide then
-        dialog:Hide()
-        hidden = true
-    else
-        forEachStaticPopup(function(popup)
-            if popup.which == config.which and popup.Hide then
-                popup:Hide()
-                hidden = true
-            end
-        end)
-    end
+    -- Closed through the silent-hide path, not through a raw dialog:Hide().
+    -- Retail's PARTY_INVITE OnHide calls DeclineGroup() when `inviteAccepted`
+    -- is nil, so hiding the probe directly could decline an invitation the
+    -- server already had pending. hidePopupDialogSilently is the code that
+    -- already knows this, and it also mutes the close sound the diagnostic must
+    -- not make.
+    hideVisiblePopupSilently(config.which, "diagnostic")
+    -- Then the screen is read back. Deducing `hidden` from the call having been
+    -- made is what made the leftOnScreen guard blind: a Hide that exists but
+    -- does nothing reported hidden=yes while an invisible, clickable Accept
+    -- button was still under the cursor.
+    local hidden = countVisiblePopup(config.which) == 0
 
     local result = {
         available = true,
@@ -4377,9 +4426,24 @@ for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG) do
             -- remembering the rule from the checklist.
             local leftOnScreen = result.available and not result.skipped
                 and result.hidden ~= true
-            return { text = formatPopupDiagnosticResult(result), leftOnScreen = leftOnScreen }
+            return {
+                text = formatPopupDiagnosticResult(result),
+                leftOnScreen = leftOnScreen,
+                which = result.which,
+            }
         end
     end
+end
+
+-- The panel asks this before it hides its "put the screen back" button. Storing
+-- a boolean instead let "Clear" -- and a bulk run -- take the way back away
+-- while the dialog was still up, invisible and clickable.
+function ns.isDiagnosticPopupVisible(which)
+    if not which then return false end
+    if which == GUILD_INVITE_FRAME_KEY then
+        return isGuildInviteFrameShown(getGuildInviteFrame()) and true or false
+    end
+    return countVisiblePopup(which) > 0
 end
 
 function ns.getDiagnosticEntry(id)

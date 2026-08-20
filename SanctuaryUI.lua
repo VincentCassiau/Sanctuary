@@ -580,6 +580,21 @@ local function createMainFrame()
     -- ========================================================================
     -- On show/hide hooks
     -- ========================================================================
+    -- The automatic groups fold again every time the window closes. Keeping the
+    -- expansion for the whole session meant that once Vincent had opened
+    -- "Guild members" at one step, the tab spilled a roster on every later
+    -- `/sanc` -- in a window that can be opened in public, which is precisely
+    -- what folding by default was for.
+    mainFrame:SetScript("OnHide", function()
+        wipe(whitelistExpanded)
+        -- The search has to go with it: a non-empty search forces its groups
+        -- open, so leaving the text behind put the filtered names back on screen
+        -- at the next opening -- the very thing folding by default prevents.
+        if whitelistSearchBox then
+            whitelistSearchBox:SetText("")
+        end
+    end)
+
     mainFrame:SetScript("OnShow", function()
         refreshToggle()
         refreshTabBar()
@@ -2007,23 +2022,51 @@ local diagResultScroll = nil
 local diagResultChild = nil
 local diagRestoreBtn = nil
 local diagInputs = {}
-local diagScreenDirty = false
+-- Which popup kinds a diagnostic failed to close. Not a boolean: a boolean was
+-- reset by "Clear" and by a bulk run while the dialog was still on screen, which
+-- took away the only way back at the exact moment it was needed.
+local diagStrandedKinds = {}
 
 local DIAG_MAX_RESULT_BLOCKS = 30
 
+-- Re-reads the screen instead of trusting what the last run recorded. A kind
+-- that is no longer visible drops out; as long as one is left, the warning and
+-- the way back stay, whatever was done to the result box.
+local function diagScreenIsDirty()
+    local dirty = false
+    for which in pairs(diagStrandedKinds) do
+        if ns.isDiagnosticPopupVisible and ns.isDiagnosticPopupVisible(which) then
+            dirty = true
+        else
+            diagStrandedKinds[which] = nil
+        end
+    end
+    return dirty
+end
+
 local function renderDiagnosticResults()
     if not diagResultText then return end
-    if #diagResultLines == 0 then
+    local dirty = diagScreenIsDirty()
+    local blocks = {}
+    -- The warning is rendered live, at the top, rather than stored as a result
+    -- block: it describes the screen right now, not what a past run reported.
+    if dirty then
+        blocks[1] = "|cFFFF4444" .. L["DIAG_LEFT_ON_SCREEN"] .. "|r"
+    end
+    for _, block in ipairs(diagResultLines) do
+        blocks[#blocks + 1] = block
+    end
+    if #blocks == 0 then
         diagResultText:SetText(L["DIAG_RESULT_EMPTY"])
     else
-        diagResultText:SetText(table.concat(diagResultLines, "\n\n"))
+        diagResultText:SetText(table.concat(blocks, "\n\n"))
     end
     local height = diagResultText:GetStringHeight() or 1
     if diagResultChild then
         diagResultChild:SetHeight(math.max(height + 8, 1))
     end
     if diagRestoreBtn then
-        if diagScreenDirty then
+        if dirty then
             diagRestoreBtn:Show()
         else
             diagRestoreBtn:Hide()
@@ -2050,13 +2093,11 @@ local function runCatalogEntry(entry)
 
     local result = ns.runDiagnosticById(entry.id, argText)
     appendDiagnosticResult(L[entry.labelKey] or entry.id, result.text)
-    if result.leftOnScreen then
+    if result.leftOnScreen and result.which then
         -- A popup that could not be hidden is invisible and still clickable.
-        -- Saying so here, with the way back one click away, is the whole point:
-        -- the checklist used to leave that rule to memory.
-        appendDiagnosticResult(L[entry.labelKey] or entry.id,
-            "|cFFFF4444" .. L["DIAG_LEFT_ON_SCREEN"] .. "|r")
-        diagScreenDirty = true
+        -- Recording which one lets the panel keep saying so, with the way back
+        -- one click away, until that dialog is actually gone.
+        diagStrandedKinds[result.which] = true
     end
     renderDiagnosticResults()
 end
@@ -2071,6 +2112,11 @@ buildDiagnosticsTab = function(parent)
     intro:SetWordWrap(true)
 
     local runAllBtn = createButton(parent, L["DIAG_RUN_ALL"], 220, 24, function()
+        -- Start from an empty box. The checklist asks for the eight blocks to be
+        -- read in order; appending them below earlier results puts the first one
+        -- out of sight. Only the text is cleared: whether a dialog is still on
+        -- screen is re-read, never assumed.
+        wipe(diagResultLines)
         for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG or {}) do
             -- The one entry that writes a real Battle.net account name into the
             -- log stays on its own button: a bulk run must never be the thing
@@ -2083,8 +2129,9 @@ buildDiagnosticsTab = function(parent)
     runAllBtn:SetPoint("TOPLEFT", parent, "TOPLEFT", CONTENT_PADDING + 4, -(CONTENT_PADDING + 52))
 
     local clearBtn = createButton(parent, L["DIAG_CLEAR"], 90, 24, function()
+        -- Clears what was read, not what is on screen: the warning and the way
+        -- back survive as long as the dialog does.
         wipe(diagResultLines)
-        diagScreenDirty = false
         renderDiagnosticResults()
     end)
     clearBtn:SetPoint("LEFT", runAllBtn, "RIGHT", 8, 0)
