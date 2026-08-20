@@ -126,7 +126,7 @@ function C_FriendList.ShowFriends() end
 C_GuildInfo = { GuildRoster = function() end }
 local addonMetadata = {
     Version = "0.3.2",
-    ["X-Sanctuary-Build"] = "20260820-5",
+    ["X-Sanctuary-Build"] = "20260820-6",
     Interface = "120007",
 }
 C_AddOns = {
@@ -698,12 +698,12 @@ ns.captureDebugSnapshot()
 equal(#SanctuaryDB.debugLog, 1, "debug snapshot captured")
 equal(SanctuaryDB.debugLog[1].cat, "SNAPSHOT", "debug snapshot category")
 equal(SanctuaryDB.debugLog[1].data.version, "0.3.2", "debug snapshot version")
-equal(SanctuaryDB.debugLog[1].data.build, "20260820-5", "debug snapshot reports the diagnostic build id")
+equal(SanctuaryDB.debugLog[1].data.build, "20260820-6", "debug snapshot reports the diagnostic build id")
 equal(SanctuaryDB.debugLog[1].data.clientVersion, "12.0.7", "debug snapshot reports the client version")
 equal(SanctuaryDB.debugLog[1].data.clientBuild, "62119", "debug snapshot reports the client build")
 equal(SanctuaryDB.debugLog[1].data.clientInterface, 120007, "debug snapshot reports the client interface number")
 equal(SanctuaryDB.debugLog[1].data.addonMetaVersion, "0.3.2", "debug snapshot reports the loaded addon version metadata")
-equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, "20260820-5", "debug snapshot reports the loaded addon build metadata")
+equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, "20260820-6", "debug snapshot reports the loaded addon build metadata")
 equal(SanctuaryDB.debugLog[1].data.addonMetaInterface, "120007", "debug snapshot reports the loaded addon interface metadata")
 check(SanctuaryDB.debugLog[1].data.chatLockdownKnown, "debug snapshot reports a readable chat messaging lockdown state")
 check(not SanctuaryDB.debugLog[1].data.chatLockdown, "debug snapshot reports chat messaging lockdown off")
@@ -2444,7 +2444,7 @@ fire("PLAYER_LOGOUT")
 local manifest = SanctuaryDB.reportManifest
 check(type(manifest) == "table", "logging out stamps a manifest into the settings file")
 equal(manifest.trigger, "logout", "the manifest says what wrote it")
-equal(manifest.build, "20260820-5", "the manifest carries the build id")
+equal(manifest.build, "20260820-6", "the manifest carries the build id")
 equal(manifest.version, ns.VERSION, "the manifest carries the addon version")
 check(manifest.savedAt ~= nil and manifest.savedAt ~= "", "the manifest is dated")
 -- The log is the record and nothing clears it on its own. When it was last
@@ -2470,7 +2470,7 @@ SanctuaryDB.debugEnabled = true
 ns.resetDebugLog()
 ns.captureDebugSnapshot("export")
 local summary = ns.buildDebugSummaryText()
-check(summary:find("20260820-5", 1, true) ~= nil, "the summary names the build")
+check(summary:find("20260820-6", 1, true) ~= nil, "the summary names the build")
 check(summary:find("Version: " .. ns.VERSION, 1, true) ~= nil, "the summary names the version")
 check(summary:find("ChatFilterApi:", 1, true) ~= nil, "the summary reports the filter API")
 check(summary:find("ChatFrames:", 1, true) ~= nil, "the summary reports the observed chat frames")
@@ -2910,6 +2910,32 @@ clearBtn:Click()
 equal(resultText:GetText(), ns.L["DIAG_RESULT_EMPTY"], "clearing empties the result box")
 equal(restoreBtn:IsShown(), false, "and the way back goes when the dialog does")
 
+-- The guild frame is the twin of the StaticPopup path, and the only one where
+-- a bulk run can be observed without the single-slot popup mock confusing the
+-- scenario. Same defect, same shape: a Hide that exists and does nothing.
+local guildSavedHide = GuildInviteFrame.Hide
+GuildInviteFrame.Hide = function() end
+findButtonByLabel(diagContent, ns.L["DIAG_POPUP_GUILD"]):Click()
+GuildInviteFrame.Hide = guildSavedHide
+equal(GuildInviteFrame:IsShown(), true, "the guild frame is still on screen")
+check(resultText:GetText():find(ns.L["DIAG_LEFT_ON_SCREEN"], 1, true) ~= nil,
+    "a guild frame left on screen is reported, like a stranded popup")
+equal(restoreBtn:IsShown(), true, "and the way back appears for it too")
+
+-- ... and a bulk run does not take them away either: the stranded kind answers
+-- popup_busy and arms nothing, so nothing would put the banner back.
+runAllBtn:Click()
+equal(GuildInviteFrame:IsShown(), true, "the guild frame survives a bulk run")
+check(resultText:GetText():find(ns.L["DIAG_LEFT_ON_SCREEN"], 1, true) ~= nil,
+    "so the warning survives it")
+equal(restoreBtn:IsShown(), true, "and so does the way back")
+GuildInviteFrame.accepted = true
+GuildInviteFrame:Hide()
+GuildInviteFrame.accepted = nil
+runTimers(6)
+findButtonByLabel(diagContent, ns.L["DIAG_CLEAR"]):Click()
+equal(restoreBtn:IsShown(), false, "and both go once the guild frame is really gone")
+
 -- ---------------------------------------------------------------------------
 -- The Whitelist tab, driven by its own fields
 -- ---------------------------------------------------------------------------
@@ -3011,6 +3037,33 @@ answer = checkAnswerFor("Nobodyatall")
 check(answer ~= nil and answer:find(ns.L["WL_REASON_NOT_WHITELISTED"], 1, true) ~= nil,
     "a stranger is answered as filtered, with the reason")
 
+-- The check field is the twin of the search box, and closes with it. It holds a
+-- name the maintainer typed and the answer spells that name out again in full;
+-- both used to reappear at the next opening, in the same window and for the
+-- same reason the search is cleared.
+check(checkAnswerFor("Officer-TestRealm") ~= nil, "a name has been checked")
+mainFrame:Hide()
+mainFrame:Show()
+_G["SanctuaryTab_whitelist"]:Click()
+equal(_G.SanctuaryWhitelistCheckInput:GetText(), "",
+    "closing the window clears the name that was checked")
+local leftoverAnswer = nil
+for _, childWidget in ipairs(whitelistContent.__children or {}) do
+    local text = tostring(childWidget.__text or "")
+    if childWidget.__kind == "FontString" and text:find("Officer-TestRealm", 1, true) then
+        leftoverAnswer = text
+    end
+end
+equal(leftoverAnswer, nil, "and the answer that named them in full")
+
+-- Third field of the tab, same rule. Not reported by either pass: found by
+-- sweeping this lot's fixes for a twin path.
+_G.SanctuaryWhitelistAddInput:SetText("Halftypedname")
+mainFrame:Hide()
+mainFrame:Show()
+equal(_G.SanctuaryWhitelistAddInput:GetText(), "",
+    "closing the window clears the name half-typed into the add field too")
+
 guildMembers = {}
 bnetFriends = {}
 inGuild = false
@@ -3030,6 +3083,7 @@ ns.invalidateWhitelist()
 -- opts.logBuild        build stamped in the SNAPSHOT (defaults to the manifest's)
 -- opts.extraBuild      a second build stamped in a second SNAPSHOT
 -- opts.neverCleared    true to write a manifest with no debug-log clear date
+-- opts.savedAt         when the report was written (defaults to the clear day)
 local function writeFixture(opts)
     local snapshot = ""
     if opts.chatFilterApi then
@@ -3037,7 +3091,7 @@ local function writeFixture(opts)
         { ["seq"] = 5, ["cat"] = "SNAPSHOT", ["data"] = { ["chatFilterApiUsed"] = "%s",
             ["build"] = "%s",
             ["chatFramesSeen"] = 10, ["chatFramesWrapped"] = 10, ["systemChatTypeID"] = 90 } },]])
-            :format(opts.chatFilterApi, opts.logBuild or "20260820-5")
+            :format(opts.chatFilterApi, opts.logBuild or "20260820-6")
     end
     if opts.extraBuild then
         snapshot = snapshot .. ([[
@@ -3067,8 +3121,8 @@ local function writeFixture(opts)
 SanctuaryDB = {
     ["debugLogStats"] = { ["produced"] = 6, ["dropped"] = 0 },
     ["log"] = {},
-    ["reportManifest"] = { ["trigger"] = "logout", ["savedAt"] = "2026-08-20 18:12:00",
-        ["version"] = "0.3.2", ["build"] = "20260820-5", ["addonMetaBuild"] = "20260820-5",
+    ["reportManifest"] = { ["trigger"] = "logout", ["savedAt"] = "%s",
+        ["version"] = "0.3.2", ["build"] = "20260820-6", ["addonMetaBuild"] = "20260820-6",
         ["addonMetaInterface"] = "120100", ["clientVersion"] = "12.1.0",
         ["clientBuild"] = "61234", ["clientInterface"] = 120100,%s%s ["verdict"] = "ok" },
     ["debugLog"] = {
@@ -3076,7 +3130,8 @@ SanctuaryDB = {
 %s
     },
 }
-]]):format(health, opts.neverCleared and "" or ' ["debugLogClearedAt"] = "2026-08-20 17:50:00",',
+]]):format(opts.savedAt or "2026-08-20 18:12:00",
+        health, opts.neverCleared and "" or ' ["debugLogClearedAt"] = "2026-08-20 17:50:00",',
         scenarios, snapshot))
     handle:close()
     return fixturePath
@@ -3103,7 +3158,7 @@ local goodOutput, goodCode = checkFixture({ chatFilterApi = "legacy" })
 equal(goodCode, 0, "the checker accepts a complete recording")
 check(goodOutput:find("RELEVE COMPLET", 1, true) ~= nil,
     "the checker says so in one line")
-check(goodOutput:find("20260820-5", 1, true) ~= nil,
+check(goodOutput:find("20260820-6", 1, true) ~= nil,
     "the checker reads the build out of the file, so nobody transcribes it")
 -- Numbered as the checklist numbers them: C.1 is the panel, F.1 to F.3 are the
 -- scenarios. A report blaming "F3" used to send the reader to the wrong step.
@@ -3148,7 +3203,7 @@ check(rotatedOutput:find("%[ warn %] Snapshots dans le journal") ~= nil,
 -- last week.
 local staleOutput, staleCode = checkFixture({ chatFilterApi = "legacy", logBuild = "20260820-4" })
 equal(staleCode, 1, "a log written by another build is refused")
-check(staleOutput:find("20260820-4 != 20260820-5", 1, true) ~= nil,
+check(staleOutput:find("20260820-4 != 20260820-6", 1, true) ~= nil,
     "and the report names both builds rather than just failing")
 
 local mixedOutput, mixedCode = checkFixture({ chatFilterApi = "legacy", extraBuild = "20260820-4" })
@@ -3162,6 +3217,18 @@ local uncleanedOutput, uncleanedCode = checkFixture({ chatFilterApi = "legacy", 
 equal(uncleanedCode, 3, "a log that was never cleared is a reserve")
 check(uncleanedOutput:find("%[ warn %] Journal vide le +jamais") ~= nil,
     "and the report says so on its own line")
+
+-- "Never cleared" was only half the case, and the smaller half. The nominal one
+-- is a log cleared during an EARLIER passage: same build, second session, and
+-- the build does not change between the maintainer's pass and the tester's. The
+-- markers then come from the previous day and credit steps nobody played.
+local staleClearOutput, staleClearCode = checkFixture({ chatFilterApi = "legacy",
+    savedAt = "2026-08-21 19:04:00" })
+equal(staleClearCode, 3, "a log cleared during an earlier passage is a reserve")
+check(staleClearOutput:find("releve ecrit le 2026%-08%-21") ~= nil,
+    "and the report puts both dates on the line so the gap is one glance")
+check(staleClearOutput:find("RELEVE COMPLET", 1, true) == nil,
+    "such a recording is never reported as complete")
 
 -- Without a manifest AND without a snapshot there is nothing left to grade, and
 -- no value may be printed as `ok`.

@@ -270,6 +270,7 @@ local whitelistRowPool = {}
 local whitelistRows = {}
 local whitelistScrollChild = nil
 local whitelistCountLabel = nil
+local whitelistAddBox = nil
 local whitelistSearchBox = nil
 local whitelistCheckBox = nil
 local whitelistCheckResult = nil
@@ -592,6 +593,24 @@ local function createMainFrame()
         -- at the next opening -- the very thing folding by default prevents.
         if whitelistSearchBox then
             whitelistSearchBox:SetText("")
+        end
+        -- Its twin has to go too. "Does this person get through?" holds a name
+        -- the maintainer typed, and the answer spells it out again in full;
+        -- both reappeared at the next opening, in the same window and for the
+        -- same reason the search was cleared.
+        if whitelistCheckBox then
+            whitelistCheckBox:SetText("")
+        end
+        if whitelistCheckResult then
+            whitelistCheckResult:SetText("")
+        end
+        -- Third field of the same tab, same argument: a half-typed name left in
+        -- the add box is as readable at the next opening as one left in the
+        -- other two. Found by sweeping this lot's fixes for a twin path rather
+        -- than reported -- it predates the lot, but it is the same window and
+        -- the same rule.
+        if whitelistAddBox then
+            whitelistAddBox:SetText("")
         end
     end)
 
@@ -1185,6 +1204,7 @@ buildWhitelistTab = function(parent)
 
     -- Input + Add button at the top (after header)
     local inputBox = createStyledInput(parent, 200, 26, "SanctuaryWhitelistAddInput")
+    whitelistAddBox = inputBox
     inputBox:SetPoint("TOPLEFT", parent, "TOPLEFT", CONTENT_PADDING + 4, -(CONTENT_PADDING + 22))
     inputBox:SetMaxLetters(64)
 

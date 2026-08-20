@@ -4,7 +4,7 @@
 ## Notes-frFR: Protection anti-harcelement
 ## Author: Zephos
 ## Version: 0.3.2
-## X-Sanctuary-Build: 20260820-5
+## X-Sanctuary-Build: 20260820-6
 ## X-Game-Client: Retail only
 ## IconTexture: Interface\Icons\inv_shield_06
 ## Category: Chat

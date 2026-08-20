@@ -181,12 +181,32 @@ else
 end
 state("Build du journal", buildLabel, buildLevel)
 
--- Second: the log has to have been started for this run. It is not cleared by a
--- reload or a relog, so one that was never cleared may still hold the scenarios
--- of an earlier passage -- and credit steps skipped this time.
+-- Second: the log has to have been started for THIS run. It is not cleared by a
+-- reload, a relog or a new day, so a log cleared during an earlier passage still
+-- holds that passage's scenarios -- and credits steps skipped this time. Testing
+-- only for "never cleared" missed the nominal case: a second session on the same
+-- build, which is exactly what happens between the maintainer's pass and the
+-- tester's, since the build does not change in between.
+--
+-- The manifest carries both dates, so the comparison is available right here.
+-- Same day is the rule the checklist used to ask a human to apply; a session
+-- that legitimately crosses midnight lands in reserves rather than being
+-- refused outright, and the line prints both dates so that case is one glance
+-- to arbitrate.
 local clearedAt = manifest and manifest.debugLogClearedAt
-state("Journal vide le", clearedAt or "jamais",
-    clearedAt == nil and "warn" or nil)
+local savedAt = manifest and manifest.savedAt
+local clearedLabel, clearedLevel
+if clearedAt == nil then
+    clearedLabel, clearedLevel = "jamais", "warn"
+elseif savedAt == nil then
+    clearedLabel, clearedLevel = clearedAt .. " (releve non date)", "warn"
+elseif tostring(clearedAt):sub(1, 10) ~= tostring(savedAt):sub(1, 10) then
+    clearedLabel = clearedAt .. " -- releve ecrit le " .. tostring(savedAt):sub(1, 10)
+    clearedLevel = "warn"
+else
+    clearedLabel, clearedLevel = clearedAt, nil
+end
+state("Journal vide le", clearedLabel, clearedLevel)
 line("")
 
 -- Produced by the diagnostic panel itself, not by a scenario: clicking "run

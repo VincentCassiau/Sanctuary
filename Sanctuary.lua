@@ -18,7 +18,7 @@ local VERSION = "0.3.2"
 -- and nothing else: it is printed verbatim in every report, and a report can be
 -- handed to a third party, so the identifier must not leak what is being
 -- investigated or which internal item it belongs to.
-local BUILD_ID = "20260820-5"
+local BUILD_ID = "20260820-6"
 
 local PREFIX = "|cFF66CCFF[Sanctuary]|r "
 local COLOR_ON = "|cFF00FF00"
@@ -4183,8 +4183,13 @@ local function runPopupDiagnostic(kind)
             showOk, showErr = false, "frame_show_missing"
         end
 
-        local hidden = (guildInviteFrameLastHideSerial > beforeHideSerial)
-            or (frame.IsShown and not frame:IsShown())
+        -- Read back off the screen, never from the fact that a hide was
+        -- attempted: guildInviteFrameLastHideSerial is incremented after a
+        -- pcall'd frame:Hide() that merely did not raise, so a Hide that exists
+        -- and does nothing reported hidden=yes while the frame was still up at
+        -- alpha 0 -- invisible, clickable, and with the way back hidden. Same
+        -- defect as the StaticPopup path, on its twin.
+        local hidden = not isGuildInviteFrameShown(frame)
         local result = {
             available = true,
             kind = config.label,
