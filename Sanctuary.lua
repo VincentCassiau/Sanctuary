@@ -18,7 +18,7 @@ local VERSION = "0.3.2"
 -- and nothing else: it is printed verbatim in every report, and a report can be
 -- handed to a third party, so the identifier must not leak what is being
 -- investigated or which internal item it belongs to.
-local BUILD_ID = "20260820-7"
+local BUILD_ID = "20260820-8"
 
 local PREFIX = "|cFF66CCFF[Sanctuary]|r "
 local COLOR_ON = "|cFF00FF00"
@@ -1608,7 +1608,14 @@ function ns.getDeploymentVerdict(manifest)
             or metaValue == "error" then
             return "unknown", pair.label .. "_meta_unreadable"
         end
-        if codeValue ~= nil and metaValue ~= codeValue then
+        -- Absence is graded the same on both sides. An unreadable .toc already
+        -- gave `unknown`; a missing code identity used to skip the comparison
+        -- and fall through to `ok` -- an unknown turning green on the side
+        -- nobody was watching.
+        if codeValue == nil or codeValue == "nil" then
+            return "unknown", pair.label .. "_code_missing"
+        end
+        if metaValue ~= codeValue then
             return "partial", pair.label .. " code=" .. tostring(codeValue)
                 .. " .toc=" .. tostring(metaValue)
         end

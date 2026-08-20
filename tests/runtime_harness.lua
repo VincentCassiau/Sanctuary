@@ -126,7 +126,7 @@ function C_FriendList.ShowFriends() end
 C_GuildInfo = { GuildRoster = function() end }
 local addonMetadata = {
     Version = "0.3.2",
-    ["X-Sanctuary-Build"] = "20260820-7",
+    ["X-Sanctuary-Build"] = "20260820-8",
     Interface = "120007",
 }
 C_AddOns = {
@@ -698,12 +698,12 @@ ns.captureDebugSnapshot()
 equal(#SanctuaryDB.debugLog, 1, "debug snapshot captured")
 equal(SanctuaryDB.debugLog[1].cat, "SNAPSHOT", "debug snapshot category")
 equal(SanctuaryDB.debugLog[1].data.version, "0.3.2", "debug snapshot version")
-equal(SanctuaryDB.debugLog[1].data.build, "20260820-7", "debug snapshot reports the diagnostic build id")
+equal(SanctuaryDB.debugLog[1].data.build, "20260820-8", "debug snapshot reports the diagnostic build id")
 equal(SanctuaryDB.debugLog[1].data.clientVersion, "12.0.7", "debug snapshot reports the client version")
 equal(SanctuaryDB.debugLog[1].data.clientBuild, "62119", "debug snapshot reports the client build")
 equal(SanctuaryDB.debugLog[1].data.clientInterface, 120007, "debug snapshot reports the client interface number")
 equal(SanctuaryDB.debugLog[1].data.addonMetaVersion, "0.3.2", "debug snapshot reports the loaded addon version metadata")
-equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, "20260820-7", "debug snapshot reports the loaded addon build metadata")
+equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, "20260820-8", "debug snapshot reports the loaded addon build metadata")
 equal(SanctuaryDB.debugLog[1].data.addonMetaInterface, "120007", "debug snapshot reports the loaded addon interface metadata")
 check(SanctuaryDB.debugLog[1].data.chatLockdownKnown, "debug snapshot reports a readable chat messaging lockdown state")
 check(not SanctuaryDB.debugLog[1].data.chatLockdown, "debug snapshot reports chat messaging lockdown off")
@@ -2459,7 +2459,7 @@ fire("PLAYER_LOGOUT")
 local manifest = SanctuaryDB.reportManifest
 check(type(manifest) == "table", "logging out stamps a manifest into the settings file")
 equal(manifest.trigger, "logout", "the manifest says what wrote it")
-equal(manifest.build, "20260820-7", "the manifest carries the build id")
+equal(manifest.build, "20260820-8", "the manifest carries the build id")
 equal(manifest.version, ns.VERSION, "the manifest carries the addon version")
 check(manifest.savedAt ~= nil and manifest.savedAt ~= "", "the manifest is dated")
 -- The log is the record and nothing clears it on its own. When it was last
@@ -2485,7 +2485,7 @@ SanctuaryDB.debugEnabled = true
 ns.resetDebugLog()
 ns.captureDebugSnapshot("export")
 local summary = ns.buildDebugSummaryText()
-check(summary:find("20260820-7", 1, true) ~= nil, "the summary names the build")
+check(summary:find("20260820-8", 1, true) ~= nil, "the summary names the build")
 check(summary:find("Version: " .. ns.VERSION, 1, true) ~= nil, "the summary names the version")
 check(summary:find("ChatFilterApi:", 1, true) ~= nil, "the summary reports the filter API")
 check(summary:find("ChatFrames:", 1, true) ~= nil, "the summary reports the observed chat frames")
@@ -2498,6 +2498,97 @@ check(#summary < 2000,
     "the summary stays short enough to read on screen (" .. #summary .. " chars)")
 check(#ns.buildDebugReportText() > #summary,
     "the full report is still available and is the larger of the two")
+
+-- ---------------------------------------------------------------------------
+-- The summary tested on its values, not on its shape
+-- ---------------------------------------------------------------------------
+
+-- Every check above asserts that a line EXISTS. None asserts where what it
+-- shows comes from, so nine of the ten lines accepted being replaced by a
+-- constant without a single assertion falling -- the four marker fields
+-- included, which means the summary could have said "no scenario recorded"
+-- right after the harness played them all, silently.
+--
+-- This is the screen the maintainer reads before logging out, to decide whether
+-- the session left a trace. One that always says "oui" would send them away on
+-- an empty recording.
+--
+-- The rule below is the one that already anchored `Verdict:`: play the
+-- scenarios, then assert the line carries the value that state implies. A
+-- constant substituted for any of them makes one of these fall.
+SanctuaryDB.debugEnabled = true
+ns.resetDebugLog()
+ns.debugLog("CHAT_OUTPUT", { action = "NO_MATCH" })
+ns.debugLog("POPUP", { action = "MASK_AWAITING_EVENT", affected = 1 })
+ns.debugLog("WORLD", { inInstance = true })
+ns.debugLog("PLAYER_STATE", { event = "PLAYER_DEAD" })
+ns.debugLog("PLAYER_STATE", { event = "PLAYER_ALIVE" })
+ns.captureDebugSnapshot("export")
+
+local playedSummary = ns.buildDebugSummaryText()
+local playedMarkers = ns.getReportMarkers()
+equal(playedMarkers.chatOutputNoMatch, true, "the harness really played the chat scenario")
+equal(playedMarkers.playerState, true, "and the death scenario")
+
+-- The four marker fields, each against the state that was actually recorded.
+check(playedSummary:find("chat=oui", 1, true) ~= nil,
+    "the summary says the chat scenario was recorded, because it was")
+check(playedSummary:find("popup=oui", 1, true) ~= nil,
+    "the summary says the popup scenario was recorded, because it was")
+check(playedSummary:find("instance=oui", 1, true) ~= nil,
+    "the summary says the instance scenario was recorded, because it was")
+check(playedSummary:find("mort=oui", 1, true) ~= nil,
+    "the summary says the death scenario was recorded, because it was")
+check(playedSummary:find("snapshots=" .. tostring(playedMarkers.snapshots), 1, true) ~= nil,
+    "and counts the snapshots the log actually holds")
+
+-- The same four, from the other side: a log where nothing was played must not
+-- claim it was. A constant "oui" passes the block above and fails here.
+ns.resetDebugLog()
+ns.captureDebugSnapshot("export")
+local emptySummary = ns.buildDebugSummaryText()
+check(emptySummary:find("chat=NON", 1, true) ~= nil,
+    "an empty recording is not reported as having a chat scenario")
+check(emptySummary:find("popup=NON", 1, true) ~= nil,
+    "nor a popup one")
+check(emptySummary:find("instance=NON", 1, true) ~= nil,
+    "nor an instance one")
+check(emptySummary:find("mort=NON", 1, true) ~= nil,
+    "nor a death")
+
+-- The six remaining lines, each against the value its source holds.
+local liveHealth = ns.getInstrumentationHealth()
+local liveManifest = SanctuaryDB.reportManifest
+check(emptySummary:find("ChatFilterApi: " .. tostring(liveHealth.chatFilterApiUsed), 1, true) ~= nil,
+    "the summary reports the filter API that is actually in use")
+check(emptySummary:find("ChatFrames: " .. tostring(liveHealth.chatFramesWrapped)
+    .. " observees / " .. tostring(liveHealth.chatFramesSeen) .. " vues", 1, true) ~= nil,
+    "and the chat frames actually observed")
+check(emptySummary:find("Build: " .. ns.BUILD_ID, 1, true) ~= nil,
+    "and the build the code itself carries")
+check(emptySummary:find("Verdict: "
+    .. select(1, ns.getInstrumentationVerdict(liveHealth)):upper(), 1, true) ~= nil,
+    "and the verdict that health implies")
+check(emptySummary:find("Deploiement: "
+    .. select(1, ns.getDeploymentVerdict(liveManifest)):upper(), 1, true) ~= nil,
+    "and the deployment verdict of the manifest it just wrote")
+
+-- Deployment through the summary, not through a direct call: a direct call
+-- proves the rule, not that the screen is wired to it. A desynchronised .toc
+-- has to reach the line the maintainer reads.
+local savedGetMetadata = C_AddOns.GetAddOnMetadata
+C_AddOns.GetAddOnMetadata = function(addon, field)
+    if field == "X-Sanctuary-Build" then return "20260820-0" end
+    return savedGetMetadata(addon, field)
+end
+ns.resetDebugLog()
+local partialSummary = ns.buildDebugSummaryText()
+C_AddOns.GetAddOnMetadata = savedGetMetadata
+check(partialSummary:find("Deploiement: PARTIAL", 1, true) ~= nil,
+    "a desynchronised .toc reaches the summary the maintainer reads")
+check(partialSummary:find("20260820-0", 1, true) ~= nil,
+    "and the line names the .toc value it disagrees with")
+ns.resetDebugLog()
 
 -- The summary reports live instrumentation, so it must grade live
 -- instrumentation. Grading the last SNAPSHOT still in the log instead printed
@@ -2944,6 +3035,19 @@ equal(GuildInviteFrame:IsShown(), true, "the guild frame survives a bulk run")
 check(resultText:GetText():find(ns.L["DIAG_LEFT_ON_SCREEN"], 1, true) ~= nil,
     "so the warning survives it")
 equal(restoreBtn:IsShown(), true, "and so does the way back")
+
+-- Closing the window drops what was read, never what is on screen. A dialog a
+-- diagnostic could not close still has to raise its warning and its way back at
+-- the next opening -- otherwise clearing the box would have become a way to
+-- lose the only signal that the screen is dirty.
+mainFrame:Hide()
+mainFrame:Show()
+_G["SanctuaryTab_diagnostics"]:Click()
+equal(GuildInviteFrame:IsShown(), true, "the guild frame outlives the window")
+check(resultText:GetText():find(ns.L["DIAG_LEFT_ON_SCREEN"], 1, true) ~= nil,
+    "so reopening the panel still warns about it")
+equal(restoreBtn:IsShown(), true, "and still offers the way back")
+
 GuildInviteFrame.accepted = true
 GuildInviteFrame:Hide()
 GuildInviteFrame.accepted = nil
@@ -3079,6 +3183,29 @@ mainFrame:Show()
 equal(_G.SanctuaryWhitelistAddInput:GetText(), "",
     "closing the window clears the name half-typed into the add field too")
 
+-- Two tabs further, and this one is on the plain user surface: a suspect
+-- pattern is very often somebody's name, and no debug mode is needed either to
+-- leave it there or to read it back.
+_G.SanctuaryKeywordAddInput:SetText("Someonesname")
+mainFrame:Hide()
+mainFrame:Show()
+equal(_G.SanctuaryKeywordAddInput:GetText(), "",
+    "closing the window clears the keyword field as well")
+
+-- And the diagnostics result box, which spells names and verdicts out in full
+-- and survived both the window closing and a tab change.
+SanctuaryDB.debugEnabled = true
+mainFrame:Hide()
+mainFrame:Show()
+_G["SanctuaryTab_diagnostics"]:Click()
+findButtonByLabel(diagContent, ns.L["DIAG_SIM_INVITE"]):Click()
+check(resultText:GetText():find(ns.L["DIAG_SIM_INVITE"], 1, true) ~= nil,
+    "a diagnostic has been run and its result is on screen")
+mainFrame:Hide()
+mainFrame:Show()
+equal(resultText:GetText(), ns.L["DIAG_RESULT_EMPTY"],
+    "closing the window clears the diagnostics result box too")
+
 guildMembers = {}
 bnetFriends = {}
 inGuild = false
@@ -3108,7 +3235,7 @@ local function writeFixture(opts)
         { ["seq"] = 5, ["cat"] = "SNAPSHOT", ["data"] = { ["chatFilterApiUsed"] = "%s",
             ["build"] = "%s",
             ["chatFramesSeen"] = 10, ["chatFramesWrapped"] = 10, ["systemChatTypeID"] = 90 } },]])
-            :format(opts.chatFilterApi, opts.logBuild or "20260820-7")
+            :format(opts.chatFilterApi, opts.logBuild or "20260820-8")
     end
     if opts.extraBuild then
         snapshot = snapshot .. ([[
@@ -3147,7 +3274,7 @@ SanctuaryDB = {
     ["log"] = {},
     ["reportManifest"] = { ["trigger"] = "logout", ["savedAt"] = "%s",
         ["version"] = "0.3.2", ["addonMetaVersion"] = "0.3.2",
-        ["build"] = "20260820-7", ["addonMetaBuild"] = "20260820-7",
+        ["build"] = "20260820-8", ["addonMetaBuild"] = "20260820-8",
         ["addonMetaInterface"] = "120100", ["clientVersion"] = "12.1.0",%s
         ["clientBuild"] = "61234", ["clientInterface"] = 120100,%s%s ["verdict"] = "ok" },
     ["debugLog"] = {
@@ -3184,7 +3311,7 @@ local goodOutput, goodCode = checkFixture({ chatFilterApi = "legacy" })
 equal(goodCode, 0, "the checker accepts a complete recording")
 check(goodOutput:find("RELEVE COMPLET", 1, true) ~= nil,
     "the checker says so in one line")
-check(goodOutput:find("20260820-7", 1, true) ~= nil,
+check(goodOutput:find("20260820-8", 1, true) ~= nil,
     "the checker reads the build out of the file, so nobody transcribes it")
 -- Numbered as the checklist numbers them: C.1 is the panel, F.1 to F.3 are the
 -- scenarios. A report blaming "F3" used to send the reader to the wrong step.
@@ -3229,7 +3356,7 @@ check(rotatedOutput:find("%[ warn %] Snapshots dans le journal") ~= nil,
 -- last week.
 local staleOutput, staleCode = checkFixture({ chatFilterApi = "legacy", logBuild = "20260820-4" })
 equal(staleCode, 1, "a log written by another build is refused")
-check(staleOutput:find("20260820-4 != 20260820-7", 1, true) ~= nil,
+check(staleOutput:find("20260820-4 != 20260820-8", 1, true) ~= nil,
     "and the report names both builds rather than just failing")
 
 local mixedOutput, mixedCode = checkFixture({ chatFilterApi = "legacy", extraBuild = "20260820-4" })
@@ -3265,13 +3392,13 @@ local mixedDeployOutput, mixedDeployCode = checkFixture({ chatFilterApi = "legac
 equal(mixedDeployCode, 1, "a partially deployed copy is refused")
 check(mixedDeployOutput:find("deploiement partiel", 1, true) ~= nil,
     "and is named for what it is")
-check(mixedDeployOutput:find("build code=20260820-7 .toc=20260820-4", 1, true) ~= nil,
+check(mixedDeployOutput:find("build code=20260820-8 .toc=20260820-4", 1, true) ~= nil,
     "with both identities on the line")
 check(mixedDeployOutput:find("RELEVE COMPLET", 1, true) == nil,
     "such a copy is never reported as complete")
 -- The header names the identity of the code that actually ran, so it cannot
 -- print one identity while the line below checks the other.
-check(mixedDeployOutput:find("Build     : 20260820-7", 1, true) ~= nil,
+check(mixedDeployOutput:find("Build     : 20260820-8", 1, true) ~= nil,
     "and the header names the build the code itself carries")
 
 -- The twin surface: the in-game summary has the same two identities and used to
@@ -3291,6 +3418,31 @@ ns.resetDebugLog()
 local deploySummary = ns.buildDebugSummaryText()
 check(deploySummary:find("Deploiement: OK", 1, true) ~= nil,
     "the in-game summary states the deployment, not only the offline check")
+
+-- The third branch of the same check, and the only correctile of the previous
+-- round whose mutation did not bite. It is reachable for real:
+-- C_AddOns.GetAddOnMetadata unavailable makes the client report the .toc build
+-- as "unavailable", which is not a mismatch -- it is a read failure, and a read
+-- failure must not pass for agreement.
+local unreadableTocOutput, unreadableTocCode = checkFixture({ chatFilterApi = "legacy",
+    metaBuild = "unavailable" })
+equal(unreadableTocCode, 3, "an unreadable .toc is a reserve, not a pass")
+check(unreadableTocOutput:find("%[ warn %] Build du code et du %.toc") ~= nil,
+    "and is flagged on its own line")
+check(unreadableTocOutput:find("build_meta_unreadable", 1, true) ~= nil,
+    "naming which identity could not be read")
+check(unreadableTocOutput:find("RELEVE COMPLET", 1, true) == nil,
+    "such a recording is never reported as complete")
+
+-- The same absence on the other side. An identity missing from the code used to
+-- skip the comparison and fall through to `ok` -- an unknown turning green on
+-- the side nobody was watching.
+equal(select(1, ns.getDeploymentVerdict({ addonMetaBuild = "a",
+    version = "v", addonMetaVersion = "v" })), "unknown",
+    "a manifest with no code build is unknown, not ok")
+equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "a",
+    addonMetaVersion = "v" })), "unknown",
+    "and one with no code version too")
 
 -- "Died and never came back" is a session that ended on a corpse, not the
 -- scenario the step asks for.

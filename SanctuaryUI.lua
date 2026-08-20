@@ -271,6 +271,7 @@ local whitelistRows = {}
 local whitelistScrollChild = nil
 local whitelistCountLabel = nil
 local whitelistAddBox = nil
+local keywordAddBox = nil
 local whitelistSearchBox = nil
 local whitelistCheckBox = nil
 local whitelistCheckResult = nil
@@ -308,7 +309,7 @@ local buildKeywordsTab, refreshKeywordEntries
 local buildWhitelistTab, refreshWhitelistEntries, runWhitelistCheck
 local buildLogsTab, refreshLogEntries
 local buildAboutTab
-local buildDiagnosticsTab, refreshDiagnosticsPanel
+local buildDiagnosticsTab, refreshDiagnosticsPanel, clearDiagnosticsPanel
 
 StaticPopupDialogs["SANCTUARY_CLEAR_LOG"] = {
     text = L["LOGS_CLEAR_CONFIRM"],
@@ -611,6 +612,18 @@ local function createMainFrame()
         -- the same rule.
         if whitelistAddBox then
             whitelistAddBox:SetText("")
+        end
+        -- Same rule, two tabs further. A suspect pattern is very often someone's
+        -- name, and unlike the diagnostics panel this field is on the plain user
+        -- surface: no debug mode needed to leave it, none needed to read it back
+        -- at the next opening.
+        if keywordAddBox then
+            keywordAddBox:SetText("")
+        end
+        -- And the diagnostics result box, which spells out names and verdicts
+        -- and survived both the window closing and a tab change.
+        if clearDiagnosticsPanel then
+            clearDiagnosticsPanel()
         end
     end)
 
@@ -1051,7 +1064,8 @@ buildKeywordsTab = function(parent)
     desc:SetWordWrap(true)
 
     -- Input + Add button at the top (after description)
-    local inputBox = createStyledInput(parent, 200, 26)
+    local inputBox = createStyledInput(parent, 200, 26, "SanctuaryKeywordAddInput")
+    keywordAddBox = inputBox
     inputBox:SetPoint("TOPLEFT", parent, "TOPLEFT", CONTENT_PADDING + 4, -(CONTENT_PADDING + 52))
     inputBox:SetMaxLetters(30)
 
@@ -2250,6 +2264,14 @@ buildDiagnosticsTab = function(parent)
 end
 
 refreshDiagnosticsPanel = function()
+    renderDiagnosticResults()
+end
+
+-- Drops what was read, never what is on screen: diagStrandedKinds is left
+-- alone, so a dialog a diagnostic could not close still raises its warning and
+-- its way back the next time the panel is opened.
+clearDiagnosticsPanel = function()
+    wipe(diagResultLines)
     renderDiagnosticResults()
 end
 
