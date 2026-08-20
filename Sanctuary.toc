@@ -1,9 +1,10 @@
-## Interface: 120007
+## Interface: 120100, 120007
 ## Title: Sanctuary
 ## Notes: Anti-harassment protection
 ## Notes-frFR: Protection anti-harcelement
 ## Author: Zephos
 ## Version: 0.3.2
+## X-Sanctuary-Build: 20260820-3
 ## X-Game-Client: Retail only
 ## IconTexture: Interface\Icons\inv_shield_06
 ## Category: Chat

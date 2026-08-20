@@ -11,6 +11,15 @@ local ADDON_NAME, ns = ...
 local L = ns.L
 local VERSION = "0.3.2"
 
+-- Build identity. This is NOT a release version and must never be presented as
+-- one: it only makes a user-provided debug report attributable to the exact
+-- build that produced it. Bump it whenever the diagnostic surface changes so two
+-- reports can never be confused. Keep it non-descriptive -- a date and a counter
+-- and nothing else: it is printed verbatim in every report, and a report can be
+-- handed to a third party, so the identifier must not leak what is being
+-- investigated or which internal item it belongs to.
+local BUILD_ID = "20260820-3"
+
 local PREFIX = "|cFF66CCFF[Sanctuary]|r "
 local COLOR_ON = "|cFF00FF00"
 local COLOR_OFF = "|cFFFF4444"
@@ -23,6 +32,7 @@ local handlers = {}
 
 -- Export constants to namespace for UI file
 ns.VERSION = VERSION
+ns.BUILD_ID = BUILD_ID
 ns.PREFIX = PREFIX
 ns.COLOR_ON = COLOR_ON
 ns.COLOR_OFF = COLOR_OFF
@@ -76,6 +86,13 @@ local ACCOUNT_DEFAULTS = {
     },
     debugEnabled = false,
     debugLog = {},
+    -- Retention accounting for the debug log. It lives in SavedVariables on
+    -- purpose: a reload must not restart the numbering of a log it does not
+    -- clear, otherwise a truncated report is unreadable.
+    debugLogStats = {
+        produced = 0,
+        dropped = 0,
+    },
 }
 
 local CHARACTER_DEFAULTS = {
@@ -145,6 +162,23 @@ local function isRestrictedValue(value)
     return false
 end
 
+-- Social counters read right after a login or a reload can answer nil while the
+-- friend/guild lists are still loading. Storing that nil removed the key from
+-- the serialized snapshot entirely, and in a report an absent key cannot be told
+-- apart from a code path that never ran. Same rule as the client build context:
+-- every read reports a value, including its own failure.
+local function readSocialCount(reader)
+    local value
+    local ok = pcall(function()
+        value = reader()
+    end)
+    if not ok then return "error" end
+    if type(value) ~= "number" then return "unavailable" end
+    return value
+end
+
+ns.readSocialCount = readSocialCount
+
 local function safeText(value, maxLen, nilText)
     if value == nil then return nilText end
     if isRestrictedValue(value) then return SECRET_VALUE_PLACEHOLDER end
@@ -196,12 +230,27 @@ local function getRuntimeContext()
         end
     end
 
+    -- Strictly boolean like the other context flags: an unreadable or protected
+    -- reading must never look like "dead". deadOrGhostKnown carries that
+    -- distinction instead, so diagnostics never confuse unknown with dead.
+    local deadOrGhostValue = false
+    local deadOrGhostKnownValue = false
+    if type(UnitIsDeadOrGhost) == "function" then
+        local ok, value = pcall(UnitIsDeadOrGhost, "player")
+        if ok and not isRestrictedValue(value) then
+            deadOrGhostValue = value and true or false
+            deadOrGhostKnownValue = true
+        end
+    end
+
     return {
         inGroup = inGroupValue,
         inRaid = inRaidValue,
         groupSize = groupSizeValue,
         inInstance = inInstanceValue,
         instanceType = instanceTypeValue,
+        deadOrGhost = deadOrGhostValue,
+        deadOrGhostKnown = deadOrGhostKnownValue,
     }
 end
 
@@ -213,8 +262,141 @@ local function addRuntimeContext(data)
     data.groupSize = context.groupSize
     data.inInstance = context.inInstance
     data.instanceType = context.instanceType
+    data.deadOrGhost = context.deadOrGhost
+    data.deadOrGhostKnown = context.deadOrGhostKnown
     return data
 end
+
+-- Retail moved the chat message filter registry to ChatFrameUtil and now keeps
+-- the historical global as an alias declared by Blizzard_DeprecatedChatInfo.
+-- Resolve whichever path the running client actually exposes so registration
+-- survives that alias being retired. This is an availability adapter only: it
+-- does not change which messages Sanctuary filters.
+local function resolveChatFilterRegistrar()
+    if type(ChatFrame_AddMessageEventFilter) == "function" then
+        return ChatFrame_AddMessageEventFilter, "legacy"
+    end
+    if type(ChatFrameUtil) == "table" and type(ChatFrameUtil.AddMessageEventFilter) == "function" then
+        return ChatFrameUtil.AddMessageEventFilter, "chatframeutil"
+    end
+    return nil, "none"
+end
+
+local function describeChatFilterApi()
+    local legacy = type(ChatFrame_AddMessageEventFilter) == "function"
+    local namespaced = type(ChatFrameUtil) == "table"
+        and type(ChatFrameUtil.AddMessageEventFilter) == "function"
+    if legacy and namespaced then return "both" end
+    if legacy then return "legacy" end
+    if namespaced then return "chatframeutil" end
+    return "none"
+end
+
+ns.resolveChatFilterRegistrar = resolveChatFilterRegistrar
+ns.describeChatFilterApi = describeChatFilterApi
+
+-- Registration path actually taken at load, kept for the debug snapshot so a
+-- user report shows which registry answered rather than which ones existed.
+local chatFilterApiUsed = "unregistered"
+
+-- Client/build identity for debug reports. Every read is protected and only
+-- returns scalars the client itself publishes; no player-identifying data and
+-- no chat payload ever reaches this table.
+local function getClientBuildContext()
+    local data = {
+        build = BUILD_ID,
+        chatFilterApi = describeChatFilterApi(),
+    }
+
+    -- Every branch sets every key. In a report read by a human, a missing key is
+    -- indistinguishable from a forgotten code path, so failures are stated
+    -- explicitly rather than left absent.
+    local function setClientBuild(version, build, buildDate, interfaceValue)
+        data.clientVersion = version
+        data.clientBuild = build
+        data.clientBuildDate = buildDate
+        data.clientInterface = interfaceValue
+    end
+
+    if type(GetBuildInfo) == "function" then
+        local ok, clientVersion, clientBuild, clientBuildDate, clientTOC = pcall(GetBuildInfo)
+        if ok then
+            -- Same protection as the message type conversion: a protected value
+            -- must never be handed to tonumber.
+            local interfaceValue
+            if not isRestrictedValue(clientTOC) then
+                local okNumber, numeric = pcall(tonumber, clientTOC)
+                interfaceValue = okNumber and numeric or nil
+            end
+            setClientBuild(
+                safeText(clientVersion, 40, "nil"),
+                safeText(clientBuild, 40, "nil"),
+                safeText(clientBuildDate, 40, "nil"),
+                interfaceValue or safeText(clientTOC, 40, "nil")
+            )
+        else
+            setClientBuild("error", "error", "error", "error")
+        end
+    else
+        setClientBuild("unavailable", "unavailable", "unavailable", "unavailable")
+    end
+
+    local getMetadata = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
+    if type(getMetadata) == "function" then
+        local okVersion, metaVersion = pcall(getMetadata, ADDON_NAME, "Version")
+        data.addonMetaVersion = okVersion and safeText(metaVersion, 40, "nil") or "error"
+        local okBuild, metaBuild = pcall(getMetadata, ADDON_NAME, "X-Sanctuary-Build")
+        data.addonMetaBuild = okBuild and safeText(metaBuild, 60, "nil") or "error"
+        local okInterface, metaInterface = pcall(getMetadata, ADDON_NAME, "Interface")
+        data.addonMetaInterface = okInterface and safeText(metaInterface, 20, "nil") or "error"
+    else
+        data.addonMetaVersion = "unavailable"
+        data.addonMetaBuild = "unavailable"
+        data.addonMetaInterface = "unavailable"
+    end
+
+    -- Retail exposes a chat messaging lockdown state; treat an unreadable or
+    -- missing API as unknown rather than as "not locked down".
+    data.chatLockdown = false
+    data.chatLockdownKnown = false
+    if type(C_ChatInfo) == "table" and type(C_ChatInfo.InChatMessagingLockdown) == "function" then
+        local ok, lockdown = pcall(C_ChatInfo.InChatMessagingLockdown)
+        if ok and not isRestrictedValue(lockdown) then
+            data.chatLockdown = lockdown and true or false
+            data.chatLockdownKnown = true
+        end
+    end
+
+    return data
+end
+
+ns.getClientBuildContext = getClientBuildContext
+
+local function addSnapshotFields(target, fields)
+    target = target or {}
+    for key, value in pairs(fields or {}) do
+        target[key] = value
+    end
+    return target
+end
+
+-- ChatTypeInfo.SYSTEM.id is the message type Retail passes as the fifth
+-- AddMessage argument for system lines. Reading it must stay protected: the
+-- table can be missing at load time and Retail may expose protected fields.
+local function readSystemChatTypeID()
+    if type(ChatTypeInfo) ~= "table" then return nil end
+
+    local ok, id = pcall(function()
+        local info = ChatTypeInfo.SYSTEM
+        if type(info) ~= "table" then return nil end
+        return info.id
+    end)
+    if not ok or id == nil or isRestrictedValue(id) then return nil end
+
+    return tonumber(id)
+end
+
+ns.readSystemChatTypeID = readSystemChatTypeID
 
 local function sanitizeDebugValue(value, depth)
     if value == nil then return nil end
@@ -407,6 +589,7 @@ ns.matchesKeyword = matchesKeyword
 
 -- Forward declarations for helpers used before their concrete section.
 local debugLog, countBNetWithCharName, captureDebugSnapshot, isBNetSenderInGroup
+local getDebugLogStats, resetDebugLog
 local chatOutputWrapped
 local pendingPopupDecisions
 local unmaskVisiblePopup
@@ -419,6 +602,10 @@ local partyInviteSoundGuardDepth = 0
 
 Sanctuary.whitelistCache = {}
 Sanctuary.bnetWhitelistCache = {}
+Sanctuary.whitelistSources = {}
+Sanctuary.whitelistLabels = {}
+Sanctuary.bnetWhitelistSources = {}
+Sanctuary.bnetWhitelistLabels = {}
 Sanctuary.whitelistDirty = true
 
 local function getBNetFriendInfo(index)
@@ -448,18 +635,45 @@ end
 local function rebuildWhitelist()
     local cache = {}
     local bnetCache = {}
+    -- Attribution is built alongside the decision cache, never inside it. The
+    -- Whitelist tab has to say *why* someone gets through, and rebuilding a
+    -- second time to answer that would double the cost of every decision.
+    -- First writer wins, and the manual lists are added first, so an entry the
+    -- user typed keeps its own label even when they are also in the guild.
+    --
+    -- Two flat tables of strings rather than one table of records: a rebuild
+    -- runs on the first decision after any social event, several times a
+    -- minute on a busy Battle.net list, and one small table per contact would
+    -- put a few hundred allocations on that path for nothing. The label is only
+    -- stored when it differs from the key.
+    local sources = {}
+    local sourceLabels = {}
+    local bnetSources = {}
+    local bnetSourceLabels = {}
 
-    local function addCharacterName(name)
-        local normalized = normalizeName(name)
-        if normalized then
-            cache[normalized] = true
+    local function noteSource(store, labelStore, key, source, displayName)
+        if not key or store[key] then return end
+        store[key] = source
+        if displayName and displayName ~= key then
+            labelStore[key] = displayName
         end
     end
 
-    local function addBNetAccountName(name)
+    local function addCharacterName(name, source, displayName)
+        local normalized = normalizeName(name)
+        if normalized then
+            cache[normalized] = true
+            noteSource(sources, sourceLabels, normalized, source or "manual",
+                displayName or (type(name) == "string" and name or nil))
+        end
+    end
+
+    local function addBNetAccountName(name, source, displayName)
         local normalized = normalizeBNetName(name)
         if normalized then
             bnetCache[normalized] = true
+            noteSource(bnetSources, bnetSourceLabels, normalized, source or "manual",
+                displayName or (type(name) == "string" and name or nil))
         end
     end
 
@@ -472,14 +686,16 @@ local function rebuildWhitelist()
     end
 
     local function addManualEntry(key, data)
-        addCharacterName(key)
+        local source = (type(data) == "table" and data.source == "trust") and "trust" or "manual"
+        local label = (type(data) == "table" and data.displayName) or key
+        addCharacterName(key, source, label)
         if type(data) == "table" then
-            addCharacterName(data.displayName)
+            addCharacterName(data.displayName, source, label)
             if manualEntryAllowsBNet(data) then
-                addBNetAccountName(data.displayName or key)
+                addBNetAccountName(data.displayName or key, source, label)
             end
         elseif manualEntryAllowsBNet(data) then
-            addBNetAccountName(key)
+            addBNetAccountName(key, source, label)
         end
     end
 
@@ -504,7 +720,7 @@ local function rebuildWhitelist()
         local numMembers = GetNumGuildMembers() or 0
         for i = 1, numMembers do
             local name = GetGuildRosterInfo(i)
-            if name then addCharacterName(name) end
+            if name then addCharacterName(name, "guild") end
         end
     end)
 
@@ -515,10 +731,10 @@ local function rebuildWhitelist()
         for i = 1, numFriends do
             local info = getBNetFriendInfo(i)
             if info then
-                addBNetAccountName(info.accountName)
+                addBNetAccountName(info.accountName, "bnet")
                 local gameInfo = info.gameAccountInfo
                 if gameInfo and gameInfo.characterName and gameInfo.characterName ~= "" then
-                    addCharacterName(gameInfo.characterName)
+                    addCharacterName(gameInfo.characterName, "bnet", info.accountName)
                 end
             end
         end
@@ -529,7 +745,7 @@ local function rebuildWhitelist()
         local numFriends = C_FriendList.GetNumFriends() or 0
         for i = 1, numFriends do
             local info = C_FriendList.GetFriendInfoByIndex(i)
-            if info and info.name then addCharacterName(info.name) end
+            if info and info.name then addCharacterName(info.name, "friend") end
         end
     end)
 
@@ -545,7 +761,7 @@ local function rebuildWhitelist()
                     if realm and realm ~= "" then
                         name = name .. "-" .. realm
                     end
-                    addCharacterName(name)
+                    addCharacterName(name, "group")
                 end
             end
         end
@@ -553,6 +769,10 @@ local function rebuildWhitelist()
 
     Sanctuary.whitelistCache = cache
     Sanctuary.bnetWhitelistCache = bnetCache
+    Sanctuary.whitelistSources = sources
+    Sanctuary.whitelistLabels = sourceLabels
+    Sanctuary.bnetWhitelistSources = bnetSources
+    Sanctuary.bnetWhitelistLabels = bnetSourceLabels
     Sanctuary.whitelistDirty = false
 
     if SanctuaryDB and SanctuaryDB.debugEnabled then
@@ -560,10 +780,14 @@ local function rebuildWhitelist()
         for _ in pairs(cache) do totalSize = totalSize + 1 end
         local bnetSize = 0
         for _ in pairs(bnetCache) do bnetSize = bnetSize + 1 end
-        local gm = 0; pcall(function() gm = GetNumGuildMembers() end)
-        local bn = 0; pcall(function() bn = BNGetNumFriends() end)
-        local cf = 0; pcall(function() cf = C_FriendList.GetNumFriends() end)
-        local grp = IsInGroup() and GetNumGroupMembers() or 0
+        -- Same nil-counter rule as the snapshot: report the failure, never let
+        -- the key disappear from the entry.
+        local gm = readSocialCount(GetNumGuildMembers)
+        local bn = readSocialCount(BNGetNumFriends)
+        local cf = readSocialCount(function() return C_FriendList.GetNumFriends() end)
+        local grp = readSocialCount(function()
+            return IsInGroup() and GetNumGroupMembers() or 0
+        end)
         debugLog("REBUILD", {
             cache = totalSize,
             bnetAccounts = bnetSize,
@@ -673,6 +897,107 @@ end
 
 ns.getBNetFriendInfo = getBNetFriendInfo
 
+-- ----------------------------------------------------------------------------
+-- Whitelist readback (Whitelist tab)
+-- ----------------------------------------------------------------------------
+
+-- Reading is what refreshes. `invalidateWhitelist` only marks the cache dirty;
+-- the rebuild happens on the next read, decision or display alike. Opening the
+-- tab is therefore enough to get a current list, which is why the tab has no
+-- refresh button and no periodic timer -- and why BN_FRIEND_INFO_CHANGED firing
+-- twenty times in half an hour costs nothing while the tab is closed.
+function ns.ensureWhitelist()
+    if Sanctuary.whitelistDirty then
+        rebuildWhitelist()
+    end
+end
+
+-- Automatic trust sources, in the order the tab shows them. "trust" and
+-- "manual" are deliberately absent: those entries live in manualWhitelist and
+-- are already listed, and editable, in the section above.
+ns.AUTO_WHITELIST_SOURCES = { "guild", "friend", "bnet", "group" }
+
+-- Groups the automatically trusted contacts by why they are trusted. Battle.net
+-- friends are listed by account name rather than by their current character:
+-- the character changes with every login while the account is the identity the
+-- decision is actually made on, and one line per account keeps 56 friends
+-- readable instead of doubling them.
+function ns.getAutoWhitelistGroups(filterText)
+    ns.ensureWhitelist()
+
+    local needle = type(filterText) == "string" and filterText:gsub("^%s+", ""):gsub("%s+$", ""):lower() or ""
+    local groups = {}
+    local bySource = {}
+    for _, source in ipairs(ns.AUTO_WHITELIST_SOURCES) do
+        local group = { source = source, total = 0, entries = {} }
+        groups[#groups + 1] = group
+        bySource[source] = group
+    end
+
+    local function collect(store, labels, source)
+        local group = bySource[source]
+        if not group then return end
+        for key, entrySource in pairs(store or {}) do
+            if entrySource == source then
+                group.total = group.total + 1
+                local label = (labels and labels[key]) or key
+                if needle == "" or tostring(label):lower():find(needle, 1, true)
+                    or key:find(needle, 1, true) then
+                    group.entries[#group.entries + 1] = { key = key, label = label }
+                end
+            end
+        end
+    end
+
+    collect(Sanctuary.whitelistSources, Sanctuary.whitelistLabels, "guild")
+    collect(Sanctuary.whitelistSources, Sanctuary.whitelistLabels, "friend")
+    collect(Sanctuary.whitelistSources, Sanctuary.whitelistLabels, "group")
+    collect(Sanctuary.bnetWhitelistSources, Sanctuary.bnetWhitelistLabels, "bnet")
+
+    for _, group in ipairs(groups) do
+        table.sort(group.entries, function(a, b)
+            local la, lb = tostring(a.label):lower(), tostring(b.label):lower()
+            if la == lb then return a.key < b.key end
+            return la < lb
+        end)
+    end
+    return groups
+end
+
+-- Answers "does this person get through, and why" for one typed name. It reuses
+-- getCharacterDecision unchanged, so the answer is the decision itself and not a
+-- second implementation of it that could drift.
+function ns.describeAccessDecision(name)
+    if type(name) ~= "string" or name:gsub("%s", "") == "" then
+        return { valid = false, reason = "empty" }
+    end
+
+    local normalized = normalizeName(name)
+    if not normalized then
+        return { valid = false, reason = "invalid_name" }
+    end
+
+    ns.ensureWhitelist()
+    local blocked, reason, keyword = getCharacterDecision(name)
+
+    -- A Battle.net friend whose current character is unknown still gets through
+    -- on Battle.net whispers. Saying only "BLOCK" here would read as a bug to
+    -- someone who knows that contact passes, so the account match is reported.
+    local bnetKey = normalizeBNetName(name)
+
+    return {
+        valid = true,
+        input = name,
+        normalized = normalized,
+        blocked = blocked and true or false,
+        reason = reason or "unknown",
+        keyword = keyword,
+        source = Sanctuary.whitelistSources and Sanctuary.whitelistSources[normalized] or nil,
+        bnetSource = bnetKey and Sanctuary.bnetWhitelistSources
+            and Sanctuary.bnetWhitelistSources[bnetKey] or nil,
+    }
+end
+
 -- ============================================================================
 -- SECTION F: Logging Engine
 -- ============================================================================
@@ -758,15 +1083,67 @@ ns.logBlock = logBlock
 -- SECTION F2: Debug Logging Engine
 -- ============================================================================
 
-local debugSeq = 0
+-- Produced/dropped accounting for the debug log. Rotation silently deletes the
+-- oldest entries, so a report can look complete while the very incident it was
+-- recorded for has already fallen off the front. Both counters are stored in
+-- SavedVariables so they survive a UI reload, which the log itself does.
+getDebugLogStats = function()
+    if not SanctuaryDB then return nil end
+    local stats = SanctuaryDB.debugLogStats
+    if type(stats) ~= "table" then
+        stats = { produced = 0, dropped = 0 }
+        SanctuaryDB.debugLogStats = stats
+    end
+    stats.produced = tonumber(stats.produced) or 0
+    stats.dropped = tonumber(stats.dropped) or 0
+    -- Migration from a build without accounting, and general invariant: the
+    -- produced count can never be lower than the highest number already handed
+    -- out, or the next entries would reuse numbers that are already in the
+    -- report. Counting the kept entries is not enough: a log inherited from a
+    -- build without accounting can already have rotated, so it holds fewer
+    -- entries than the numbers it carries.
+    local highest = 0
+    for _, entry in ipairs(SanctuaryDB.debugLog or {}) do
+        local seq = tonumber(entry and entry.seq) or 0
+        if seq > highest then highest = seq end
+    end
+    local kept = SanctuaryDB.debugLog and #SanctuaryDB.debugLog or 0
+    if highest < kept then highest = kept end
+    if stats.produced < highest then
+        stats.produced = highest
+    end
+    -- Entries a previous build dropped cannot be counted after the fact, but
+    -- they must not be reported as zero either: the header would then publish
+    -- an impossible arithmetic (5000 kept / 5200 produced / 0 dropped) with no
+    -- truncation warning. This is a lower bound, not an exact count -- what is
+    -- certain is that produced minus kept went missing.
+    local missing = stats.produced - kept
+    if stats.dropped < missing then
+        stats.dropped = missing
+    end
+    return stats
+end
 
-debugLog = function(cat, data)
-    if not SanctuaryDB or not SanctuaryDB.debugEnabled then return end
+resetDebugLog = function()
+    if not SanctuaryDB then return end
+    SanctuaryDB.debugLog = {}
+    SanctuaryDB.debugLogStats = { produced = 0, dropped = 0 }
+end
+
+-- `force` writes the entry even when debug mode is off. It exists for one
+-- caller: the export, which must be able to describe the state it is reporting
+-- on. Every other caller stays gated on the checkbox.
+debugLog = function(cat, data, force)
+    if not SanctuaryDB then return end
+    if not SanctuaryDB.debugEnabled and not force then return end
     if not SanctuaryDB.debugLog then SanctuaryDB.debugLog = {} end
 
-    debugSeq = debugSeq + 1
+    -- The sequence number is the produced counter itself, so two entries can
+    -- never share a number and a gap always means a dropped entry.
+    local stats = getDebugLogStats()
+    stats.produced = stats.produced + 1
     table.insert(SanctuaryDB.debugLog, {
-        seq = debugSeq,
+        seq = stats.produced,
         t = GetTime(),
         ts = date("%H:%M:%S"),
         cat = cat,
@@ -785,7 +1162,32 @@ debugLog = function(cat, data)
         for i = oldCount - overflow + 1, oldCount do
             SanctuaryDB.debugLog[i] = nil
         end
+        stats.dropped = stats.dropped + overflow
     end
+end
+
+-- The three values that decide whether a recording session is exploitable at
+-- all: which filter API took, how much of the chat is actually observed, and
+-- whether the system message type can be read on this client. The snapshot and
+-- the in-game summary both read them here so they can never disagree.
+function ns.getInstrumentationHealth()
+    local chatFramesSeen = 0
+    local chatFramesWrapped = 0
+    for i = 1, 20 do
+        local chatFrame = _G["ChatFrame" .. i]
+        if chatFrame then
+            chatFramesSeen = chatFramesSeen + 1
+            if chatOutputWrapped and chatOutputWrapped[chatFrame] == chatFrame.AddMessage then
+                chatFramesWrapped = chatFramesWrapped + 1
+            end
+        end
+    end
+    return {
+        chatFilterApiUsed = chatFilterApiUsed,
+        chatFramesSeen = chatFramesSeen,
+        chatFramesWrapped = chatFramesWrapped,
+        systemChatTypeID = readSystemChatTypeID() or "unknown",
+    }
 end
 
 local function debugLogChatDecision(kind, sender, msg, action, reason, keyword, extra)
@@ -833,9 +1235,15 @@ countBNetWithCharName = function()
     return count
 end
 
--- Capture a full state snapshot (called on debug enable + ADDON_LOADED)
-captureDebugSnapshot = function()
-    if not SanctuaryDB or not SanctuaryDB.debugEnabled then return end
+-- Capture a full state snapshot (debug enable, ADDON_LOADED, report export).
+-- `trigger` says which of the three wrote it, so a report with several snapshots
+-- can be read without guessing. The export forces the write: since D3, unticking
+-- debug mode keeps the log, so "play, untick, export later" is a normal path and
+-- it used to produce a report whose last snapshot dated back to the activation.
+captureDebugSnapshot = function(trigger)
+    if not SanctuaryDB then return end
+    local force = trigger == "export"
+    if not SanctuaryDB.debugEnabled and not force then return end
 
     -- Globals
     local globals = {}
@@ -857,9 +1265,9 @@ captureDebugSnapshot = function()
     end
 
     -- Social data
-    local guildN = 0; pcall(function() guildN = GetNumGuildMembers() end)
-    local bnetN = 0; pcall(function() bnetN = BNGetNumFriends() end)
-    local friendN = 0; pcall(function() friendN = C_FriendList.GetNumFriends() end)
+    local guildN = readSocialCount(GetNumGuildMembers)
+    local bnetN = readSocialCount(BNGetNumFriends)
+    local friendN = readSocialCount(function() return C_FriendList.GetNumFriends() end)
 
     -- Whitelist cache sizes
     local cacheSize = 0
@@ -880,21 +1288,19 @@ captureDebugSnapshot = function()
     if SanctuaryCharDB and SanctuaryCharDB.manualWhitelist then
         for _ in pairs(SanctuaryCharDB.manualWhitelist) do manualChar = manualChar + 1 end
     end
-    local chatFramesSeen = 0
-    local chatFramesWrapped = 0
-    for i = 1, 20 do
-        local chatFrame = _G["ChatFrame" .. i]
-        if chatFrame then
-            chatFramesSeen = chatFramesSeen + 1
-            if chatOutputWrapped and chatOutputWrapped[chatFrame] == chatFrame.AddMessage then
-                chatFramesWrapped = chatFramesWrapped + 1
-            end
-        end
-    end
+    local health = ns.getInstrumentationHealth()
+    local chatFramesSeen = health.chatFramesSeen
+    local chatFramesWrapped = health.chatFramesWrapped
 
-    debugLog("SNAPSHOT", {
-        version = VERSION,
-        locale = GetLocale(),
+    local snapshot = getClientBuildContext()
+    snapshot.version = VERSION
+    snapshot.locale = GetLocale()
+    snapshot.systemChatTypeID = health.systemChatTypeID
+    snapshot.chatFilterApiUsed = health.chatFilterApiUsed
+
+    debugLog("SNAPSHOT", addSnapshotFields(snapshot, {
+        trigger = trigger or "debug_enable",
+        debugEnabled = SanctuaryDB.debugEnabled and true or false,
         addonEnabled = isEnabled(),
         globals = globals,
         patternCount = ns.invitePatterns and #ns.invitePatterns or 0,
@@ -914,12 +1320,341 @@ captureDebugSnapshot = function()
         partyInviteSoundGuardActive = partyInviteSoundGuardDepth > 0,
         chatFramesSeen = chatFramesSeen,
         chatFramesWrapped = chatFramesWrapped,
-    })
+    }), force)
 end
 
 ns.debugLog = debugLog
 ns.captureDebugSnapshot = captureDebugSnapshot
 ns.countBNetWithCharName = countBNetWithCharName
+ns.getDebugLogStats = getDebugLogStats
+ns.resetDebugLog = resetDebugLog
+
+-- ============================================================================
+-- SECTION F3: Debug Report Rendering
+-- ============================================================================
+
+-- WoW interprets "|" escape sequences (|c |r |H |h |K |k |T |t) in every widget,
+-- the export EditBox included, and what the maintainer copies out of that box is
+-- the rendered text, not the raw buffer. An unescaped pipe coming from log data
+-- therefore swallows the surrounding characters: the 2026-08-20 report lost a
+-- whole entry that way, merged into its neighbour by a "|K...|k" name
+-- substitution. Doubling the pipe makes the client render exactly one literal
+-- "|" again, so the pasted report is character-for-character the recorded value.
+local function escapeExportText(value)
+    local text = value
+    if type(text) ~= "string" then
+        local ok, converted = pcall(tostring, text)
+        text = ok and converted or UNPRINTABLE_VALUE_PLACEHOLDER
+    end
+    return (text:gsub("|", "||"))
+end
+
+ns.escapeExportText = escapeExportText
+
+local function serializeDebugData(data)
+    if type(data) ~= "table" then return escapeExportText(data) end
+    -- Sort keys for consistent, readable output (pairs() order is random in Lua 5.1)
+    local keys = {}
+    for k in pairs(data) do keys[#keys + 1] = tostring(k) end
+    table.sort(keys)
+    local parts = {}
+    for _, k in ipairs(keys) do
+        -- Use explicit nil check (not `or`) because false is a valid value in Lua
+        local v = data[k]
+        if v == nil then v = data[tonumber(k)] end
+        if type(v) == "table" then
+            local subKeys = {}
+            for sk in pairs(v) do subKeys[#subKeys + 1] = tostring(sk) end
+            table.sort(subKeys)
+            local sub = {}
+            for _, sk in ipairs(subKeys) do
+                local sv = v[sk]
+                if sv == nil then sv = v[tonumber(sk)] end
+                sub[#sub + 1] = escapeExportText(sk) .. "=" .. escapeExportText(sv)
+            end
+            parts[#parts + 1] = escapeExportText(k) .. "={" .. table.concat(sub, ", ") .. "}"
+        else
+            parts[#parts + 1] = escapeExportText(k) .. "=" .. escapeExportText(v)
+        end
+    end
+    return table.concat(parts, " | ")
+end
+
+ns.serializeDebugData = serializeDebugData
+
+-- Builds the whole debug report as plain text. It lives here rather than in the
+-- UI file so the escaping and the retention accounting can be tested without a
+-- game client; the UI only owns the window that displays it.
+local function buildDebugReportText()
+    if not SanctuaryDB then return "" end
+
+    local lines = {}
+    local function add(text)
+        lines[#lines + 1] = text
+    end
+
+    add("=== SANCTUARY DEBUG REPORT ===")
+    add("Date: " .. date("%Y-%m-%d %H:%M:%S"))
+    add("Version: " .. VERSION .. " | Build: " .. BUILD_ID .. " | Locale: " .. (GetLocale() or "?"))
+    add("")
+
+    add("--- GLOBALS ---")
+    local gNames = {
+        "ERR_INVITED_TO_GROUP_SS", "ERR_INVITED_TO_GROUP_S",
+        "ERR_INVITED_ALREADY_IN_GROUP_SS", "ERR_INVITED_ALREADY_IN_GROUP_S",
+    }
+    for _, gName in ipairs(gNames) do
+        local val = _G[gName]
+        add(gName .. " = " .. escapeExportText(type(val) == "string" and val or "nil"))
+    end
+
+    local patternCount = ns.invitePatterns and #ns.invitePatterns or 0
+    add("")
+    add("--- PATTERNS (" .. patternCount .. ") ---")
+    if ns.invitePatterns then
+        for i, p in ipairs(ns.invitePatterns) do
+            add("[" .. i .. "] " .. escapeExportText(p))
+        end
+    end
+
+    add("")
+    add("--- STATE ---")
+    add("AddonEnabled: " .. tostring(isEnabled())
+        .. " | DebugEnabled: " .. tostring(SanctuaryDB.debugEnabled and true or false))
+    add("IsInGuild: " .. tostring(IsInGuild() and true or false)
+        .. " | GuildMembers: " .. tostring(readSocialCount(GetNumGuildMembers)))
+    add("BNetFriends: " .. tostring(readSocialCount(BNGetNumFriends))
+        .. " | BNetWithCharName: " .. tostring(countBNetWithCharName()))
+    add("CharFriends: " .. tostring(readSocialCount(function()
+        return C_FriendList.GetNumFriends()
+    end)))
+    add("GroupInviteFilter: " .. tostring(getEffective("filters.groupInvite"))
+        .. " | StrictGroupInviteSystemMessages: "
+        .. tostring(getEffective("filters.strictGroupInviteSystemMessages"))
+        .. " | PartyInviteSoundGuard: " .. tostring(partyInviteSoundGuardDepth > 0))
+    add("Filters: " .. serializeDebugData(getEffectiveFilterState()))
+
+    local manualAccount = 0
+    if SanctuaryDB.manualWhitelist then
+        for _ in pairs(SanctuaryDB.manualWhitelist) do manualAccount = manualAccount + 1 end
+    end
+    local manualChar = 0
+    if SanctuaryCharDB and SanctuaryCharDB.manualWhitelist then
+        for _ in pairs(SanctuaryCharDB.manualWhitelist) do manualChar = manualChar + 1 end
+    end
+    add("ManualWL: " .. manualAccount .. "+" .. manualChar
+        .. " | WhitelistCache: " .. tostring(ns.getWhitelistCacheSize())
+        .. " | BNetAccountCache: " .. tostring(ns.getBNetWhitelistCacheSize()))
+    add("Keywords: " .. (SanctuaryDB.keywords and #SanctuaryDB.keywords or 0))
+
+    -- Event log. The header states what was produced, not only what survived:
+    -- rotation drops the oldest entries silently, so a report can otherwise look
+    -- complete while the incident it was recorded for has already fallen off.
+    local entries = SanctuaryDB.debugLog or {}
+    local stats = getDebugLogStats() or { produced = #entries, dropped = 0 }
+    local maxEntries = math.max(1, SanctuaryDB.logging and SanctuaryDB.logging.maxEntries or 5000)
+    add("")
+    add("--- EVENT LOG (" .. #entries .. " kept / " .. stats.produced .. " produced / "
+        .. stats.dropped .. " dropped, limit " .. maxEntries .. ") ---")
+    if stats.dropped > 0 then
+        add("!!! TRUNCATED: the " .. stats.dropped
+            .. " oldest entries were dropped by the retention limit. This report does"
+            .. " not start at the beginning of the recording.")
+    end
+    if #entries == 0 then
+        add(L["DEBUG_EMPTY"])
+    else
+        for _, entry in ipairs(entries) do
+            add("#" .. tostring(entry.seq or "?")
+                .. " [" .. escapeExportText(entry.ts or "?") .. "] "
+                .. escapeExportText(entry.cat or "?") .. " | "
+                .. serializeDebugData(entry.data))
+        end
+    end
+
+    return table.concat(lines, "\n") .. "\n"
+end
+
+ns.buildDebugReportText = buildDebugReportText
+
+-- ----------------------------------------------------------------------------
+-- SECTION F4: Report markers and in-game summary
+-- ----------------------------------------------------------------------------
+
+-- The five things a closing check used to look for by scrolling the exported
+-- text by hand. Reading them from the log itself makes the check a single line
+-- the maintainer can read in game -- and lets the offline checker run exactly
+-- the same rule on the settings file, instead of a second implementation of it.
+function ns.getReportMarkers(log)
+    log = log or (SanctuaryDB and SanctuaryDB.debugLog) or {}
+    local markers = {
+        entries = #log,
+        chatOutputNoMatch = false,
+        popupMaskAwaitingEvent = false,
+        worldInInstance = false,
+        playerState = false,
+        snapshots = 0,
+    }
+    for i = 1, #log do
+        local entry = log[i]
+        local data = type(entry) == "table" and entry.data or nil
+        if type(data) == "table" then
+            local cat = entry.cat
+            if cat == "SNAPSHOT" then
+                -- Last one wins: every reload writes a new snapshot without
+                -- erasing the previous ones, and only the most recent describes
+                -- the state the session actually ended in.
+                markers.snapshots = markers.snapshots + 1
+                markers.chatFilterApiUsed = data.chatFilterApiUsed
+                markers.chatFramesSeen = data.chatFramesSeen
+                markers.chatFramesWrapped = data.chatFramesWrapped
+                markers.systemChatTypeID = data.systemChatTypeID
+                markers.addonMetaBuild = data.addonMetaBuild
+                markers.addonMetaVersion = data.addonMetaVersion
+                markers.addonMetaInterface = data.addonMetaInterface
+            elseif cat == "CHAT_OUTPUT" and data.action == "NO_MATCH" then
+                markers.chatOutputNoMatch = true
+            elseif cat == "POPUP" and data.action == "MASK_AWAITING_EVENT"
+                and (tonumber(data.affected) or 0) >= 1 then
+                markers.popupMaskAwaitingEvent = true
+            elseif cat == "WORLD" and data.inInstance == true then
+                markers.worldInInstance = true
+            elseif cat == "PLAYER_STATE" then
+                markers.playerState = true
+            end
+        end
+    end
+    return markers
+end
+
+-- Grades the instrumentation from the markers. "blocking" means the session
+-- filtered nothing at all and no measurement taken during it means anything;
+-- "degraded" means part of the chat was unobserved or the system message type
+-- could not be read, which limits what the recording can prove without voiding
+-- it. Kept separate from getReportMarkers so both the panel and the offline
+-- checker grade identically.
+function ns.getInstrumentationVerdict(markers)
+    markers = markers or ns.getReportMarkers()
+    local api = markers.chatFilterApiUsed
+    if api == nil then
+        return "unknown", "no_snapshot"
+    end
+    if api ~= "legacy" and api ~= "chatframeutil" then
+        return "blocking", "chat_filter_api=" .. tostring(api)
+    end
+    local seen = tonumber(markers.chatFramesSeen) or 0
+    local wrapped = tonumber(markers.chatFramesWrapped) or 0
+    if seen < 1 or wrapped < seen then
+        return "degraded", "chat_frames=" .. tostring(wrapped) .. "/" .. tostring(seen)
+    end
+    if markers.systemChatTypeID == nil or markers.systemChatTypeID == "unknown" then
+        return "degraded", "system_chat_type=unknown"
+    end
+    return "ok", nil
+end
+
+-- Stamped into SavedVariables so the file the game writes on exit identifies
+-- itself: which build produced it, on which client, and in what state. Before
+-- this, that identity only existed in the text export -- which is exactly the
+-- piece that turned out to be unreliable.
+function ns.captureReportManifest(trigger)
+    if not SanctuaryDB then return nil end
+    local health = ns.getInstrumentationHealth()
+    local context = getClientBuildContext()
+    local stats = getDebugLogStats() or { produced = 0, dropped = 0 }
+    local verdict, detail = ns.getInstrumentationVerdict(ns.getReportMarkers())
+    local manifest = {
+        trigger = trigger or "unknown",
+        savedAt = date("%Y-%m-%d %H:%M:%S"),
+        version = VERSION,
+        build = BUILD_ID,
+        locale = GetLocale() or "?",
+        addonMetaVersion = context.addonMetaVersion,
+        addonMetaBuild = context.addonMetaBuild,
+        addonMetaInterface = context.addonMetaInterface,
+        clientVersion = context.clientVersion,
+        clientBuild = context.clientBuild,
+        clientInterface = context.clientInterface,
+        addonEnabled = isEnabled(),
+        debugEnabled = SanctuaryDB.debugEnabled and true or false,
+        chatFilterApiUsed = health.chatFilterApiUsed,
+        chatFramesSeen = health.chatFramesSeen,
+        chatFramesWrapped = health.chatFramesWrapped,
+        systemChatTypeID = health.systemChatTypeID,
+        debugKept = SanctuaryDB.debugLog and #SanctuaryDB.debugLog or 0,
+        debugProduced = stats.produced,
+        debugDropped = stats.dropped,
+        blockLog = SanctuaryDB.log and #SanctuaryDB.log or 0,
+        verdict = verdict,
+        verdictDetail = detail or "none",
+    }
+    SanctuaryDB.reportManifest = manifest
+    return manifest
+end
+
+-- The window that used to carry the whole recording now carries this instead:
+-- a short block that answers the two questions it was really opened for -- is
+-- this the right build, and is the instrumentation running -- and says where
+-- the actual record is. It is short enough that a rendering defect cannot hide
+-- inside it, and losing it costs nothing since it transports no data.
+function ns.buildDebugSummaryText()
+    if not SanctuaryDB then return "" end
+
+    local manifest = ns.captureReportManifest("summary")
+    local markers = ns.getReportMarkers()
+    local lines = {}
+    local function add(text) lines[#lines + 1] = text end
+    local function yesno(value) return value and "oui" or "NON" end
+
+    add("=== SANCTUARY - RESUME DE RELEVE ===")
+    add("Date: " .. manifest.savedAt)
+    add("Version: " .. manifest.version .. " | Build: " .. manifest.build
+        .. " | Locale: " .. manifest.locale)
+    add("AddonMeta: version=" .. escapeExportText(manifest.addonMetaVersion)
+        .. " build=" .. escapeExportText(manifest.addonMetaBuild)
+        .. " interface=" .. escapeExportText(manifest.addonMetaInterface))
+    add("Client: " .. escapeExportText(manifest.clientVersion)
+        .. " build=" .. escapeExportText(manifest.clientBuild)
+        .. " interface=" .. escapeExportText(manifest.clientInterface))
+
+    add("")
+    add("--- INSTRUMENTATION ---")
+    add("Verdict: " .. manifest.verdict:upper()
+        .. (manifest.verdictDetail ~= "none" and (" (" .. manifest.verdictDetail .. ")") or ""))
+    add("ChatFilterApi: " .. escapeExportText(manifest.chatFilterApiUsed))
+    add("ChatFrames: " .. tostring(manifest.chatFramesWrapped) .. " observees / "
+        .. tostring(manifest.chatFramesSeen) .. " vues")
+    add("SystemChatTypeID: " .. escapeExportText(manifest.systemChatTypeID))
+
+    add("")
+    add("--- ETAT ---")
+    add("AddonEnabled: " .. tostring(manifest.addonEnabled)
+        .. " | DebugEnabled: " .. tostring(manifest.debugEnabled))
+    add("GroupInviteFilter: " .. tostring(getEffective("filters.groupInvite"))
+        .. " | StrictGroupInviteSystemMessages: "
+        .. tostring(getEffective("filters.strictGroupInviteSystemMessages"))
+        .. " | PartyInviteSoundGuard: " .. tostring(partyInviteSoundGuardDepth > 0))
+    add("Whitelist: " .. tostring(ns.getWhitelistCacheSize()) .. " personnages / "
+        .. tostring(ns.getBNetWhitelistCacheSize()) .. " comptes Battle.net")
+
+    add("")
+    add("--- JOURNAL ---")
+    add("Debug: " .. tostring(manifest.debugKept) .. " gardees / "
+        .. tostring(manifest.debugProduced) .. " produites / "
+        .. tostring(manifest.debugDropped) .. " perdues")
+    add("Blocages: " .. tostring(manifest.blockLog))
+    add("Marqueurs: chat=" .. yesno(markers.chatOutputNoMatch)
+        .. " popup=" .. yesno(markers.popupMaskAwaitingEvent)
+        .. " instance=" .. yesno(markers.worldInInstance)
+        .. " mort=" .. yesno(markers.playerState)
+        .. " snapshots=" .. tostring(markers.snapshots))
+
+    add("")
+    add("--- RELEVE ---")
+    add(L["DEBUG_SUMMARY_FILE"])
+
+    return table.concat(lines, "\n") .. "\n"
+end
 
 -- ============================================================================
 -- SECTION G: Chat Message Filters (PURE functions — NO side effects)
@@ -1141,16 +1876,34 @@ local chatFiltersRegistered = false
 local isStaticPopupSoundSuppressed
 local function registerChatFilters()
     if chatFiltersRegistered then return end
-    chatFiltersRegistered = true
 
-    ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", systemMessageFilter)
-    ChatFrame_AddMessageEventFilter("CHAT_MSG_WHISPER", whisperFilter)
-    ChatFrame_AddMessageEventFilter("CHAT_MSG_BN_WHISPER", bnetWhisperFilter)
-    ChatFrame_AddMessageEventFilter("CHAT_MSG_SAY", sayFilter)
-    ChatFrame_AddMessageEventFilter("CHAT_MSG_YELL", yellFilter)
-    ChatFrame_AddMessageEventFilter("CHAT_MSG_EMOTE", emoteFilter)
-    ChatFrame_AddMessageEventFilter("CHAT_MSG_TEXT_EMOTE", emoteFilter)
-    ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", channelFilter)
+    local addFilter, apiPath = resolveChatFilterRegistrar()
+    if not addFilter then
+        chatFilterApiUsed = "none"
+        debugLog("CHAT_FILTER_REGISTRY", {
+            action = "UNAVAILABLE",
+            api = apiPath,
+        })
+        return
+    end
+
+    chatFiltersRegistered = true
+    chatFilterApiUsed = apiPath
+
+    addFilter("CHAT_MSG_SYSTEM", systemMessageFilter)
+    addFilter("CHAT_MSG_WHISPER", whisperFilter)
+    addFilter("CHAT_MSG_BN_WHISPER", bnetWhisperFilter)
+    addFilter("CHAT_MSG_SAY", sayFilter)
+    addFilter("CHAT_MSG_YELL", yellFilter)
+    addFilter("CHAT_MSG_EMOTE", emoteFilter)
+    addFilter("CHAT_MSG_TEXT_EMOTE", emoteFilter)
+    addFilter("CHAT_MSG_CHANNEL", channelFilter)
+
+    debugLog("CHAT_FILTER_REGISTRY", {
+        action = "REGISTERED",
+        api = apiPath,
+        available = describeChatFilterApi(),
+    })
 end
 
 -- Last-resort guard for invite text printed directly through ChatFrame:AddMessage.
@@ -1159,6 +1912,116 @@ end
 -- sound/popup changes, and only exact localized invite-system text is suppressed.
 chatOutputWrapped = setmetatable({}, { __mode = "k" })
 local activeChatOutputProbe
+
+-- Retail calls ChatFrame:AddMessage(text, r, g, b, messageTypeID, ...), so the
+-- fifth effective argument identifies the chat category the client is printing.
+-- The secret payload itself is never read, converted or serialized; only this
+-- category is measured, and only to learn whether the leaked lines really are
+-- ChatTypeInfo.SYSTEM before any suppression is considered.
+local SECRET_OUTPUT_MESSAGE_TYPE_INDEX = 4
+
+local function describeSecretOutputMessageType(...)
+    local messageTypeID = select(SECRET_OUTPUT_MESSAGE_TYPE_INDEX, ...)
+    local systemTypeID = readSystemChatTypeID()
+    local described = {
+        messageTypeID = "nil",
+        messageTypeIDKnown = false,
+        systemTypeID = systemTypeID or "unknown",
+        isSystemTypeID = false,
+        isSystemTypeIDKnown = false,
+    }
+
+    if messageTypeID == nil then
+        described.signature = "nil/" .. tostring(described.systemTypeID)
+        return described
+    end
+
+    if isRestrictedValue(messageTypeID) then
+        described.messageTypeID = SECRET_VALUE_PLACEHOLDER
+        described.signature = SECRET_VALUE_PLACEHOLDER .. "/" .. tostring(described.systemTypeID)
+        return described
+    end
+
+    local ok, numeric = pcall(tonumber, messageTypeID)
+    if ok and numeric then
+        described.messageTypeID = numeric
+        described.messageTypeIDKnown = true
+        if systemTypeID then
+            described.isSystemTypeID = numeric == systemTypeID
+            described.isSystemTypeIDKnown = true
+        end
+    else
+        described.messageTypeID = safeText(messageTypeID, 40, "nil")
+    end
+
+    described.signature = tostring(described.messageTypeID) .. "/" .. tostring(described.systemTypeID)
+    return described
+end
+
+-- One chat payload is dispatched to every subscribed ChatFrame, so a single
+-- secret system line produces one AddMessage call per frame. Collapse that burst
+-- into a single diagnostic carrying the frame list instead of N near-identical
+-- entries, otherwise the log volume hides the signal it is meant to measure.
+local secretChatOutputBurst = nil
+
+local function recordSecretChatOutput(frameIndex, ...)
+    if not SanctuaryDB or not SanctuaryDB.debugEnabled then return end
+
+    local described = describeSecretOutputMessageType(...)
+    local now = GetTime()
+    local burst = secretChatOutputBurst
+
+    -- Only a readable message type discriminates two payloads. When the category
+    -- is secret or absent the signature degenerates and two distinct messages
+    -- landing on different frames within the window would merge into one
+    -- frameCount, so an unreadable category always gets its own entry.
+    -- A frame index that already belongs to the burst means a *new* message,
+    -- not another destination for the same one: Blizzard dispatches a payload
+    -- at most once per frame. Only a not-yet-seen frame extends the burst.
+    if described.messageTypeIDKnown and burst and burst.signature == described.signature
+        and (now - burst.time) < 0.5 and not burst.frames[frameIndex] then
+        local entry = SanctuaryDB.debugLog and SanctuaryDB.debugLog[#SanctuaryDB.debugLog]
+        if entry and entry.seq == burst.seq and entry.data then
+            burst.frames[frameIndex] = true
+            burst.frameList[#burst.frameList + 1] = frameIndex
+            entry.data.frames = table.concat(burst.frameList, ",")
+            entry.data.frameCount = #burst.frameList
+            return
+        end
+    end
+
+    debugLog("CHAT_OUTPUT", addRuntimeContext({
+        frame = frameIndex,
+        frames = tostring(frameIndex),
+        frameCount = 1,
+        action = "SECRET_VALUE",
+        msg = SECRET_VALUE_PLACEHOLDER,
+        messageTypeID = described.messageTypeID,
+        messageTypeIDKnown = described.messageTypeIDKnown,
+        systemTypeID = described.systemTypeID,
+        isSystemTypeID = described.isSystemTypeID,
+        isSystemTypeIDKnown = described.isSystemTypeIDKnown,
+        argCount = select("#", ...),
+        filterEnabled = isEnabled() and getEffective("filters.groupInvite") == true,
+        strictGroupInviteSystemMessages = getEffective("filters.strictGroupInviteSystemMessages") == true,
+        soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
+    }))
+
+    local entry = SanctuaryDB.debugLog and SanctuaryDB.debugLog[#SanctuaryDB.debugLog]
+    if entry and described.messageTypeIDKnown then
+        secretChatOutputBurst = {
+            seq = entry.seq,
+            signature = described.signature,
+            time = now,
+            frames = { [frameIndex] = true },
+            frameList = { frameIndex },
+        }
+    else
+        -- No burst is opened on an unreadable category: nothing may attach to it.
+        secretChatOutputBurst = nil
+    end
+end
+
 local function hookChatOutputDiagnostics()
     for i = 1, 20 do
         local chatFrame = _G["ChatFrame" .. i]
@@ -1171,13 +2034,11 @@ local function hookChatOutputDiagnostics()
                 end
 
                 if isRestrictedValue(text) then
-                    debugLog("CHAT_OUTPUT", addRuntimeContext({
-                        frame = frameIndex,
-                        action = "SECRET_VALUE",
-                        msg = SECRET_VALUE_PLACEHOLDER,
-                        filterEnabled = isEnabled() and getEffective("filters.groupInvite") == true,
-                        soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
-                    }))
+                    -- Instrumentation step only: the secret line still reaches
+                    -- the original AddMessage. Suppressing here is not allowed
+                    -- until the measured message type proves it can be done
+                    -- without hiding a legitimate message.
+                    recordSecretChatOutput(frameIndex, ...)
                     return original(self, text, ...)
                 end
 
@@ -1380,6 +2241,151 @@ local function restoreStaticPopupSoundAfterShow(which, reason)
     return true
 end
 
+-- A mute posted by MuteSoundFile survives /reload and relogging; only a full
+-- client restart clears it. So an unmute that fails is not a transient glitch:
+-- it leaves the game's generic panel sounds off, with no way for the person to
+-- connect that to Sanctuary or to undo it short of restarting the client. The
+-- invariant to hold is "the files end up unmuted", which needs a bounded retry
+-- and a record of what is still muted -- not just a reordering of the release.
+local PROTECTED_POPUP_SOUND_UNMUTE_RETRY_DELAY = 1
+local PROTECTED_POPUP_SOUND_UNMUTE_MAX_ATTEMPTS = 5
+local protectedPopupSoundMutedFiles = {}
+local protectedPopupSoundUnmuteRetryPending = false
+local protectedPopupSoundUnmuteAlerted = false
+local scheduleProtectedPopupSoundUnmuteRetry
+
+local function countProtectedPopupSoundMutedFiles()
+    local count = 0
+    for _, fileID in ipairs(PROTECTED_POPUP_SOUND_FILES) do
+        if protectedPopupSoundMutedFiles[fileID] then count = count + 1 end
+    end
+    return count
+end
+
+-- Mirrors the mute state into SavedVariables. The two situations where a mute
+-- outlives the code that posted it -- /reload and relogging -- are exactly the
+-- two where SavedVariables are written, so this flag is what lets the next load
+-- clear a mute this addon left behind. A crashed client loses the flag, but it
+-- also loses the mute.
+local function rememberProtectedPopupSoundMuteState()
+    if not SanctuaryDB then return end
+    SanctuaryDB.protectedPopupSoundMuted = countProtectedPopupSoundMutedFiles() > 0 or nil
+end
+
+local function muteProtectedPopupSoundFiles()
+    local failures = 0
+    local firstError = nil
+    for _, fileID in ipairs(PROTECTED_POPUP_SOUND_FILES) do
+        local ok, err = pcall(MuteSoundFile, fileID)
+        if ok then
+            protectedPopupSoundMutedFiles[fileID] = true
+        else
+            failures = failures + 1
+            firstError = firstError or tostring(err)
+        end
+    end
+    rememberProtectedPopupSoundMuteState()
+    return failures, firstError
+end
+
+-- Only unmutes what is still recorded as muted, so a retry never touches a file
+-- this addon did not mute.
+local function unmuteProtectedPopupSoundFiles()
+    local failures = 0
+    local firstError = nil
+    for _, fileID in ipairs(PROTECTED_POPUP_SOUND_FILES) do
+        if protectedPopupSoundMutedFiles[fileID] then
+            local ok, err = pcall(UnmuteSoundFile, fileID)
+            if ok then
+                protectedPopupSoundMutedFiles[fileID] = nil
+            else
+                failures = failures + 1
+                firstError = firstError or tostring(err)
+            end
+        end
+    end
+    rememberProtectedPopupSoundMuteState()
+    return failures, firstError, countProtectedPopupSoundMutedFiles()
+end
+
+scheduleProtectedPopupSoundUnmuteRetry = function(which, reason, attempt)
+    if protectedPopupSoundUnmuteRetryPending then return end
+    protectedPopupSoundUnmuteRetryPending = true
+
+    C_Timer.After(PROTECTED_POPUP_SOUND_UNMUTE_RETRY_DELAY, function()
+        protectedPopupSoundUnmuteRetryPending = false
+
+        -- A new guard took over in the meantime: the files are meant to be muted
+        -- right now, and its own release owns the next attempt.
+        if protectedPopupSoundGuardDepth > 0 then
+            debugLog("SOUND", {
+                action = "POPUP_GUARD_UNMUTE_RETRY_SKIPPED",
+                which = which or "nil",
+                reason = "guard_reacquired",
+                attempt = attempt,
+                depth = protectedPopupSoundGuardDepth,
+                stillMuted = countProtectedPopupSoundMutedFiles(),
+            })
+            return
+        end
+
+        local failures, firstError, stillMuted = unmuteProtectedPopupSoundFiles()
+        debugLog("SOUND", {
+            action = "POPUP_GUARD_UNMUTE_RETRY",
+            which = which or "nil",
+            reason = reason or "unknown",
+            attempt = attempt,
+            failures = failures,
+            firstError = firstError or "none",
+            stillMuted = stillMuted,
+        })
+
+        if stillMuted == 0 then return end
+
+        if attempt < PROTECTED_POPUP_SOUND_UNMUTE_MAX_ATTEMPTS then
+            scheduleProtectedPopupSoundUnmuteRetry(which, reason, attempt + 1)
+            return
+        end
+
+        -- Bounded means it can give up. Staying silent here would leave the
+        -- person with degraded game audio and nothing to act on, so say it once
+        -- and say what actually clears it.
+        debugLog("SOUND", {
+            action = "POPUP_GUARD_UNMUTE_ABANDONED",
+            which = which or "nil",
+            reason = reason or "unknown",
+            attempt = attempt,
+            stillMuted = stillMuted,
+        })
+        if not protectedPopupSoundUnmuteAlerted then
+            protectedPopupSoundUnmuteAlerted = true
+            printError(L["SOUND_UNMUTE_FAILED"])
+        end
+    end)
+end
+
+-- Clears a mute left behind by a previous session. Called at load, where no
+-- guard can be active yet, and only for files this addon recorded as muted.
+local function releaseStaleProtectedPopupSoundMute()
+    if not SanctuaryDB or not SanctuaryDB.protectedPopupSoundMuted then return false end
+
+    for _, fileID in ipairs(PROTECTED_POPUP_SOUND_FILES) do
+        protectedPopupSoundMutedFiles[fileID] = true
+    end
+    local failures, firstError, stillMuted = unmuteProtectedPopupSoundFiles()
+    debugLog("SOUND", {
+        action = "POPUP_GUARD_STALE_UNMUTE",
+        reason = "previous_session",
+        failures = failures,
+        firstError = firstError or "none",
+        stillMuted = stillMuted,
+    })
+    if stillMuted > 0 then
+        scheduleProtectedPopupSoundUnmuteRetry("STALE", "previous_session", 1)
+    end
+    return true
+end
+
 local function acquireProtectedPopupSoundGuard(which, reason)
     protectedPopupSoundGuardSerial = protectedPopupSoundGuardSerial + 1
     local token = protectedPopupSoundGuardSerial
@@ -1389,13 +2395,7 @@ local function acquireProtectedPopupSoundGuard(which, reason)
     local failures = 0
     local firstError = nil
     if protectedPopupSoundGuardDepth == 1 then
-        for _, fileID in ipairs(PROTECTED_POPUP_SOUND_FILES) do
-            local ok, err = pcall(MuteSoundFile, fileID)
-            if not ok then
-                failures = failures + 1
-                firstError = firstError or tostring(err)
-            end
-        end
+        failures, firstError = muteProtectedPopupSoundFiles()
     end
 
     debugLog("SOUND", {
@@ -1417,16 +2417,18 @@ local function releaseProtectedPopupSoundGuard(token, which, reason)
     end
     if protectedPopupSoundGuardDepth <= 0 then return false end
 
+    -- The depth still drops on failure. Holding it up would keep the guard
+    -- nominally active, so the next acquire would re-mute nothing and no path
+    -- would ever lift the mute -- the opposite of the invariant. The retry below
+    -- is what closes the gap.
     protectedPopupSoundGuardDepth = protectedPopupSoundGuardDepth - 1
     local failures = 0
     local firstError = nil
+    local stillMuted = countProtectedPopupSoundMutedFiles()
     if protectedPopupSoundGuardDepth == 0 then
-        for _, fileID in ipairs(PROTECTED_POPUP_SOUND_FILES) do
-            local ok, err = pcall(UnmuteSoundFile, fileID)
-            if not ok then
-                failures = failures + 1
-                firstError = firstError or tostring(err)
-            end
+        failures, firstError, stillMuted = unmuteProtectedPopupSoundFiles()
+        if stillMuted > 0 then
+            scheduleProtectedPopupSoundUnmuteRetry(which, reason, 1)
         end
     end
 
@@ -1438,6 +2440,7 @@ local function releaseProtectedPopupSoundGuard(token, which, reason)
         files = #PROTECTED_POPUP_SOUND_FILES,
         failures = failures,
         firstError = firstError or "none",
+        stillMuted = stillMuted,
     })
     return true
 end
@@ -1874,7 +2877,7 @@ local function synchronizePopupDecision(which, shouldBlock, name, reason)
     if visible > 0 then
         affected = applyPopupDecision(which, decision.shouldBlock) or 0
     end
-    debugLog("POPUP_DECISION", {
+    debugLog("POPUP_DECISION", addRuntimeContext({
         decisionId = decision.serial,
         which = which,
         name = name or "nil",
@@ -1884,7 +2887,7 @@ local function synchronizePopupDecision(which, shouldBlock, name, reason)
         visible = visible,
         affected = affected,
         order = visible > 0 and "popup_first" or "event_first",
-    })
+    }))
 
     C_Timer.After(0, function()
         if pendingPopupDecisions[which] == decision then
@@ -1976,6 +2979,23 @@ releaseGuildInviteFrameSoundGuard = function(reason)
     return releaseProtectedPopupSoundGuard(token, GUILD_INVITE_FRAME_KEY, reason)
 end
 
+-- Pending state of a silent hide: the accepted flag to put back once Blizzard
+-- has actually run OnHide. Restoring it earlier would let Blizzard's OnHide see
+-- accepted=nil and decline a second time.
+local guildInviteFrameSilentHideState = nil
+
+local function finishGuildInviteFrameSilentHide(reason)
+    if guildInviteFrameSilentHideState then
+        local state = guildInviteFrameSilentHideState
+        guildInviteFrameSilentHideState = nil
+        local frame = getGuildInviteFrame()
+        if frame and frame == state.frame then
+            frame.accepted = state.accepted
+        end
+    end
+    return releaseGuildInviteFrameSoundGuard(reason)
+end
+
 local function hideGuildInviteFrameSilently(reason)
     local frame = getGuildInviteFrame()
     if not frame or not frame.Hide then
@@ -1992,16 +3012,14 @@ local function hideGuildInviteFrameSilently(reason)
     -- when accepted is nil, then plays the generic close sound. Blocked invites
     -- are already declined explicitly, so mark accepted only for this silent
     -- close to avoid a duplicate decline and mute the close sound guard.
+    guildInviteFrameSilentHideState = { frame = frame, accepted = oldAccepted }
     frame.accepted = true
     local ok, err = pcall(function()
         frame:Hide()
     end)
-    frame.accepted = oldAccepted
 
-    if guildInviteFrameSoundGuardToken == token then
-        releaseGuildInviteFrameSoundGuard(ok and "guild_invite_hide" or "guild_invite_hide_error")
-    end
     if not ok then
+        finishGuildInviteFrameSilentHide("guild_invite_hide_error")
         debugLog("GUILD_INVITE_FRAME", {
             action = "HIDE_ERROR",
             reason = reason or "unknown",
@@ -2009,12 +3027,30 @@ local function hideGuildInviteFrameSilently(reason)
         })
         return false, tostring(err)
     end
+
+    -- Confirmed on the 2026-08-20 diagnostic session: when Hide() is called from
+    -- inside the frame's own OnShow, Retail defers the OnHide dispatch until the
+    -- show handlers have unwound. Releasing the guard here would unmute before
+    -- Blizzard plays SOUNDKIT.IG_MAINMENU_CLOSE, which is the audible leak the
+    -- maintainer heard. The guard is now held until OnHide really runs; the
+    -- next-frame timer is only a bound so the mute can never stay on, and a
+    -- timer can never fire before the deferred OnHide of the current dispatch.
+    local deferred = guildInviteFrameSoundGuardToken == token
+    if deferred then
+        C_Timer.After(0, function()
+            if guildInviteFrameSoundGuardToken == token then
+                finishGuildInviteFrameSilentHide("guild_invite_hide_timeout")
+            end
+        end)
+    end
+
     guildInviteFrameLastHideSerial = guildInviteFrameLastHideSerial + 1
     debugLog("GUILD_INVITE_FRAME", {
         action = "HIDE_SILENT",
         reason = reason or "unknown",
         acceptedWas = oldAccepted and true or false,
         soundGuardActive = guildInviteFrameSoundGuardToken and true or false,
+        onHideOrder = deferred and "deferred" or "synchronous",
     })
     return true
 end
@@ -2113,7 +3149,9 @@ local function installGuildInviteFrameGuard()
     end)
     frame:HookScript("OnHide", function(self)
         restoreGuildInviteFrame(self)
-        releaseGuildInviteFrameSoundGuard("guild_invite_frame_hide")
+        -- Runs after Blizzard's own OnHide script, so the close sound has been
+        -- played (and muted) and the accepted flag has been read by then.
+        finishGuildInviteFrameSilentHide("guild_invite_frame_hide")
     end)
     return frame
 end
@@ -2419,10 +3457,14 @@ function handlers.CHAT_MSG_SYSTEM(msg, ...)
     local inviterName, patternIndex, patternKind = extractInviterFromSystemMessage(msg)
     if not inviterName then
         if SanctuaryDB and SanctuaryDB.debugEnabled and isRestrictedValue(msg) then
-            local strictSuppressed = shouldSuppressSecretGroupInviteSystemMessage(msg)
+            -- Confirmed from Retail source: the message-event filter registry
+            -- skips addon callbacks when the payload is a secret value, so
+            -- strict mode only makes this line *eligible* for suppression here.
+            -- SUPPRESS_* stays reserved for a suppression actually applied.
+            local strictEligible = shouldSuppressSecretGroupInviteSystemMessage(msg)
             debugLog("SYSTEM_INVITE", addRuntimeContext({
                 msg = SECRET_VALUE_PLACEHOLDER,
-                result = strictSuppressed and "SUPPRESS_SECRET_SYSTEM_STRICT" or "SECRET_VALUE",
+                result = strictEligible and "STRICT_POLICY_ELIGIBLE" or "SECRET_VALUE",
                 filterEnabled = getEffective("filters.groupInvite") == true,
                 strictGroupInviteSystemMessages = getEffective("filters.strictGroupInviteSystemMessages") == true,
                 soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
@@ -2961,6 +4003,17 @@ local function formatSoundDiagnosticResult(result)
 end
 
 local POPUP_DIAGNOSTICS = {
+    -- The group invitation popup was the one diagnostic with no command: the
+    -- checklist reached it through a raw `/run StaticPopup_Show("PARTY_INVITE",
+    -- ...)`, which leaves an invisible but clickable Accept button in the middle
+    -- of the screen until a `/reload`. Going through the same path as the other
+    -- popups hides the dialog as soon as it has been observed, so the dangerous
+    -- two-step manipulation is no longer needed to produce that measurement.
+    invite = {
+        which = "PARTY_INVITE",
+        label = "invite",
+        text = "SanctuaryDiagnostic",
+    },
     duel = {
         which = "DUEL_REQUESTED",
         label = "duel",
@@ -3220,6 +4273,141 @@ local function resolveSimulationTarget(args)
     return text
 end
 
+-- ----------------------------------------------------------------------------
+-- Diagnostic catalogue (debug panel)
+-- ----------------------------------------------------------------------------
+
+-- The list of diagnostics the debug panel turns into buttons. It lives here,
+-- next to the diagnostics themselves, rather than in the UI file: a checklist
+-- step is exactly one entry of this table, so the list, the labels and the
+-- clean-up flags have to be verifiable without a game client. The UI only owns
+-- the buttons that render it.
+--
+-- `run(argText)` returns { text = <line shown to the maintainer>,
+-- leftOnScreen = <the diagnostic could not put the screen back> }.
+ns.DIAGNOSTIC_CATALOG = {
+    {
+        id = "sim_invite",
+        labelKey = "DIAG_SIM_INVITE",
+        command = "/sanc sim <nom>",
+        argKey = "DIAG_ARG_NAME",
+        argDefault = "SanctuaryTest",
+        run = function(argText)
+            return { text = formatSimulationResult(simulateInvite(resolveSimulationTarget(argText))) }
+        end,
+    },
+    {
+        id = "sim_bnet",
+        labelKey = "DIAG_SIM_BNET",
+        command = "/sanc sim bnet",
+        run = function(argText)
+            return { text = formatBNetSimulationResult(simulateBNetWhisper(argText or "")) }
+        end,
+    },
+    {
+        id = "sim_bnetfriend",
+        labelKey = "DIAG_SIM_BNETFRIEND",
+        command = "/sanc sim bnetfriend <n>",
+        argKey = "DIAG_ARG_INDEX",
+        argDefault = "1",
+        -- Writes a real Battle.net account name into the debug log. The panel
+        -- says so before the click rather than in a note read afterwards.
+        sensitive = true,
+        run = function(argText)
+            return { text = formatBNetSimulationResult(simulateBNetFriend(argText or "1")) }
+        end,
+    },
+    {
+        id = "diag_chat",
+        labelKey = "DIAG_CHAT_INVITE",
+        command = "/sanc diag chat invite",
+        run = function()
+            return { text = formatChatDiagnosticResult(runChatDiagnostic("invite")) }
+        end,
+    },
+    {
+        id = "diag_sound",
+        labelKey = "DIAG_SOUND_INVITE",
+        command = "/sanc diag sound invite",
+        tipKey = "DIAG_TIP_SOUND",
+        run = function()
+            return { text = formatSoundDiagnosticResult(runSoundDiagnostic()) }
+        end,
+    },
+    {
+        id = "diag_popup_invite",
+        labelKey = "DIAG_POPUP_INVITE",
+        command = "/sanc diag popup invite",
+        tipKey = "DIAG_TIP_POPUP",
+        popupKind = "invite",
+    },
+    {
+        id = "diag_popup_duel",
+        labelKey = "DIAG_POPUP_DUEL",
+        command = "/sanc diag popup duel",
+        tipKey = "DIAG_TIP_POPUP",
+        popupKind = "duel",
+    },
+    {
+        id = "diag_popup_guild",
+        labelKey = "DIAG_POPUP_GUILD",
+        command = "/sanc diag popup guild",
+        tipKey = "DIAG_TIP_POPUP",
+        popupKind = "guild",
+    },
+    {
+        id = "diag_popup_list",
+        labelKey = "DIAG_POPUP_LIST",
+        command = "/sanc diag popup list <filtre>",
+        argKey = "DIAG_ARG_FILTER",
+        argDefault = "",
+        run = function(argText)
+            return { text = formatPopupListDiagnosticResult(runPopupListDiagnostic(argText or "")) }
+        end,
+    },
+}
+
+for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG) do
+    if entry.popupKind and not entry.run then
+        local kind = entry.popupKind
+        entry.run = function()
+            local result = runPopupDiagnostic(kind)
+            -- A popup that could not be hidden is still on screen, invisible and
+            -- clickable. Report it here instead of relying on the maintainer
+            -- remembering the rule from the checklist.
+            local leftOnScreen = result.available and not result.skipped
+                and result.hidden ~= true
+            return { text = formatPopupDiagnosticResult(result), leftOnScreen = leftOnScreen }
+        end
+    end
+end
+
+function ns.getDiagnosticEntry(id)
+    for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG) do
+        if entry.id == id then return entry end
+    end
+    return nil
+end
+
+-- Runs one catalogue entry and always returns a displayable result: a
+-- diagnostic that throws must show its error in the panel, not disappear into
+-- the error handler of a button click.
+function ns.runDiagnosticById(id, argText)
+    local entry = ns.getDiagnosticEntry(id)
+    if not entry then
+        return { id = tostring(id), text = string.format(L["DIAG_UNKNOWN"], tostring(id)), failed = true }
+    end
+    local ok, result = pcall(entry.run, argText)
+    if not ok then
+        debugLog("DIAG_PANEL", { id = entry.id, ok = false, error = safeText(result, 200, "nil") })
+        return { id = entry.id, text = string.format(L["DIAG_FAILED"], entry.id, safeText(result, 200, "nil")), failed = true }
+    end
+    result = result or {}
+    result.id = entry.id
+    result.text = result.text or ""
+    return result
+end
+
 ns.simulateInvite = simulateInvite
 ns.formatSimulationResult = formatSimulationResult
 ns.simulateBNetWhisper = simulateBNetWhisper
@@ -3343,12 +4531,20 @@ function handlers.ADDON_LOADED(addonName)
         printMsg(L["BADBOY_DETECTED"])
     end
 
+    -- A mute survives /reload and relogging, so one left behind by a previous
+    -- session would still be silencing the game's panel sounds right now. No
+    -- guard can be active at load, so this is the safe point to lift it.
+    releaseStaleProtectedPopupSoundMute()
+
     -- Keep invite audio suppression aligned with the effective setting.
     refreshInviteSoundMuteState()
     installGuildInviteFrameGuard()
 
     -- Debug: capture snapshot at load time (if debug was already enabled)
-    captureDebugSnapshot()
+    captureDebugSnapshot("load")
+    -- The manifest is not gated on debug mode: a settings file has to say which
+    -- build wrote it even when nothing was being recorded.
+    ns.captureReportManifest("load")
 
     frame:UnregisterEvent("ADDON_LOADED")
 end
@@ -3373,6 +4569,10 @@ function handlers.PLAYER_ENTERING_WORLD()
     refreshGroupTracker()
     refreshInviteSoundMuteState()
     installGuildInviteFrameGuard()
+    -- Both are idempotent. Retrying registration here is what makes the filter
+    -- registry adapter meaningful: if no registration path resolved at load,
+    -- ADDON_LOADED never fires again and the session would filter nothing.
+    registerChatFilters()
     hookChatOutputDiagnostics()
 
     -- Request social data refresh. Both calls are pcall-wrapped because their
@@ -3387,10 +4587,41 @@ function handlers.PLAYER_ENTERING_WORLD()
     end)
 end
 
+local function debugLogPlayerState(eventName)
+    if not SanctuaryDB or not SanctuaryDB.debugEnabled then return end
+
+    debugLog("PLAYER_STATE", addRuntimeContext({
+        event = eventName,
+    }))
+end
+
+function handlers.PLAYER_DEAD()
+    debugLogPlayerState("PLAYER_DEAD")
+end
+
+function handlers.PLAYER_ALIVE()
+    debugLogPlayerState("PLAYER_ALIVE")
+end
+
+function handlers.PLAYER_UNGHOST()
+    debugLogPlayerState("PLAYER_UNGHOST")
+end
+
+-- The settings file is the official record, and the client writes it here. The
+-- manifest is stamped one last time at this point so the file describes the
+-- session it actually ends, whether or not the summary window was ever opened.
+function handlers.PLAYER_LOGOUT()
+    ns.captureReportManifest("logout")
+end
+
 -- Register all events
 local events = {
     "ADDON_LOADED",
+    "PLAYER_LOGOUT",
     "PLAYER_ENTERING_WORLD",
+    "PLAYER_DEAD",
+    "PLAYER_ALIVE",
+    "PLAYER_UNGHOST",
     "PARTY_INVITE_REQUEST",
     "DUEL_REQUESTED",
     "GUILD_INVITE_REQUEST",
@@ -3453,7 +4684,7 @@ hooksecurefunc("StaticPopup_Show", function(which, text_arg1, text_arg2, data)
     end
     local soundRestored = restoreStaticPopupSoundAfterShow(which, "static_popup_show")
 
-    debugLog("POPUP", {
+    debugLog("POPUP", addRuntimeContext({
         which = which,
         action = action,
         affected = affected or 0,
@@ -3463,7 +4694,7 @@ hooksecurefunc("StaticPopup_Show", function(which, text_arg1, text_arg2, data)
         text_arg1 = safeText(text_arg1, 200, "nil"),
         text_arg2 = safeText(text_arg2, 100, "nil"),
         dataType = type(data),
-    })
+    }))
 end)
 
 -- Auto-trust: check if group members passed the threshold

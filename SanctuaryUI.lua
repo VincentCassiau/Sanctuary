@@ -84,7 +84,31 @@ local TAB_DEFS = {
     { name = L["TAB_WHITELIST"], key = "whitelist" },
     { name = L["TAB_LOGS"],      key = "logs"      },
     { name = L["TAB_ABOUT"],     key = "about"     },
+    -- Debug-only. Both the tab button and its content frame stay hidden while
+    -- debug mode is off, so no diagnostic is reachable -- let alone fireable by
+    -- accident -- from the normal interface.
+    { name = L["TAB_DIAGNOSTICS"], key = "diagnostics", debugOnly = true },
 }
+
+local function isTabVisible(def)
+    if not def or not def.debugOnly then return true end
+    return (SanctuaryDB and SanctuaryDB.debugEnabled) and true or false
+end
+
+local function visibleTabDefs()
+    local defs = {}
+    for _, def in ipairs(TAB_DEFS) do
+        if isTabVisible(def) then defs[#defs + 1] = def end
+    end
+    return defs
+end
+
+local function tabDefByKey(key)
+    for _, def in ipairs(TAB_DEFS) do
+        if def.key == key then return def end
+    end
+    return nil
+end
 
 -- ============================================================================
 -- SECTION 2: Utility Helpers
@@ -242,8 +266,17 @@ local filterCheckboxes = {}
 -- Whitelist tab state
 local whitelistEntries = {}
 local whitelistEntryPool = {}
+local whitelistRowPool = {}
+local whitelistRows = {}
 local whitelistScrollChild = nil
 local whitelistCountLabel = nil
+local whitelistSearchBox = nil
+local whitelistCheckBox = nil
+local whitelistCheckResult = nil
+-- Collapsed by default. It answers the volume problem -- 56 Battle.net accounts
+-- are four count lines until asked for -- and it keeps a window that can be
+-- opened in public from listing a friends list nobody asked to see.
+local whitelistExpanded = {}
 
 -- Log tab state
 local logScrollChild = nil
@@ -268,11 +301,13 @@ local autoTrustCb = nil
 
 -- Forward declarations for local functions
 local selectTab, refreshTabContent, refreshToggle, refreshStatusBar
+local layoutTabBar, refreshTabBar
 local buildFiltersTab, refreshFilterCheckboxes
 local buildKeywordsTab, refreshKeywordEntries
-local buildWhitelistTab, refreshWhitelistEntries
+local buildWhitelistTab, refreshWhitelistEntries, runWhitelistCheck
 local buildLogsTab, refreshLogEntries
 local buildAboutTab
+local buildDiagnosticsTab, refreshDiagnosticsPanel
 
 StaticPopupDialogs["SANCTUARY_CLEAR_LOG"] = {
     text = L["LOGS_CLEAR_CONFIRM"],
@@ -283,6 +318,25 @@ StaticPopupDialogs["SANCTUARY_CLEAR_LOG"] = {
             wipe(SanctuaryDB.log)
             ns.printSuccess(L["LOG_CLEARED"])
             if refreshLogEntries then refreshLogEntries() end
+            if refreshStatusBar then refreshStatusBar() end
+        end
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
+-- Clearing the debug log is the only way to lose a recording, so it asks first
+-- and says how many entries are at stake.
+StaticPopupDialogs["SANCTUARY_CLEAR_DEBUG_LOG"] = {
+    text = L["DEBUG_CLEAR_CONFIRM"],
+    button1 = L["LOGS_CLEAR_YES"],
+    button2 = L["LOGS_CLEAR_NO"],
+    OnAccept = function()
+        if ns.resetDebugLog then
+            ns.resetDebugLog()
+            ns.printSuccess(L["DEBUG_CLEARED_MSG"])
             if refreshStatusBar then refreshStatusBar() end
         end
     end,
@@ -435,16 +489,9 @@ local function createMainFrame()
     end)
 
     mainFrame:SetScript("OnSizeChanged", function(self, w, h)
-        -- Recalculate tab button widths on resize
-        local newTabWidth = w / #TAB_DEFS
-        for i, def in ipairs(TAB_DEFS) do
-            local tab = tabButtons[def.key]
-            if tab then
-                tab:SetSize(newTabWidth, TAB_BAR_HEIGHT)
-                tab:ClearAllPoints()
-                tab:SetPoint("TOPLEFT", tab:GetParent(), "TOPLEFT", (i - 1) * newTabWidth, 0)
-            end
-        end
+        -- Recalculate tab button widths on resize. Hidden tabs must not reserve
+        -- a slot, so the layout is shared with the debug-mode refresh.
+        layoutTabBar()
         -- Refresh active tab content on resize
         C_Timer.After(0.05, function()
             if activeTab then
@@ -463,10 +510,10 @@ local function createMainFrame()
     tabBar:SetHeight(TAB_BAR_HEIGHT)
 
     local tabWidth = mainFrame:GetWidth() / #TAB_DEFS
-    for i, def in ipairs(TAB_DEFS) do
-        local tab = CreateFrame("Button", nil, tabBar, "BackdropTemplate")
+    for _, def in ipairs(TAB_DEFS) do
+        local tab = CreateFrame("Button", "SanctuaryTab_" .. def.key, tabBar, "BackdropTemplate")
         tab:SetSize(tabWidth, TAB_BAR_HEIGHT)
-        tab:SetPoint("TOPLEFT", tabBar, "TOPLEFT", (i - 1) * tabWidth, 0)
+        tab:SetPoint("TOPLEFT", tabBar, "TOPLEFT", 0, 0)
         applyBackdrop(tab, TAB_INACTIVE_COLOR, BORDER_COLOR)
 
         local tabLabel = tab:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -494,6 +541,7 @@ local function createMainFrame()
 
         tabButtons[def.key] = tab
     end
+    layoutTabBar()
 
     -- ========================================================================
     -- Content area (one frame per tab, shown/hidden)
@@ -502,7 +550,7 @@ local function createMainFrame()
     local contentHeight = FRAME_HEIGHT - contentTop - STATUS_BAR_HEIGHT
 
     for _, def in ipairs(TAB_DEFS) do
-        local content = CreateFrame("Frame", nil, mainFrame)
+        local content = CreateFrame("Frame", "SanctuaryTabContent_" .. def.key, mainFrame)
         content:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -contentTop)
         content:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, STATUS_BAR_HEIGHT)
         content:Hide()
@@ -515,11 +563,12 @@ local function createMainFrame()
     buildWhitelistTab(tabFrames["whitelist"])
     buildLogsTab(tabFrames["logs"])
     buildAboutTab(tabFrames["about"])
+    buildDiagnosticsTab(tabFrames["diagnostics"])
 
     -- ========================================================================
     -- Status bar
     -- ========================================================================
-    statusBar = CreateFrame("Frame", nil, mainFrame, "BackdropTemplate")
+    statusBar = CreateFrame("Frame", "SanctuaryStatusBar", mainFrame, "BackdropTemplate")
     statusBar:SetPoint("BOTTOMLEFT", mainFrame, "BOTTOMLEFT", 0, 0)
     statusBar:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 0)
     statusBar:SetHeight(STATUS_BAR_HEIGHT)
@@ -533,6 +582,7 @@ local function createMainFrame()
     -- ========================================================================
     mainFrame:SetScript("OnShow", function()
         refreshToggle()
+        refreshTabBar()
         refreshStatusBar()
         -- Refresh active tab content
         if activeTab then
@@ -550,7 +600,41 @@ end
 -- SECTION 4: Tab Selection & Refresh
 -- ============================================================================
 
+layoutTabBar = function()
+    if not mainFrame then return end
+    local defs = visibleTabDefs()
+    for _, def in ipairs(TAB_DEFS) do
+        local tab = tabButtons[def.key]
+        if tab then tab:Hide() end
+    end
+    local width = mainFrame:GetWidth() / math.max(1, #defs)
+    for i, def in ipairs(defs) do
+        local tab = tabButtons[def.key]
+        if tab then
+            tab:SetSize(width, TAB_BAR_HEIGHT)
+            tab:ClearAllPoints()
+            tab:SetPoint("TOPLEFT", tab:GetParent(), "TOPLEFT", (i - 1) * width, 0)
+            tab:Show()
+        end
+    end
+end
+
+-- Called whenever the debug checkbox may have changed, and on every show.
+refreshTabBar = function()
+    layoutTabBar()
+    -- Turning debug mode off while its own tab is open must not leave the panel
+    -- on screen: fall back to the first tab rather than to a frame nothing can
+    -- reach any more.
+    if activeTab and not isTabVisible(tabDefByKey(activeTab)) then
+        selectTab(TAB_DEFS[1].key)
+    end
+end
+
 selectTab = function(key)
+    -- A hidden tab is not selectable: this is the second lock on the debug
+    -- panel, so a stale reference cannot open it while debug mode is off.
+    if not isTabVisible(tabDefByKey(key)) then return end
+
     -- Hide all tabs, show selected
     for tabKey, frame in pairs(tabFrames) do
         frame:Hide()
@@ -594,6 +678,8 @@ refreshTabContent = function(key)
         refreshWhitelistEntries()
     elseif key == "logs" then
         refreshLogEntries()
+    elseif key == "diagnostics" then
+        refreshDiagnosticsPanel()
     -- "about" tab is static, no refresh needed
     end
 end
@@ -640,8 +726,8 @@ end
 -- SECTION 4b: Styled Input Helper
 -- ============================================================================
 
-local function createStyledInput(parent, width, height)
-    local input = CreateFrame("EditBox", nil, parent, "BackdropTemplate")
+local function createStyledInput(parent, width, height, name)
+    local input = CreateFrame("EditBox", name, parent, "BackdropTemplate")
     input:SetSize(width or 200, height or 26)
     input:SetBackdrop({
         bgFile = "Interface/Tooltips/UI-Tooltip-Background",
@@ -1083,11 +1169,12 @@ buildWhitelistTab = function(parent)
     whitelistCountLabel:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -CONTENT_PADDING - 4, -CONTENT_PADDING)
 
     -- Input + Add button at the top (after header)
-    local inputBox = createStyledInput(parent, 200, 26)
+    local inputBox = createStyledInput(parent, 200, 26, "SanctuaryWhitelistAddInput")
     inputBox:SetPoint("TOPLEFT", parent, "TOPLEFT", CONTENT_PADDING + 4, -(CONTENT_PADDING + 22))
     inputBox:SetMaxLetters(64)
 
-    local addBtn = createButton(parent, L["WL_ADD_BTN"], 80, 24, function()
+    local addBtn
+    addBtn = createButton(parent, L["WL_ADD_BTN"], 80, 24, function()
         local text = inputBox:GetText()
         if not text or text == "" then return end
         local normalized = ns.normalizeName(text)
@@ -1118,16 +1205,61 @@ buildWhitelistTab = function(parent)
         self:ClearFocus()
     end)
 
-    -- Scroll area (below input)
+    -- Search box, on the same row: it filters the automatic section below, which
+    -- is the only one large enough to need it.
+    local searchLabel = createLabel(parent, L["WL_SEARCH_LABEL"], 11, DIM_COLOR, "RIGHT")
+    searchLabel:SetPoint("LEFT", addBtn, "RIGHT", 12, 0)
+    searchLabel:SetWidth(80)
+
+    whitelistSearchBox = createStyledInput(parent, 150, 26, "SanctuaryWhitelistSearchInput")
+    whitelistSearchBox:SetPoint("LEFT", searchLabel, "RIGHT", 6, 0)
+    whitelistSearchBox:SetMaxLetters(64)
+    whitelistSearchBox:SetScript("OnTextChanged", function()
+        refreshWhitelistEntries()
+    end)
+    whitelistSearchBox:SetScript("OnEscapePressed", function(self)
+        self:SetText("")
+        self:ClearFocus()
+    end)
+
+    -- "Does this person get through?" -- pinned to the bottom so the answer is
+    -- reachable without scrolling whatever the lists above are showing.
+    whitelistCheckResult = createLabel(parent, "", 11, DIM_COLOR, "LEFT")
+    whitelistCheckResult:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", CONTENT_PADDING + 4, 10)
+    whitelistCheckResult:SetPoint("RIGHT", parent, "RIGHT", -CONTENT_PADDING, 0)
+    whitelistCheckResult:SetWordWrap(true)
+
+    local checkLabel = createLabel(parent, L["WL_CHECK_LABEL"], 11, ACCENT_BLUE, "LEFT")
+    checkLabel:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", CONTENT_PADDING + 4, 34)
+    checkLabel:SetWidth(190)
+
+    whitelistCheckBox = createStyledInput(parent, 180, 24, "SanctuaryWhitelistCheckInput")
+    whitelistCheckBox:SetPoint("LEFT", checkLabel, "RIGHT", 8, 0)
+    whitelistCheckBox:SetMaxLetters(64)
+
+    local checkBtn = createButton(parent, L["WL_CHECK_BTN"], 90, 24, function()
+        runWhitelistCheck(whitelistCheckBox:GetText())
+    end)
+    checkBtn:SetPoint("LEFT", whitelistCheckBox, "RIGHT", 6, 0)
+
+    whitelistCheckBox:SetScript("OnEnterPressed", function(self)
+        self:ClearFocus()
+        runWhitelistCheck(self:GetText())
+    end)
+    whitelistCheckBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+
+    -- Scroll area (below input). Both sections share it: the manual list keeps
+    -- the space it had, and the automatic groups extend it instead of splitting
+    -- the tab into two cramped panes.
     local listTop = CONTENT_PADDING + 50
-    local listBottom = CONTENT_PADDING
+    local listBottom = 62
 
     local scrollFrame = CreateFrame("ScrollFrame", "SanctuaryWhitelistScroll", parent,
         "UIPanelScrollFrameTemplate")
     scrollFrame:SetPoint("TOPLEFT", parent, "TOPLEFT", CONTENT_PADDING, -listTop)
     scrollFrame:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -CONTENT_PADDING - 22, listBottom)
 
-    whitelistScrollChild = CreateFrame("Frame", nil, scrollFrame)
+    whitelistScrollChild = CreateFrame("Frame", "SanctuaryWhitelistScrollChild", scrollFrame)
     local contentWidth = scrollFrame:GetWidth()
     if not contentWidth or contentWidth < 100 then contentWidth = FRAME_WIDTH - CONTENT_PADDING * 2 - 22 end
     whitelistScrollChild:SetWidth(contentWidth)
@@ -1135,8 +1267,93 @@ buildWhitelistTab = function(parent)
     scrollFrame:SetScrollChild(whitelistScrollChild)
 end
 
+-- Plain one-line rows, pooled separately from the manual entries: those carry a
+-- date and a delete button, these are read-only text.
+local function acquireWhitelistRow(height)
+    local row = table.remove(whitelistRowPool)
+    if row then
+        row:SetParent(whitelistScrollChild)
+        row:Show()
+    else
+        row = CreateFrame("Button", nil, whitelistScrollChild, "BackdropTemplate")
+        row.label = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        row.label:SetPoint("LEFT", row, "LEFT", 10, 0)
+        row.label:SetJustifyH("LEFT")
+        row.label:SetWordWrap(false)
+    end
+    row:SetHeight(height)
+    row:SetScript("OnClick", nil)
+    row:EnableMouse(false)
+    -- Rows come back from the pool carrying whatever the previous caller gave
+    -- them: a group header keeps its frame, a name row must not inherit it.
+    if row.SetBackdrop then row:SetBackdrop(nil) end
+    row:ClearAllPoints()
+    local font = row.label:GetFont()
+    row.label:SetFont(font, 11, "")
+    return row
+end
+
+local WL_SOURCE_LABEL_KEYS = {
+    guild  = "WL_SOURCE_GUILD",
+    friend = "WL_SOURCE_FRIEND",
+    bnet   = "WL_SOURCE_BNET",
+    group  = "WL_SOURCE_GROUP",
+}
+
+local WL_REASON_KEYS = {
+    manual = "WL_REASON_MANUAL",
+    trust  = "WL_REASON_TRUST",
+    guild  = "WL_REASON_GUILD",
+    friend = "WL_REASON_FRIEND",
+    bnet   = "WL_REASON_BNET",
+    group  = "WL_REASON_GROUP",
+}
+
+local function describeWhitelistReason(info)
+    if info.reason == "keyword" then
+        return string.format(L["WL_REASON_KEYWORD"], tostring(info.keyword or "?"))
+    end
+    if info.reason == "not_whitelisted" then
+        return L["WL_REASON_NOT_WHITELISTED"]
+    end
+    return L[WL_REASON_KEYS[info.source or "manual"] or "WL_REASON_MANUAL"]
+end
+
+runWhitelistCheck = function(text)
+    if not whitelistCheckResult then return end
+    local info = ns.describeAccessDecision and ns.describeAccessDecision(text or "")
+    if not info or not info.valid then
+        whitelistCheckResult:SetTextColor(unpack(DIM_COLOR))
+        whitelistCheckResult:SetText(info and info.reason == "empty" and "" or L["WL_CHECK_INVALID"])
+        return
+    end
+
+    if info.blocked then
+        local message = string.format(L["WL_CHECK_BLOCK"], info.input, describeWhitelistReason(info))
+        -- A Battle.net friend whose current character is unknown is filtered on
+        -- character name and allowed on Battle.net whispers. Reporting only the
+        -- first half would read as a bug to someone who knows they get through.
+        if info.bnetSource then
+            message = message .. string.format(L["WL_CHECK_BNET_ONLY"],
+                L[WL_REASON_KEYS[info.bnetSource] or "WL_REASON_BNET"])
+        end
+        whitelistCheckResult:SetTextColor(unpack(RED_COLOR))
+        whitelistCheckResult:SetText(message)
+    else
+        whitelistCheckResult:SetTextColor(0.4, 0.9, 0.4, 1.0)
+        whitelistCheckResult:SetText(string.format(L["WL_CHECK_PASS"], info.input,
+            describeWhitelistReason(info)))
+    end
+end
+
 refreshWhitelistEntries = function()
     if not whitelistScrollChild or not SanctuaryDB or not SanctuaryDB.manualWhitelist then return end
+
+    for _, row in ipairs(whitelistRows) do
+        row:Hide()
+        table.insert(whitelistRowPool, row)
+    end
+    wipe(whitelistRows)
 
     -- Clear existing children
     for _, entry in ipairs(whitelistEntries) do
@@ -1234,6 +1451,99 @@ refreshWhitelistEntries = function()
 
         table.insert(whitelistEntries, entry)
         yOffset = yOffset + entryHeight + 2
+    end
+
+    -- ------------------------------------------------------------------
+    -- Automatically trusted contacts (read-only)
+    -- ------------------------------------------------------------------
+    -- No refresh button, no timer, and no live redraw while the tab is open.
+    -- getAutoWhitelistGroups rebuilds the cache if anything invalidated it, so
+    -- opening the tab -- or coming back to it -- is what makes the list current.
+    -- BN_FRIEND_INFO_CHANGED fires around twenty times in half an hour purely
+    -- because friends log in and out, which never changes who is authorized;
+    -- redrawing on it would reorder a list of names under the reader's eyes for
+    -- nothing. What a stale list could cost is covered by the check field
+    -- below, which asks the decision itself and therefore always answers live.
+    local filter = whitelistSearchBox and whitelistSearchBox:GetText() or ""
+    local searching = filter ~= nil and filter:gsub("%s", "") ~= ""
+    local groups = ns.getAutoWhitelistGroups and ns.getAutoWhitelistGroups(filter) or {}
+
+    yOffset = yOffset + 8
+    local sectionRow = acquireWhitelistRow(22)
+    sectionRow:SetPoint("TOPLEFT", whitelistScrollChild, "TOPLEFT", 0, -yOffset)
+    sectionRow:SetPoint("RIGHT", whitelistScrollChild, "RIGHT", 0, 0)
+    sectionRow.label:SetTextColor(unpack(ACCENT_BLUE))
+    sectionRow.label:SetText(L["WL_AUTO_HEADER"] .. "  |cFF888888" .. L["WL_AUTO_HINT"] .. "|r")
+    table.insert(whitelistRows, sectionRow)
+    yOffset = yOffset + 24
+
+    local autoTotal = 0
+    for _, group in ipairs(groups) do
+        autoTotal = autoTotal + group.total
+    end
+
+    if autoTotal == 0 then
+        local emptyRow = acquireWhitelistRow(20)
+        emptyRow:SetPoint("TOPLEFT", whitelistScrollChild, "TOPLEFT", 0, -yOffset)
+        emptyRow:SetPoint("RIGHT", whitelistScrollChild, "RIGHT", 0, 0)
+        emptyRow.label:SetTextColor(unpack(DIM_COLOR))
+        emptyRow.label:SetText(L["WL_AUTO_EMPTY"])
+        table.insert(whitelistRows, emptyRow)
+        yOffset = yOffset + 22
+    end
+
+    for _, group in ipairs(groups) do
+        if group.total > 0 then
+            -- A search forces its groups open: hiding the matches behind a
+            -- second click would defeat the point of typing.
+            local expanded = searching or whitelistExpanded[group.source] == true
+            local groupRow = acquireWhitelistRow(22)
+            groupRow:SetPoint("TOPLEFT", whitelistScrollChild, "TOPLEFT", 0, -yOffset)
+            groupRow:SetPoint("RIGHT", whitelistScrollChild, "RIGHT", 0, 0)
+            applyBackdrop(groupRow, ENTRY_BG, BORDER_COLOR)
+            groupRow.label:SetTextColor(0.9, 0.9, 0.9, 1.0)
+
+            local name = L[WL_SOURCE_LABEL_KEYS[group.source] or "WL_SOURCE_GUILD"]
+            local text
+            if searching then
+                text = string.format(L["WL_GROUP_ROW_FILTERED"], name, #group.entries, group.total)
+            else
+                text = string.format(L["WL_GROUP_ROW"], name, group.total)
+            end
+            groupRow.label:SetText((expanded and "- " or "+ ") .. text)
+
+            if not searching then
+                local capturedSource = group.source
+                groupRow:EnableMouse(true)
+                groupRow:SetScript("OnClick", function()
+                    whitelistExpanded[capturedSource] = not whitelistExpanded[capturedSource]
+                    refreshWhitelistEntries()
+                end)
+            end
+            table.insert(whitelistRows, groupRow)
+            yOffset = yOffset + 24
+
+            if expanded then
+                if #group.entries == 0 then
+                    local noneRow = acquireWhitelistRow(20)
+                    noneRow:SetPoint("TOPLEFT", whitelistScrollChild, "TOPLEFT", 16, -yOffset)
+                    noneRow:SetPoint("RIGHT", whitelistScrollChild, "RIGHT", 0, 0)
+                    noneRow.label:SetTextColor(unpack(DIM_COLOR))
+                    noneRow.label:SetText(L["WL_AUTO_NO_MATCH"])
+                    table.insert(whitelistRows, noneRow)
+                    yOffset = yOffset + 22
+                end
+                for _, item in ipairs(group.entries) do
+                    local nameRow = acquireWhitelistRow(20)
+                    nameRow:SetPoint("TOPLEFT", whitelistScrollChild, "TOPLEFT", 16, -yOffset)
+                    nameRow:SetPoint("RIGHT", whitelistScrollChild, "RIGHT", 0, 0)
+                    nameRow.label:SetTextColor(0.75, 0.75, 0.8, 1.0)
+                    nameRow.label:SetText(tostring(item.label))
+                    table.insert(whitelistRows, nameRow)
+                    yOffset = yOffset + 21
+                end
+            end
+        end
     end
 
     whitelistScrollChild:SetHeight(math.max(yOffset + 10, 1))
@@ -1379,16 +1689,21 @@ local function showLogExport()
     result = result .. string.format(L["EXPORT_TOTAL"], tostring(#SanctuaryDB.log)) .. "\n"
     result = result .. L["EXPORT_COLUMNS"] .. "\n"
     result = result .. string.rep("-", 50) .. "\n"
+    -- Same escaping rule as the debug report: a logged name or message can carry
+    -- "|" escape sequences (item links, name substitutions) which the EditBox
+    -- would interpret, eating the neighbouring text of the copied export.
+    local escape = ns.escapeExportText or tostring
     for i, entry in ipairs(SanctuaryDB.log) do
-        local line = tostring(entry.d or "?") .. " | " .. tostring(entry.type or "?") .. " | " .. tostring(entry.name or "?")
+        local line = escape(entry.d or "?") .. " | " .. escape(entry.type or "?")
+            .. " | " .. escape(entry.name or "?")
         if entry.realm and entry.realm ~= "" then
-            line = line .. "-" .. entry.realm
+            line = line .. "-" .. escape(entry.realm)
         end
         if entry.msg and entry.msg ~= "" then
-            line = line .. " | " .. tostring(entry.msg)
+            line = line .. " | " .. escape(entry.msg)
         end
         if entry.keyword and entry.keyword ~= "" then
-            line = line .. " " .. string.format(L["EXPORT_SUSPECT_TAG"], entry.keyword)
+            line = line .. " " .. string.format(L["EXPORT_SUSPECT_TAG"], escape(entry.keyword))
         end
         result = result .. line .. "\n"
     end
@@ -1416,38 +1731,22 @@ end
 
 local debugExportFrame = nil
 
-local function serializeDebugData(data)
-    if type(data) ~= "table" then return tostring(data) end
-    -- Sort keys for consistent, readable output (pairs() order is random in Lua 5.1)
-    local keys = {}
-    for k in pairs(data) do keys[#keys + 1] = tostring(k) end
-    table.sort(keys)
-    local parts = {}
-    for _, k in ipairs(keys) do
-        -- Use explicit nil check (not `or`) because false is a valid value in Lua
-        local v = data[k]
-        if v == nil then v = data[tonumber(k)] end
-        if type(v) == "table" then
-            local subKeys = {}
-            for sk in pairs(v) do subKeys[#subKeys + 1] = tostring(sk) end
-            table.sort(subKeys)
-            local sub = {}
-            for _, sk in ipairs(subKeys) do
-                local sv = v[sk]
-                if sv == nil then sv = v[tonumber(sk)] end
-                sub[#sub + 1] = sk .. "=" .. tostring(sv)
-            end
-            parts[#parts + 1] = k .. "={" .. table.concat(sub, ", ") .. "}"
-        else
-            parts[#parts + 1] = k .. "=" .. tostring(v)
-        end
-    end
-    return table.concat(parts, " | ")
-end
-
-local function showDebugExport()
+-- One window, two contents. What changed with this lot is which one is the
+-- official record: the settings file the game writes on exit is, and this
+-- window is a check. The summary is what opens by default -- short enough that
+-- a rendering defect cannot hide inside it, and carrying no data to lose. The
+-- full report stays reachable for on-screen reading, labelled as such.
+local function showReportWindow(titleText, instructionsText, bodyText, warningText)
     if not SanctuaryDB then return end
 
+    -- The snapshot used to be captured only when the debug checkbox was ticked,
+    -- so refreshing it meant unticking and reticking -- a gesture that also wiped
+    -- the log. Opening either report captures it instead (see the two callers
+    -- below), and does so even when debug mode is off: since the log now
+    -- survives unticking, "play, untick, export later" is a normal path, and it
+    -- would otherwise report a state dating back to the activation. The entry is
+    -- marked `trigger=export` and carries `debugEnabled`, so a reader can see
+    -- the report added it.
     if debugExportFrame then
         debugExportFrame:Hide()
         debugExportFrame:SetParent(nil)
@@ -1476,12 +1775,19 @@ local function showDebugExport()
 
     local title = debugExportFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -10)
-    title:SetText(L["DEBUG_EXPORT_TITLE"])
+    title:SetText(titleText)
 
     local instructions = debugExportFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     instructions:SetPoint("TOP", title, "BOTTOM", 0, -4)
-    instructions:SetText(L["DEBUG_EXPORT_INSTRUCTIONS"])
+    instructions:SetText(instructionsText)
     instructions:SetTextColor(0.6, 0.6, 0.6)
+
+    if warningText then
+        local warning = debugExportFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        warning:SetPoint("BOTTOM", debugExportFrame, "BOTTOM", 0, 36)
+        warning:SetText(warningText)
+        warning:SetTextColor(1.0, 0.8, 0.3)
+    end
 
     local closeBtn = createButton(debugExportFrame, L["EXPORT_CLOSE"], 80, 24, function()
         debugExportFrame:Hide()
@@ -1502,82 +1808,7 @@ local function showDebugExport()
     eb:SetScript("OnEscapePressed", function() debugExportFrame:Hide() end)
     sf:SetScrollChild(eb)
 
-    -- Build header with LIVE state
-    local result = "=== SANCTUARY DEBUG REPORT ===\n"
-    result = result .. "Date: " .. date("%Y-%m-%d %H:%M:%S") .. "\n"
-    result = result .. "Version: " .. (ns.VERSION or "?") .. " | Locale: " .. (GetLocale() or "?") .. "\n\n"
-
-    -- Globals
-    result = result .. "--- GLOBALS ---\n"
-    local gNames = {
-        "ERR_INVITED_TO_GROUP_SS", "ERR_INVITED_TO_GROUP_S",
-        "ERR_INVITED_ALREADY_IN_GROUP_SS", "ERR_INVITED_ALREADY_IN_GROUP_S",
-    }
-    for _, gName in ipairs(gNames) do
-        local val = _G[gName]
-        result = result .. gName .. " = " .. (type(val) == "string" and val or "nil") .. "\n"
-    end
-
-    -- Patterns
-    result = result .. "\n--- PATTERNS (" .. (ns.invitePatterns and #ns.invitePatterns or 0) .. ") ---\n"
-    if ns.invitePatterns then
-        for i, p in ipairs(ns.invitePatterns) do
-            result = result .. "[" .. i .. "] " .. p .. "\n"
-        end
-    end
-
-    -- Live state
-    result = result .. "\n--- STATE ---\n"
-    result = result .. "AddonEnabled: " .. tostring(ns.isEnabled()) .. "\n"
-    local gm = 0; pcall(function() gm = GetNumGuildMembers() end)
-    local bn = 0; pcall(function() bn = BNGetNumFriends() end)
-    local cf = 0; pcall(function() cf = C_FriendList.GetNumFriends() end)
-    local bnetCN = ns.countBNetWithCharName and ns.countBNetWithCharName() or "?"
-    result = result .. "IsInGuild: " .. tostring(IsInGuild()) .. " | GuildMembers: " .. gm .. "\n"
-    result = result .. "BNetFriends: " .. bn .. " | BNetWithCharName: " .. bnetCN .. "\n"
-    result = result .. "CharFriends: " .. cf .. "\n"
-    local partyInviteSoundGuard = ns.isPartyInviteSoundGuardActive and ns.isPartyInviteSoundGuardActive() or "?"
-    result = result .. "GroupInviteFilter: " .. tostring(ns.getEffective("filters.groupInvite"))
-        .. " | StrictGroupInviteSystemMessages: " .. tostring(ns.getEffective("filters.strictGroupInviteSystemMessages"))
-        .. " | PartyInviteSoundGuard: " .. tostring(partyInviteSoundGuard) .. "\n"
-    if ns.getEffectiveFilterState then
-        result = result .. "Filters: " .. serializeDebugData(ns.getEffectiveFilterState()) .. "\n"
-    end
-
-    local cacheSize = "?"
-    if ns.getWhitelistCacheSize then
-        cacheSize = ns.getWhitelistCacheSize()
-    end
-    local bnetCacheSize = "?"
-    if ns.getBNetWhitelistCacheSize then
-        bnetCacheSize = ns.getBNetWhitelistCacheSize()
-    end
-    local manualA = 0
-    if SanctuaryDB.manualWhitelist then
-        for _ in pairs(SanctuaryDB.manualWhitelist) do manualA = manualA + 1 end
-    end
-    local manualC = 0
-    if SanctuaryCharDB and SanctuaryCharDB.manualWhitelist then
-        for _ in pairs(SanctuaryCharDB.manualWhitelist) do manualC = manualC + 1 end
-    end
-    result = result .. "ManualWL: " .. manualA .. "+" .. manualC
-        .. " | WhitelistCache: " .. cacheSize
-        .. " | BNetAccountCache: " .. bnetCacheSize .. "\n"
-    result = result .. "Keywords: " .. (SanctuaryDB.keywords and #SanctuaryDB.keywords or 0) .. "\n"
-
-    -- Event log
-    local debugLog = SanctuaryDB.debugLog or {}
-    result = result .. "\n--- EVENT LOG (" .. #debugLog .. " entries) ---\n"
-    if #debugLog == 0 then
-        result = result .. L["DEBUG_EMPTY"] .. "\n"
-    else
-        for _, entry in ipairs(debugLog) do
-            result = result .. "#" .. (entry.seq or "?")
-                .. " [" .. (entry.ts or "?") .. "] "
-                .. (entry.cat or "?") .. " | "
-                .. serializeDebugData(entry.data) .. "\n"
-        end
-    end
+    local result = bodyText or ""
 
     -- Insert text in small chunks (SetMaxLetters broken in Midnight)
     eb:SetText("")
@@ -1594,6 +1825,28 @@ local function showDebugExport()
     eb:HighlightText()
 
     debugExportFrame:Show()
+end
+
+-- Default surface: build identity plus the three values that decide whether a
+-- recording session is exploitable, in a block that fits on screen.
+local function showDebugSummary()
+    if ns.captureDebugSnapshot then
+        ns.captureDebugSnapshot("export")
+    end
+    showReportWindow(L["DEBUG_SUMMARY_TITLE"], L["DEBUG_SUMMARY_INSTRUCTIONS"],
+        ns.buildDebugSummaryText and ns.buildDebugSummaryText() or "")
+end
+
+-- Secondary surface: the whole recording, for reading in game. The report text
+-- is built by the core file so the escaping and the retention accounting stay
+-- testable outside the game client.
+local function showDebugExport()
+    if ns.captureDebugSnapshot then
+        ns.captureDebugSnapshot("export")
+    end
+    showReportWindow(L["DEBUG_EXPORT_TITLE"], L["DEBUG_EXPORT_INSTRUCTIONS"],
+        ns.buildDebugReportText and ns.buildDebugReportText() or "",
+        L["DEBUG_FULL_WARNING"])
 end
 
 -- Type display names and colors
@@ -1693,20 +1946,22 @@ buildAboutTab = function(parent)
     diagHeader:SetPoint("TOPLEFT", container, "TOPLEFT", 0, yOffset)
     yOffset = yOffset - 24
 
-    -- Debug toggle checkbox
+    -- Debug toggle checkbox. Toggling debug mode no longer touches the log:
+    -- erasing a recording that may be hours old is a destructive action, and it
+    -- must not be the side effect of a gesture whose purpose is something else.
+    -- Clearing is now its own button, below, with a confirmation.
     local debugCb = createCheckbox(container, L["DEBUG_ENABLE"], L["TIP_DEBUG"], function(checked)
         if SanctuaryDB then
             SanctuaryDB.debugEnabled = checked
             if checked then
-                SanctuaryDB.debugLog = {}
                 if ns.captureDebugSnapshot then
                     ns.captureDebugSnapshot()
                 end
                 ns.printSuccess(L["DEBUG_ENABLED_MSG"])
             else
-                SanctuaryDB.debugLog = {}
                 ns.printMsg(L["DEBUG_DISABLED_MSG"])
             end
+            refreshTabBar()
             refreshStatusBar()
         end
     end)
@@ -1717,11 +1972,218 @@ buildAboutTab = function(parent)
     end
     yOffset = yOffset - 30
 
-    -- Debug export button
-    local debugExportBtn = createButton(container, L["DEBUG_EXPORT_BTN"], 180, 24, function()
+    -- Report summary: the in-game check on the build and the instrumentation.
+    -- The record itself is the settings file, so this button no longer carries
+    -- anything that has to survive a copy-paste.
+    local debugSummaryBtn = createButton(container, L["DEBUG_SUMMARY_BTN"], 170, 24, function()
+        showDebugSummary()
+    end)
+    debugSummaryBtn:SetPoint("TOPLEFT", container, "TOPLEFT", 0, yOffset)
+
+    local debugExportBtn = createButton(container, L["DEBUG_FULL_BTN"], 140, 24, function()
         showDebugExport()
     end)
-    debugExportBtn:SetPoint("TOPLEFT", container, "TOPLEFT", 0, yOffset)
+    debugExportBtn:SetPoint("LEFT", debugSummaryBtn, "RIGHT", 8, 0)
+
+    local debugClearBtn = createButton(container, L["DEBUG_CLEAR_BTN"], 90, 24, function()
+        -- text_arg1 rather than a formatted OnShow: it is the substitution
+        -- StaticPopup itself performs, whatever the client's dialog template.
+        local kept = (SanctuaryDB and SanctuaryDB.debugLog and #SanctuaryDB.debugLog) or 0
+        StaticPopup_Show("SANCTUARY_CLEAR_DEBUG_LOG", tostring(kept))
+    end)
+    debugClearBtn:SetPoint("LEFT", debugExportBtn, "RIGHT", 8, 0)
+end
+
+-- ========================================================================
+-- Diagnostics tab (debug mode only)
+-- ========================================================================
+
+-- The catalogue itself lives in Sanctuary.lua, next to the diagnostics it
+-- describes. This tab only renders it: one button per entry, the result shown
+-- where it was asked for instead of scrolled back to in the chat.
+local diagResultLines = {}
+local diagResultText = nil
+local diagResultScroll = nil
+local diagResultChild = nil
+local diagRestoreBtn = nil
+local diagInputs = {}
+local diagScreenDirty = false
+
+local DIAG_MAX_RESULT_BLOCKS = 30
+
+local function renderDiagnosticResults()
+    if not diagResultText then return end
+    if #diagResultLines == 0 then
+        diagResultText:SetText(L["DIAG_RESULT_EMPTY"])
+    else
+        diagResultText:SetText(table.concat(diagResultLines, "\n\n"))
+    end
+    local height = diagResultText:GetStringHeight() or 1
+    if diagResultChild then
+        diagResultChild:SetHeight(math.max(height + 8, 1))
+    end
+    if diagRestoreBtn then
+        if diagScreenDirty then
+            diagRestoreBtn:Show()
+        else
+            diagRestoreBtn:Hide()
+        end
+    end
+end
+
+local function appendDiagnosticResult(label, text)
+    diagResultLines[#diagResultLines + 1] = "|cFF88CCFF" .. tostring(label) .. "|r\n" .. tostring(text)
+    while #diagResultLines > DIAG_MAX_RESULT_BLOCKS do
+        table.remove(diagResultLines, 1)
+    end
+end
+
+local function runCatalogEntry(entry)
+    local argText = nil
+    local input = diagInputs[entry.id]
+    if input then
+        argText = input:GetText()
+    end
+    if (not argText or argText == "") and entry.argDefault then
+        argText = entry.argDefault
+    end
+
+    local result = ns.runDiagnosticById(entry.id, argText)
+    appendDiagnosticResult(L[entry.labelKey] or entry.id, result.text)
+    if result.leftOnScreen then
+        -- A popup that could not be hidden is invisible and still clickable.
+        -- Saying so here, with the way back one click away, is the whole point:
+        -- the checklist used to leave that rule to memory.
+        appendDiagnosticResult(L[entry.labelKey] or entry.id,
+            "|cFFFF4444" .. L["DIAG_LEFT_ON_SCREEN"] .. "|r")
+        diagScreenDirty = true
+    end
+    renderDiagnosticResults()
+end
+
+buildDiagnosticsTab = function(parent)
+    local header = createLabel(parent, L["DIAG_PANEL_HEADER"], 13, ACCENT_BLUE, "LEFT")
+    header:SetPoint("TOPLEFT", parent, "TOPLEFT", CONTENT_PADDING + 4, -CONTENT_PADDING)
+
+    local intro = createLabel(parent, L["DIAG_PANEL_INTRO"], 11, DIM_COLOR, "LEFT")
+    intro:SetPoint("TOPLEFT", parent, "TOPLEFT", CONTENT_PADDING + 4, -(CONTENT_PADDING + 20))
+    intro:SetWidth(FRAME_WIDTH - CONTENT_PADDING * 2 - 8)
+    intro:SetWordWrap(true)
+
+    local runAllBtn = createButton(parent, L["DIAG_RUN_ALL"], 220, 24, function()
+        for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG or {}) do
+            -- The one entry that writes a real Battle.net account name into the
+            -- log stays on its own button: a bulk run must never be the thing
+            -- that puts a friend's tag in a report.
+            if not entry.sensitive then
+                runCatalogEntry(entry)
+            end
+        end
+    end)
+    runAllBtn:SetPoint("TOPLEFT", parent, "TOPLEFT", CONTENT_PADDING + 4, -(CONTENT_PADDING + 52))
+
+    local clearBtn = createButton(parent, L["DIAG_CLEAR"], 90, 24, function()
+        wipe(diagResultLines)
+        diagScreenDirty = false
+        renderDiagnosticResults()
+    end)
+    clearBtn:SetPoint("LEFT", runAllBtn, "RIGHT", 8, 0)
+
+    local sep = parent:CreateTexture(nil, "ARTWORK")
+    sep:SetHeight(1)
+    sep:SetPoint("TOPLEFT", parent, "TOPLEFT", CONTENT_PADDING, -(CONTENT_PADDING + 84))
+    sep:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -CONTENT_PADDING, -(CONTENT_PADDING + 84))
+    sep:SetColorTexture(0.3, 0.3, 0.4, 0.4)
+
+    -- Button list (top) and result area (bottom, fixed height, anchored to the
+    -- bottom so a resize grows the button list rather than the results).
+    local RESULT_HEIGHT = 150
+
+    local listScroll = CreateFrame("ScrollFrame", "SanctuaryDiagListScroll", parent,
+        "UIPanelScrollFrameTemplate")
+    listScroll:SetPoint("TOPLEFT", parent, "TOPLEFT", CONTENT_PADDING, -(CONTENT_PADDING + 92))
+    listScroll:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -CONTENT_PADDING - 22,
+        RESULT_HEIGHT + 44)
+
+    local listChild = CreateFrame("Frame", nil, listScroll)
+    listChild:SetWidth(FRAME_WIDTH - CONTENT_PADDING * 2 - 22)
+    listChild:SetHeight(1)
+    listScroll:SetScrollChild(listChild)
+
+    local yOffset = 0
+    for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG or {}) do
+        local row = CreateFrame("Frame", nil, listChild)
+        row:SetHeight(26)
+        row:SetPoint("TOPLEFT", listChild, "TOPLEFT", 0, -yOffset)
+        row:SetPoint("RIGHT", listChild, "RIGHT", 0, 0)
+
+        local btn = createButton(row, L[entry.labelKey] or entry.id, 230, 22, function()
+            runCatalogEntry(entry)
+        end)
+        btn:SetPoint("LEFT", row, "LEFT", 4, 0)
+
+        local anchor = btn
+        if entry.argKey then
+            local input = createStyledInput(row, 90, 22)
+            input:SetPoint("LEFT", btn, "RIGHT", 6, 0)
+            input:SetMaxLetters(64)
+            if entry.argDefault and entry.argDefault ~= "" then
+                input:SetText(entry.argDefault)
+            end
+            input:SetScript("OnEnterPressed", function(self)
+                self:ClearFocus()
+                runCatalogEntry(entry)
+            end)
+            input:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+            diagInputs[entry.id] = input
+            anchor = input
+        end
+
+        local tipText = entry.tipKey and L[entry.tipKey] or nil
+        if entry.sensitive then
+            tipText = L["DIAG_SENSITIVE"]
+        end
+        if tipText then
+            local tip = createLabel(row, tipText, 10,
+                entry.sensitive and { 1.0, 0.8, 0.3, 1.0 } or DIM_COLOR, "LEFT")
+            tip:SetPoint("LEFT", anchor, "RIGHT", 8, 0)
+            tip:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+            tip:SetWordWrap(false)
+        end
+
+        yOffset = yOffset + 26
+    end
+    listChild:SetHeight(math.max(yOffset + 6, 1))
+
+    diagResultScroll = CreateFrame("ScrollFrame", "SanctuaryDiagResultScroll", parent,
+        "UIPanelScrollFrameTemplate")
+    diagResultScroll:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -CONTENT_PADDING - 22, 36)
+    diagResultScroll:SetPoint("TOPLEFT", parent, "BOTTOMLEFT", CONTENT_PADDING,
+        RESULT_HEIGHT + 36)
+
+    diagResultChild = CreateFrame("Frame", nil, diagResultScroll)
+    diagResultChild:SetWidth(FRAME_WIDTH - CONTENT_PADDING * 2 - 22)
+    diagResultChild:SetHeight(1)
+    diagResultScroll:SetScrollChild(diagResultChild)
+
+    diagResultText = createLabel(diagResultChild, "", 11, HIGHLIGHT_COLOR, "LEFT")
+    diagResultText:SetPoint("TOPLEFT", diagResultChild, "TOPLEFT", 4, -2)
+    diagResultText:SetWidth(FRAME_WIDTH - CONTENT_PADDING * 2 - 32)
+    diagResultText:SetWordWrap(true)
+
+    diagRestoreBtn = createButton(parent, L["DIAG_RESTORE_BTN"], 260, 24, function()
+        if type(ReloadUI) == "function" then
+            ReloadUI()
+        end
+    end)
+    diagRestoreBtn:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", CONTENT_PADDING, 6)
+    diagRestoreBtn:Hide()
+
+    renderDiagnosticResults()
+end
+
+refreshDiagnosticsPanel = function()
+    renderDiagnosticResults()
 end
 
 -- ========================================================================
