@@ -122,8 +122,11 @@ line("=== SANCTUARY - CONTROLE DE RELEVE ===")
 line("Fichier   : " .. path)
 
 if manifest then
+    -- `build` first: it is the identity of the code that actually ran. Any
+    -- disagreement with the .toc is reported on its own line below rather than
+    -- hidden by preferring one of the two here.
     line(string.format("Build     : %s | version %s | interface %s",
-        tostring(manifest.addonMetaBuild or manifest.build),
+        tostring(manifest.build or manifest.addonMetaBuild),
         tostring(manifest.version), tostring(manifest.addonMetaInterface)))
     line(string.format("Client    : %s build %s interface %s",
         tostring(manifest.clientVersion), tostring(manifest.clientBuild),
@@ -181,6 +184,20 @@ else
 end
 state("Build du journal", buildLabel, buildLevel)
 
+-- And the two identities of the build must agree. The rule is not written here:
+-- ns.getDeploymentVerdict is the same one the in-game summary prints, so this
+-- check and that screen can never disagree about what "the right build" is.
+local deployment, deploymentDetail = ns.getDeploymentVerdict(manifest)
+local metaLabel, metaLevel
+if deployment == "partial" then
+    metaLabel, metaLevel = (deploymentDetail or "?") .. " (deploiement partiel)", "blocking"
+elseif deployment == "unknown" then
+    metaLabel, metaLevel = (deploymentDetail or "?"), "warn"
+else
+    metaLabel, metaLevel = tostring(manifest and manifest.build), nil
+end
+state("Build du code et du .toc", metaLabel, metaLevel)
+
 -- Second: the log has to have been started for THIS run. It is not cleared by a
 -- reload, a relog or a new day, so a log cleared during an earlier passage still
 -- holds that passage's scenarios -- and credits steps skipped this time. Testing
@@ -222,8 +239,20 @@ state("F.1 ligne chat non filtree", markers.chatOutputNoMatch and "presente" or 
     not markers.chatOutputNoMatch and "warn" or nil)
 state("F.2 entree en instance", markers.worldInInstance and "presente" or "absente",
     not markers.worldInInstance and "warn" or nil)
-state("F.3 mort / resurrection", markers.playerState and "presente" or "absente",
-    not markers.playerState and "warn" or nil)
+-- Both halves, named separately: "died but never came back" is a session that
+-- ended on a corpse, not the scenario the step asks for, and reporting it as a
+-- plain "absente" hides which half is missing.
+local deathLabel
+if markers.playerState then
+    deathLabel = "presente"
+elseif markers.playerDied then
+    deathLabel = "mort sans retour a la vie"
+elseif markers.playerRevived then
+    deathLabel = "retour a la vie sans mort"
+else
+    deathLabel = "absente"
+end
+state("F.3 mort / resurrection", deathLabel, not markers.playerState and "warn" or nil)
 line("")
 
 -- Retention: a report that looks complete while the incident fell off the front

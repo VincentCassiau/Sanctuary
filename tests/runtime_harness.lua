@@ -126,7 +126,7 @@ function C_FriendList.ShowFriends() end
 C_GuildInfo = { GuildRoster = function() end }
 local addonMetadata = {
     Version = "0.3.2",
-    ["X-Sanctuary-Build"] = "20260820-6",
+    ["X-Sanctuary-Build"] = "20260820-7",
     Interface = "120007",
 }
 C_AddOns = {
@@ -698,12 +698,12 @@ ns.captureDebugSnapshot()
 equal(#SanctuaryDB.debugLog, 1, "debug snapshot captured")
 equal(SanctuaryDB.debugLog[1].cat, "SNAPSHOT", "debug snapshot category")
 equal(SanctuaryDB.debugLog[1].data.version, "0.3.2", "debug snapshot version")
-equal(SanctuaryDB.debugLog[1].data.build, "20260820-6", "debug snapshot reports the diagnostic build id")
+equal(SanctuaryDB.debugLog[1].data.build, "20260820-7", "debug snapshot reports the diagnostic build id")
 equal(SanctuaryDB.debugLog[1].data.clientVersion, "12.0.7", "debug snapshot reports the client version")
 equal(SanctuaryDB.debugLog[1].data.clientBuild, "62119", "debug snapshot reports the client build")
 equal(SanctuaryDB.debugLog[1].data.clientInterface, 120007, "debug snapshot reports the client interface number")
 equal(SanctuaryDB.debugLog[1].data.addonMetaVersion, "0.3.2", "debug snapshot reports the loaded addon version metadata")
-equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, "20260820-6", "debug snapshot reports the loaded addon build metadata")
+equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, "20260820-7", "debug snapshot reports the loaded addon build metadata")
 equal(SanctuaryDB.debugLog[1].data.addonMetaInterface, "120007", "debug snapshot reports the loaded addon interface metadata")
 check(SanctuaryDB.debugLog[1].data.chatLockdownKnown, "debug snapshot reports a readable chat messaging lockdown state")
 check(not SanctuaryDB.debugLog[1].data.chatLockdown, "debug snapshot reports chat messaging lockdown off")
@@ -2395,6 +2395,7 @@ local syntheticLog = {
     { seq = 3, cat = "POPUP", data = { action = "MASK_AWAITING_EVENT", affected = 1 } },
     { seq = 4, cat = "WORLD", data = { inInstance = true, instanceType = "party" } },
     { seq = 5, cat = "PLAYER_STATE", data = { event = "PLAYER_DEAD" } },
+    { seq = 5.5, cat = "PLAYER_STATE", data = { event = "PLAYER_UNGHOST" } },
     -- The catch-up the checklist warns about: a later snapshot supersedes an
     -- earlier failure, and only the last one describes how the session ended.
     { seq = 6, cat = "SNAPSHOT", data = { chatFilterApiUsed = "legacy", chatFramesSeen = 10,
@@ -2410,15 +2411,29 @@ equal(markers.chatFilterApiUsed, "legacy", "the last snapshot wins")
 equal(select(1, ns.getInstrumentationVerdict(markers)), "ok",
     "a session that caught up is exploitable")
 
--- The death scenario is proven by the death. A lone PLAYER_ALIVE means the
--- character was alive at some point, which every session can say.
+-- The scenario is "die, stay a ghost, resurrect", and it takes both halves.
 equal(ns.getReportMarkers({
     { seq = 1, cat = "PLAYER_STATE", data = { event = "PLAYER_ALIVE" } },
     { seq = 2, cat = "PLAYER_STATE", data = { event = "PLAYER_UNGHOST" } },
 }).playerState, false, "coming back alive is not proof of having died")
 equal(ns.getReportMarkers({
     { seq = 1, cat = "PLAYER_STATE", data = { event = "PLAYER_DEAD" } },
-}).playerState, true, "the death itself is")
+}).playerState, false, "and a death with no return is only half the scenario")
+local halfDeath = ns.getReportMarkers({
+    { seq = 1, cat = "PLAYER_STATE", data = { event = "PLAYER_DEAD" } },
+})
+equal(halfDeath.playerDied, true, "the death half is reported on its own")
+equal(halfDeath.playerRevived, false, "so the missing half can be named")
+equal(ns.getReportMarkers({
+    { seq = 1, cat = "PLAYER_STATE", data = { event = "PLAYER_DEAD" } },
+    { seq = 2, cat = "PLAYER_STATE", data = { event = "PLAYER_ALIVE" } },
+}).playerState, true, "death then return is the scenario")
+-- The revival that fires at login cannot stand in for the one that follows the
+-- death: order is what separates them.
+equal(ns.getReportMarkers({
+    { seq = 1, cat = "PLAYER_STATE", data = { event = "PLAYER_ALIVE" } },
+    { seq = 2, cat = "PLAYER_STATE", data = { event = "PLAYER_DEAD" } },
+}).playerState, false, "a return recorded before the death does not count")
 
 -- A mask that covered nothing is not the marker the step is looking for.
 equal(ns.getReportMarkers({
@@ -2444,7 +2459,7 @@ fire("PLAYER_LOGOUT")
 local manifest = SanctuaryDB.reportManifest
 check(type(manifest) == "table", "logging out stamps a manifest into the settings file")
 equal(manifest.trigger, "logout", "the manifest says what wrote it")
-equal(manifest.build, "20260820-6", "the manifest carries the build id")
+equal(manifest.build, "20260820-7", "the manifest carries the build id")
 equal(manifest.version, ns.VERSION, "the manifest carries the addon version")
 check(manifest.savedAt ~= nil and manifest.savedAt ~= "", "the manifest is dated")
 -- The log is the record and nothing clears it on its own. When it was last
@@ -2470,7 +2485,7 @@ SanctuaryDB.debugEnabled = true
 ns.resetDebugLog()
 ns.captureDebugSnapshot("export")
 local summary = ns.buildDebugSummaryText()
-check(summary:find("20260820-6", 1, true) ~= nil, "the summary names the build")
+check(summary:find("20260820-7", 1, true) ~= nil, "the summary names the build")
 check(summary:find("Version: " .. ns.VERSION, 1, true) ~= nil, "the summary names the version")
 check(summary:find("ChatFilterApi:", 1, true) ~= nil, "the summary reports the filter API")
 check(summary:find("ChatFrames:", 1, true) ~= nil, "the summary reports the observed chat frames")
@@ -3084,6 +3099,8 @@ ns.invalidateWhitelist()
 -- opts.extraBuild      a second build stamped in a second SNAPSHOT
 -- opts.neverCleared    true to write a manifest with no debug-log clear date
 -- opts.savedAt         when the report was written (defaults to the clear day)
+-- opts.deathOnly       true to write a log where the character died and never came back
+-- opts.metaBuild       build the client read out of the .toc (defaults to the code build)
 local function writeFixture(opts)
     local snapshot = ""
     if opts.chatFilterApi then
@@ -3091,7 +3108,7 @@ local function writeFixture(opts)
         { ["seq"] = 5, ["cat"] = "SNAPSHOT", ["data"] = { ["chatFilterApiUsed"] = "%s",
             ["build"] = "%s",
             ["chatFramesSeen"] = 10, ["chatFramesWrapped"] = 10, ["systemChatTypeID"] = 90 } },]])
-            :format(opts.chatFilterApi, opts.logBuild or "20260820-6")
+            :format(opts.chatFilterApi, opts.logBuild or "20260820-7")
     end
     if opts.extraBuild then
         snapshot = snapshot .. ([[
@@ -3102,12 +3119,19 @@ local function writeFixture(opts)
             :format(opts.extraBuild)
     end
     local scenarios = ""
-    if opts.scenarios ~= false then
+    if opts.deathOnly then
         scenarios = [[
         { ["seq"] = 1, ["cat"] = "CHAT_OUTPUT", ["data"] = { ["action"] = "NO_MATCH" } },
         { ["seq"] = 2, ["cat"] = "POPUP", ["data"] = { ["action"] = "MASK_AWAITING_EVENT", ["affected"] = 1 } },
         { ["seq"] = 3, ["cat"] = "WORLD", ["data"] = { ["inInstance"] = true } },
         { ["seq"] = 4, ["cat"] = "PLAYER_STATE", ["data"] = { ["event"] = "PLAYER_DEAD" } },]]
+    elseif opts.scenarios ~= false then
+        scenarios = [[
+        { ["seq"] = 1, ["cat"] = "CHAT_OUTPUT", ["data"] = { ["action"] = "NO_MATCH" } },
+        { ["seq"] = 2, ["cat"] = "POPUP", ["data"] = { ["action"] = "MASK_AWAITING_EVENT", ["affected"] = 1 } },
+        { ["seq"] = 3, ["cat"] = "WORLD", ["data"] = { ["inInstance"] = true } },
+        { ["seq"] = 4, ["cat"] = "PLAYER_STATE", ["data"] = { ["event"] = "PLAYER_DEAD" } },
+        { ["seq"] = 7, ["cat"] = "PLAYER_STATE", ["data"] = { ["event"] = "PLAYER_ALIVE" } },]]
     end
     local health = ""
     if opts.manifestHealth then
@@ -3122,8 +3146,9 @@ SanctuaryDB = {
     ["debugLogStats"] = { ["produced"] = 6, ["dropped"] = 0 },
     ["log"] = {},
     ["reportManifest"] = { ["trigger"] = "logout", ["savedAt"] = "%s",
-        ["version"] = "0.3.2", ["build"] = "20260820-6", ["addonMetaBuild"] = "20260820-6",
-        ["addonMetaInterface"] = "120100", ["clientVersion"] = "12.1.0",
+        ["version"] = "0.3.2", ["addonMetaVersion"] = "0.3.2",
+        ["build"] = "20260820-7", ["addonMetaBuild"] = "20260820-7",
+        ["addonMetaInterface"] = "120100", ["clientVersion"] = "12.1.0",%s
         ["clientBuild"] = "61234", ["clientInterface"] = 120100,%s%s ["verdict"] = "ok" },
     ["debugLog"] = {
 %s
@@ -3131,6 +3156,7 @@ SanctuaryDB = {
     },
 }
 ]]):format(opts.savedAt or "2026-08-20 18:12:00",
+        opts.metaBuild and (' ["addonMetaBuild"] = "' .. opts.metaBuild .. '",') or "",
         health, opts.neverCleared and "" or ' ["debugLogClearedAt"] = "2026-08-20 17:50:00",',
         scenarios, snapshot))
     handle:close()
@@ -3158,7 +3184,7 @@ local goodOutput, goodCode = checkFixture({ chatFilterApi = "legacy" })
 equal(goodCode, 0, "the checker accepts a complete recording")
 check(goodOutput:find("RELEVE COMPLET", 1, true) ~= nil,
     "the checker says so in one line")
-check(goodOutput:find("20260820-6", 1, true) ~= nil,
+check(goodOutput:find("20260820-7", 1, true) ~= nil,
     "the checker reads the build out of the file, so nobody transcribes it")
 -- Numbered as the checklist numbers them: C.1 is the panel, F.1 to F.3 are the
 -- scenarios. A report blaming "F3" used to send the reader to the wrong step.
@@ -3203,7 +3229,7 @@ check(rotatedOutput:find("%[ warn %] Snapshots dans le journal") ~= nil,
 -- last week.
 local staleOutput, staleCode = checkFixture({ chatFilterApi = "legacy", logBuild = "20260820-4" })
 equal(staleCode, 1, "a log written by another build is refused")
-check(staleOutput:find("20260820-4 != 20260820-6", 1, true) ~= nil,
+check(staleOutput:find("20260820-4 != 20260820-7", 1, true) ~= nil,
     "and the report names both builds rather than just failing")
 
 local mixedOutput, mixedCode = checkFixture({ chatFilterApi = "legacy", extraBuild = "20260820-4" })
@@ -3229,6 +3255,51 @@ check(staleClearOutput:find("releve ecrit le 2026%-08%-21") ~= nil,
     "and the report puts both dates on the line so the gap is one glance")
 check(staleClearOutput:find("RELEVE COMPLET", 1, true) == nil,
     "such a recording is never reported as complete")
+
+-- This folder is deployed by hand. A copy where the .lua files were replaced
+-- but not the .toc -- or the other way round -- makes the code's own build
+-- constant and the build the client reads out of the .toc disagree. The report
+-- used to print one and check the other, and certify.
+local mixedDeployOutput, mixedDeployCode = checkFixture({ chatFilterApi = "legacy",
+    metaBuild = "20260820-4" })
+equal(mixedDeployCode, 1, "a partially deployed copy is refused")
+check(mixedDeployOutput:find("deploiement partiel", 1, true) ~= nil,
+    "and is named for what it is")
+check(mixedDeployOutput:find("build code=20260820-7 .toc=20260820-4", 1, true) ~= nil,
+    "with both identities on the line")
+check(mixedDeployOutput:find("RELEVE COMPLET", 1, true) == nil,
+    "such a copy is never reported as complete")
+-- The header names the identity of the code that actually ran, so it cannot
+-- print one identity while the line below checks the other.
+check(mixedDeployOutput:find("Build     : 20260820-7", 1, true) ~= nil,
+    "and the header names the build the code itself carries")
+
+-- The twin surface: the in-game summary has the same two identities and used to
+-- say nothing about them. It grades through the same rule, so the screen the
+-- maintainer reads and the offline check cannot disagree.
+equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "a",
+    version = "v", addonMetaVersion = "v" })), "ok", "matching identities pass")
+equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "b",
+    version = "v", addonMetaVersion = "v" })), "partial", "a stale .toc build is partial")
+-- The version is the twin of the build in the same .toc, and desyncs on its own.
+equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "a",
+    version = "v", addonMetaVersion = "w" })), "partial", "so is a stale .toc version")
+equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "unavailable",
+    version = "v", addonMetaVersion = "v" })), "unknown", "an unreadable .toc is not a verdict")
+SanctuaryDB.debugEnabled = true
+ns.resetDebugLog()
+local deploySummary = ns.buildDebugSummaryText()
+check(deploySummary:find("Deploiement: OK", 1, true) ~= nil,
+    "the in-game summary states the deployment, not only the offline check")
+
+-- "Died and never came back" is a session that ended on a corpse, not the
+-- scenario the step asks for.
+local deathOnlyOutput, deathOnlyCode = checkFixture({ chatFilterApi = "legacy", deathOnly = true })
+equal(deathOnlyCode, 3, "a death with no return stays in reserves")
+check(deathOnlyOutput:find("mort sans retour a la vie", 1, true) ~= nil,
+    "and the report names the half that is missing")
+check(deathOnlyOutput:find("RELEVE COMPLET", 1, true) == nil,
+    "it is never reported as complete")
 
 -- Without a manifest AND without a snapshot there is nothing left to grade, and
 -- no value may be printed as `ok`.

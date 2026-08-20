@@ -18,7 +18,7 @@ local VERSION = "0.3.2"
 -- and nothing else: it is printed verbatim in every report, and a report can be
 -- handed to a third party, so the identifier must not leak what is being
 -- investigated or which internal item it belongs to.
-local BUILD_ID = "20260820-6"
+local BUILD_ID = "20260820-7"
 
 local PREFIX = "|cFF66CCFF[Sanctuary]|r "
 local COLOR_ON = "|cFF00FF00"
@@ -1498,6 +1498,8 @@ function ns.getReportMarkers(log)
         popupMaskAwaitingEvent = false,
         worldInInstance = false,
         playerState = false,
+        playerDied = false,
+        playerRevived = false,
         snapshots = 0,
         -- Every distinct build that wrote a snapshot into this log. A recording
         -- is only about one build; more than one means entries from an earlier
@@ -1537,11 +1539,23 @@ function ns.getReportMarkers(log)
                 markers.popupMaskAwaitingEvent = true
             elseif cat == "WORLD" and data.inInstance == true then
                 markers.worldInInstance = true
-            elseif cat == "PLAYER_STATE" and data.event == "PLAYER_DEAD" then
-                -- The scenario is "die, stay a ghost, resurrect". A lone
-                -- PLAYER_ALIVE or PLAYER_UNGHOST proves none of it, and used to
-                -- credit the step anyway.
-                markers.playerState = true
+            elseif cat == "PLAYER_STATE" then
+                -- The scenario is "die, stay a ghost, resurrect", and it takes
+                -- both halves. A lone PLAYER_ALIVE proves nothing -- it also
+                -- fires at login -- and a lone PLAYER_DEAD proves the character
+                -- died, not that the session carried on afterwards. The revival
+                -- only counts if it comes after the death, so the login one
+                -- cannot stand in for it.
+                if data.event == "PLAYER_DEAD" then
+                    markers.playerDied = true
+                    markers.playerDeathSeq = tonumber(entry.seq) or 0
+                elseif data.event == "PLAYER_ALIVE" or data.event == "PLAYER_UNGHOST" then
+                    if markers.playerDied
+                        and (tonumber(entry.seq) or 0) > (markers.playerDeathSeq or 0) then
+                        markers.playerRevived = true
+                    end
+                end
+                markers.playerState = (markers.playerDied and markers.playerRevived) and true or false
             end
         end
     end
@@ -1570,6 +1584,34 @@ function ns.getInstrumentationVerdict(markers)
     end
     if markers.systemChatTypeID == nil or markers.systemChatTypeID == "unknown" then
         return "degraded", "system_chat_type=unknown"
+    end
+    return "ok", nil
+end
+
+-- A build has two identities: the constant compiled into this file, and what the
+-- client read out of the .toc at runtime. They only disagree when the folder was
+-- deployed in halves -- the .lua files replaced but not the .toc, or the other
+-- way round -- which is a real hazard for an add-on installed by hand. Same
+-- shape as getInstrumentationVerdict, and shared by the in-game summary and the
+-- offline check so the two can never disagree about what "the right build" is.
+function ns.getDeploymentVerdict(manifest)
+    manifest = manifest or (SanctuaryDB and SanctuaryDB.reportManifest)
+    if type(manifest) ~= "table" then return "unknown", "no_manifest" end
+
+    local IDENTITY_PAIRS = {
+        { code = "build", meta = "addonMetaBuild", label = "build" },
+        { code = "version", meta = "addonMetaVersion", label = "version" },
+    }
+    for _, pair in ipairs(IDENTITY_PAIRS) do
+        local codeValue, metaValue = manifest[pair.code], manifest[pair.meta]
+        if metaValue == nil or metaValue == "nil" or metaValue == "unavailable"
+            or metaValue == "error" then
+            return "unknown", pair.label .. "_meta_unreadable"
+        end
+        if codeValue ~= nil and metaValue ~= codeValue then
+            return "partial", pair.label .. " code=" .. tostring(codeValue)
+                .. " .toc=" .. tostring(metaValue)
+        end
     end
     return "ok", nil
 end
@@ -1646,6 +1688,9 @@ function ns.buildDebugSummaryText()
 
     add("")
     add("--- INSTRUMENTATION ---")
+    local deployment, deploymentDetail = ns.getDeploymentVerdict(manifest)
+    add("Deploiement: " .. deployment:upper()
+        .. (deploymentDetail and (" (" .. deploymentDetail .. ")") or ""))
     add("Verdict: " .. manifest.verdict:upper()
         .. (manifest.verdictDetail ~= "none" and (" (" .. manifest.verdictDetail .. ")") or ""))
     add("ChatFilterApi: " .. escapeExportText(manifest.chatFilterApiUsed))
