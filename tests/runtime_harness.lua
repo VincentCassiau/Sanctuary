@@ -3688,6 +3688,29 @@ equal(#unexpected, 0,
     "every used key is translated in frFR (" .. table.concat(unexpected, ", ") .. ")")
 
 -- ---------------------------------------------------------------------------
+-- No locale key is dead
+-- ---------------------------------------------------------------------------
+
+-- Keys are often looked up by a computed name (L[row.labelKey]), so the check
+-- is "does this name appear anywhere in the two Lua files" rather than "is it
+-- written as L[...]". A key nobody can reach is a translation nobody will ever
+-- read and a line a reviewer has to rule out by hand.
+local addonSource = {}
+for _, file in ipairs({ "/Sanctuary.lua", "/SanctuaryUI.lua" }) do
+    local handle = assert(io.open(repoRoot .. file, "r"))
+    addonSource[#addonSource + 1] = handle:read("a")
+    handle:close()
+end
+local joinedSource = table.concat(addonSource, "\n")
+local deadKeys = {}
+for key in pairs(defaultLocale) do
+    if not joinedSource:find(key, 1, true) then deadKeys[#deadKeys + 1] = key end
+end
+table.sort(deadKeys)
+equal(#deadKeys, 0,
+    "no locale key is defined without a surface (" .. table.concat(deadKeys, ", ") .. ")")
+
+-- ---------------------------------------------------------------------------
 -- No visible value carries the words the interface got rid of
 -- ---------------------------------------------------------------------------
 

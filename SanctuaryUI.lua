@@ -510,10 +510,17 @@ local function buildProtectionTab(parent)
     protection.channelsLabel:SetPoint("TOPLEFT", choose, "TOPLEFT", 0, rowY - 6)
     rowY = rowY - 28
     protection.channelRadios = {}
-    for _, mode in ipairs({ "none", "keywords", "all" }) do
-        local labelKey = "CHANNEL_" .. mode:upper()
-        local tipKey = "TIP_CHANNEL_" .. mode:upper()
-        local radio = newRadio(choose, "SanctuaryChannel_" .. mode, L[labelKey], L[tipKey],
+    -- Written out rather than built from the mode name: a key that only exists
+    -- as a concatenation cannot be found by searching for it, and an unreachable
+    -- translation is one nobody will ever notice is missing.
+    local CHANNEL_ROWS = {
+        { mode = "none", labelKey = "CHANNEL_NONE", tipKey = "TIP_CHANNEL_NONE" },
+        { mode = "keywords", labelKey = "CHANNEL_KEYWORDS", tipKey = "TIP_CHANNEL_KEYWORDS" },
+        { mode = "all", labelKey = "CHANNEL_ALL", tipKey = "TIP_CHANNEL_ALL" },
+    }
+    for _, row in ipairs(CHANNEL_ROWS) do
+        local mode = row.mode
+        local radio = newRadio(choose, "SanctuaryChannel_" .. mode, L[row.labelKey], L[row.tipKey],
             function() return (filterStored("channelMode") or "none") == mode end,
             function() setFilter("channelMode", mode) end)
         radio:SetPoint("TOPLEFT", choose, "TOPLEFT", 16, rowY)
