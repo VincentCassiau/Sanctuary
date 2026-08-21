@@ -2086,10 +2086,21 @@ local function createMinimapButton()
         btn:SetFrameStrata("MEDIUM")
         btn:SetFrameLevel(8)
 
+        -- The icon comes from the manifest rather than from a second copy of
+        -- the path here: two places to change is one place to forget.
+        local iconTexture = "Interface\\Icons\\inv_shield_06"
+        local getMetadata = C_AddOns and C_AddOns.GetAddOnMetadata
+        if type(getMetadata) == "function" then
+            local ok, declared = pcall(getMetadata, ADDON_NAME, "IconTexture")
+            if ok and type(declared) == "string" and declared ~= "" then
+                iconTexture = declared
+            end
+        end
         btn.icon = btn:CreateTexture(nil, "BACKGROUND")
         btn.icon:SetSize(20, 20)
         btn.icon:SetPoint("CENTER", btn, "CENTER", 0, 0)
-        btn.icon:SetTexture("Interface\\Icons\\inv_shield_06")
+        btn.icon:SetTexture(iconTexture)
+        -- Cropped square so the round tracking border does not cut the artwork.
         btn.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
         btn.border = btn:CreateTexture(nil, "OVERLAY")
