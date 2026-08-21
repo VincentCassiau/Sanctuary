@@ -4206,6 +4206,50 @@ equal(SanctuaryDB.manualWhitelist.titi, nil, "removed again")
 runTimers(2)
 equal(SanctuaryDB.manualWhitelist.titi, nil, "an expired undo offer restores nothing")
 
+do
+
+-- "Added by you" and "Automatically trusted" read the same table: a contact the
+-- five-minute group rule added carries source = "trust". Listed in both, the
+-- tester sees one name in two places and a counter that credits her with a name
+-- she never typed. The 0.3.2 lists the schema reset carries forward are full of
+-- them, so this shows on the very first opening.
+local function addedCount()
+    return tonumber(tostring(allowedPanel.addedSection.count:GetText()):match("%d+"))
+end
+local addedBefore = addedCount()
+local countsBefore = ns.getListCounts()
+ns.addAllowed("Handy")
+ns.addAllowed("Trusty", "trust")
+ns.refreshUI()
+local countsAfter = ns.getListCounts()
+equal(countsAfter.allowed.manual, countsBefore.allowed.manual + 1,
+    "the model counts one more name typed by hand")
+equal(countsAfter.allowed.trust, countsBefore.allowed.trust + 1,
+    "and one more contact the group rule trusted")
+equal(addedCount(), addedBefore + 1,
+    "so 'Added by you' gains exactly one label, not two")
+rendered = panelRowTexts(allowedPanel)
+check(rendered:find("Handy", 1, true) ~= nil, "the name typed by hand has its chip")
+check(rendered:find("Trusty", 1, true) == nil,
+    "while the trusted contact stays inside its own folded group")
+
+-- And it is really in that group, not lost: unfolding shows it once.
+local trustHeader = findRow(allowedPanel, ns.L["WL_SOURCE_TRUST"])
+check(trustHeader ~= nil, "the trust group has its header")
+check(tostring(trustHeader.label.__text or ""):find("(1)", 1, true) ~= nil,
+    "which counts the one trusted contact")
+trustHeader:Click()
+rendered = panelRowTexts(allowedPanel)
+check(rendered:find("Trusty", 1, true) ~= nil, "and unfolding is where it shows up")
+trustHeader = findRow(allowedPanel, ns.L["WL_SOURCE_TRUST"])
+trustHeader:Click()
+
+ns.removeAllowed("handy")
+ns.removeAllowed("trusty")
+ns.refreshUI()
+
+end
+
 -- ---------------------------------------------------------------------------
 -- The ten-second refresh
 -- ---------------------------------------------------------------------------

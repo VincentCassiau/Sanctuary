@@ -1400,15 +1400,21 @@ local function refreshAllowedPanel(force)
     local counts = ns.getListCounts()
     panel.count:SetText(tostring(counts.allowed.total))
 
-    -- "Added by you": the manual entries, as chips.
+    -- "Added by you": the manual entries, as chips. Automatically trusted
+    -- contacts sit in the same table with source = "trust" and get their own
+    -- group further down, so they are excluded here: listing them twice would
+    -- show the tester the same name in two places and count as typed by hand
+    -- someone she never typed.
     local manual = {}
     for key, data in pairs(SanctuaryDB.manualWhitelist or {}) do
-        manual[#manual + 1] = {
-            key = key,
-            label = (type(data) == "table" and data.displayName) or key,
-            tooltip = describeChipSource(data),
-            data = data,
-        }
+        if type(data) ~= "table" or data.source ~= "trust" then
+            manual[#manual + 1] = {
+                key = key,
+                label = (type(data) == "table" and data.displayName) or key,
+                tooltip = describeChipSource(data),
+                data = data,
+            }
+        end
     end
     table.sort(manual, function(a, b) return tostring(a.label):lower() < tostring(b.label):lower() end)
     panel.addedSection.count:SetText("(" .. #manual .. ")")
