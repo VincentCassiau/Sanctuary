@@ -3128,6 +3128,28 @@ equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPaylo
     "blocking the character blocks the account's whispers as well")
 ns.removeBlocked(ns.normalizeBlockedKey("Bnetchar"))
 
+-- The right-click menu writes "Name-Realm" into the blocked list, and
+-- `isBlockedName` only ever falls back from the full key to the bare one, never
+-- the other way round. So the character has to be recorded with its realm, or
+-- the very key the menu produces is the one key nothing matches.
+bnetFriends[#bnetFriends + 1] = { accountName = "Realm Friend#4321", bnetAccountID = 93,
+    gameAccountInfo = { characterName = "Bnetrealmchar", realmName = "Ysondre" } }
+ns.addBlocked("Bnetrealmchar-Ysondre", "menu")
+ns.invalidateWhitelist()
+equal(select(1, ns.getCharacterDecision("Bnetrealmchar-Ysondre")), true,
+    "the menu's key blocks the character on the WoW paths")
+equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(93)), true,
+    "and the account's Battle.net whispers with it, filter unticked")
+equal(ns.classifyName("Realm Friend#4321").verdict, "always_blocked",
+    "and 'Test a name' answers always blocked rather than always allowed")
+ns.removeBlocked(ns.normalizeBlockedKey("Bnetrealmchar-Ysondre"))
+-- Blocking that same account still reaches the character it plays.
+ns.addBlocked("Realm Friend#4321")
+ns.invalidateWhitelist()
+equal(select(1, ns.getCharacterDecision("Bnetrealmchar-Ysondre")), true,
+    "and the other direction still resolves with a realm in the way")
+ns.removeBlocked(ns.normalizeBlockedKey("Realm Friend#4321"))
+
 ns.addBlocked("Dash-Friend#5678")
 ns.invalidateWhitelist()
 equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(92)), true,

@@ -972,10 +972,25 @@ local function rebuildWhitelist()
                     -- Keyed on the blocked-list key shape, not on the whitelist
                     -- one, so a lookup can go straight from either identity to
                     -- the other without a second normalisation rule.
+                    --
+                    -- The realm belongs in the stored character name. The
+                    -- right-click menu writes "Name-Realm" into the blocked
+                    -- list, and `isBlockedName` only ever falls back from the
+                    -- full key to the bare one -- never the other way round. A
+                    -- bare name here would therefore miss the very key the menu
+                    -- produces, while "Name-Realm" matches both spellings.
+                    local characterName = gameInfo.characterName
+                    local realmName = gameInfo.realmName
+                    if type(realmName) == "string" and realmName ~= ""
+                        and not characterName:find("-", 1, true) then
+                        characterName = characterName .. "-" .. realmName
+                    end
                     local accountKey = normalizeBNetName(info.accountName)
-                    local characterKey = normalizeName(gameInfo.characterName)
+                    -- `normalizeName` drops the realm, so both spellings of the
+                    -- character land on the same key here.
+                    local characterKey = normalizeName(characterName)
                     if accountKey and characterKey then
-                        characterByAccount[accountKey] = gameInfo.characterName
+                        characterByAccount[accountKey] = characterName
                         accountByCharacter[characterKey] = info.accountName
                     end
                 end
