@@ -4,474 +4,486 @@ local L = {}
 ns.L = L
 
 -- ============================================================================
+-- Every string the add-on can show lives here, in both languages. A value that
+-- exists on one side only renders in English to a French player -- readable, so
+-- nobody reports it, and it drifts. The harness checks the parity.
+--
+-- French is written as escaped UTF-8 bytes so this file stays 7-bit clean.
+-- ============================================================================
+
+-- ============================================================================
 -- English (default)
 -- ============================================================================
 
 -- General
-L["ADDON_LOADED"] = "Sanctuary loaded -- %s. Type /sanctuary or /sanc to open."
-L["ENABLED"] = "enabled"
-L["DISABLED"] = "disabled"
-L["ON"] = "ON"
-L["OFF"] = "OFF"
-
--- Companion addons
-L["LEATRIX_DETECTED"] = "LeatrixPlus detected -- Sanctuary handles system message suppression."
-L["BADBOY_DETECTED"] = "BadBoy detected -- both addons work together without conflict."
-
--- Date formats
+L["ADDON_LOADED_ACTIVE"] = "Active. Type /sanc to open."
+L["ADDON_LOADED_INACTIVE"] = "Inactive."
+L["SANCTUARY_ENABLED"] = "Protection enabled."
+L["SANCTUARY_DISABLED"] = "Protection disabled."
+L["LOG_CLEARED"] = "Journal cleared."
 L["DATE_FORMAT"] = "%Y-%m-%d"
 L["DATE_TIME_FORMAT"] = "%Y-%m-%d %H:%M:%S"
+L["SOUND_UNMUTE_FAILED"] = "Sanctuary could not restore the game's panel sounds. Restart the game client to get them back -- a reload or a relog will not clear this."
 
--- Whitelist management
-L["WHITELIST_INVALID_NAME"] = "Invalid name."
-L["WHITELIST_ADDED"] = "%s added to whitelist."
-
--- Log
-L["LOG_CLEARED"] = "Log cleared."
-
--- Toggle
-L["SANCTUARY_ENABLED"] = "Sanctuary enabled."
-L["SANCTUARY_DISABLED"] = "Sanctuary disabled."
-
--- Verbose notification
+-- Chat notifications
 L["BLOCKED_VERBOSE"] = "Blocked: %s from %s"
-
--- Trust auto
-L["TRUST_AUTO_ADDED"] = "Auto-trust: %s added to whitelist."
-
--- Minimal notification
 L["BLOCKED_SESSION"] = "%s interaction(s) blocked this session."
 
--- Suspect pseudo
-L["SUSPECT_ADDED"] = "Suspect pseudo added: %s"
-L["SUSPECT_DUPLICATE"] = "Suspect pseudo already exists: %s"
-L["SUSPECT_REMOVED"] = "Suspect pseudo removed: %s"
+-- Header
+L["HEADER_STATE_ON"] = "Protection on"
+L["HEADER_STATE_OFF"] = "Protection off"
+L["HEADER_TIP_NOTHING"] = "Nothing is being filtered."
+L["HEADER_TIP_ALLOWED"] = "%s allowed people."
+L["HEADER_TIP_CLICK_OFF"] = "Click to turn Sanctuary off."
+L["HEADER_TIP_CLICK_ON"] = "Click to turn Sanctuary on."
+L["KIND_GROUP_INVITE"] = "Group invitations"
+L["KIND_WHISPER"] = "private messages"
+L["KIND_DUEL"] = "duels"
+L["KIND_TRADE"] = "trades"
+L["KIND_GUILD_INVITE"] = "guild invitations"
 
--- ============================================================================
--- UI Labels
--- ============================================================================
-
--- Tab names
-L["TAB_FILTERS"] = "Filters"
-L["TAB_SUSPECTS"] = "Patterns"
-L["TAB_WHITELIST"] = "Whitelist"
-L["TAB_LOGS"] = "Logs"
+-- Tabs
+L["TAB_PROTECTION"] = "Protection"
+L["TAB_JOURNAL"] = "Journal"
+L["TAB_ADVANCED"] = "Advanced"
 L["TAB_ABOUT"] = "About"
+L["TAB_DIAGNOSTICS"] = "Diagnostics"
 
--- About tab
-L["ABOUT_VERSION"] = "Version %s"
-L["ABOUT_AUTHOR"] = "Author: %s"
-L["ABOUT_DESC"] = "Whitelist-based anti-harassment protection. Blocks all interactions from non-authorized players and logs everything."
-L["ABOUT_GITHUB"] = "GitHub: %s"
-L["ABOUT_THANKS"] = "Thanks to %s for testing."
+-- Question 1 -- who can contact you
+L["Q1_TITLE"] = "Who can contact you?"
+L["Q1_STRANGERS_TITLE"] = "Only people I know"
+L["Q1_STRANGERS_DESC"] = "Your friends, your guild, your group, and the names you allow. Everyone else is blocked."
+L["Q1_BLOCKEDONLY_TITLE"] = "Everyone, except the people I block"
+L["Q1_BLOCKEDONLY_DESC"] = "Nothing is filtered, apart from your blocked names and your patterns."
 
--- Filter labels
+-- Question 2 -- what Sanctuary blocks
+L["Q2_TITLE"] = "What does Sanctuary block from other people?"
+L["Q2_ALL_TITLE"] = "Everything"
+L["Q2_ALL_DESC"] = "Group invitations, private messages, duels, trades, guild invitations. Recommended."
+L["Q2_CUSTOM_TITLE"] = "I choose"
+L["Q2_CUSTOM_DESC"] = "Pick what gets blocked yourself."
+L["STRICT_EXPERIMENTAL"] = "-- experimental, described on hover"
 L["FILTER_GROUP_INVITE"] = "Block group invitations"
-L["FILTER_WHISPER"] = "Block private messages (whispers)"
-L["FILTER_SAY"] = "Block /say"
-L["FILTER_YELL"] = "Block /yell"
-L["FILTER_EMOTE"] = "Block emotes"
+L["FILTER_STRICT_GROUP_INVITE_SYSTEM"] = "Enhanced filtering in instances"
+L["FILTER_WHISPER"] = "Block private messages (/w)"
+L["FILTER_SAY"] = "Block /say (/s)"
+L["FILTER_YELL"] = "Block /yell (/y)"
+L["FILTER_EMOTE"] = "Block emote text"
 L["FILTER_DUEL"] = "Auto-decline duels"
 L["FILTER_TRADE"] = "Auto-close trades"
 L["FILTER_GUILD_INVITE"] = "Auto-decline guild invitations"
-L["FILTER_STRICT_GROUP_INVITE_SYSTEM"] = "Enhanced filtering in instances"
+L["CHANNELS_LABEL"] = "Public channels (/1, /2, /3...)"
+L["CHANNEL_NONE"] = "Filter nothing"
+L["CHANNEL_KEYWORDS"] = "Filter suspect names"
+L["CHANNEL_ALL"] = "Filter everything, except my allowed names"
 
--- Filter tooltips
-L["TIP_GROUP_INVITE"] = "Blocks and auto-declines group invitations from unauthorized players.\nThe system message in chat is also suppressed.\n\nExample: a stranger invites you => nothing appears."
-L["TIP_WHISPER"] = "Blocks private messages from unauthorized players.\n\nExample: a stranger sends you a PM => you don't see it."
-L["TIP_SAY"] = "Blocks /say messages from unauthorized players.\n\nExample: a stranger speaks near you => their text doesn't appear."
-L["TIP_YELL"] = "Blocks /yell messages from unauthorized players."
-L["TIP_EMOTE"] = "Hides emote messages in chat from unauthorized players.\nNote: this only hides the text in chat, not the character animation.\n\nExample: a stranger does /dance => the text 'X dances with you' doesn't appear in chat, but you still see the animation."
-L["TIP_DUEL"] = "Auto-declines duel requests from unauthorized players."
-L["TIP_TRADE"] = "Auto-closes the trade window with unauthorized players."
-L["TIP_GUILD_INVITE"] = "Auto-declines guild invitations from unauthorized players."
-L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Advanced mode: enable only if you still receive unwanted group invites while you are in a dungeon, raid, or instance.\n\nSanctuary will hide protected WoW system messages it cannot read while the group-invite filter is active. This may hide some legitimate system messages."
-
--- Auto-trust
-L["GROUP_AUTO_TRUST"] = "Auto-trust"
-L["FILTER_AUTO_TRUST"] = "Auto-trust (add players in group 5+ min)"
-L["TIP_AUTO_TRUST"] = "Players who stay in your group for 5+ minutes are automatically and permanently added to your whitelist.\n\nExample: you run a dungeon with someone for 10 min => they are added."
-
--- Filter group titles
-L["GROUP_MAIN_PROTECTION"] = "Main protection"
-L["GROUP_COMMUNICATION"] = "Communication"
-L["GROUP_INTERACTIONS"] = "Interactions"
-
--- Channel filtering
-L["GROUP_CHANNELS"] = "Channels (/1, /2, /3...)"
-L["CHANNEL_NONE"] = "No filtering"
-L["CHANNEL_KEYWORDS"] = "Suspect pseudos only"
-L["CHANNEL_ALL"] = "Filter all (except whitelist)"
+-- Question 2 -- tooltips
+L["TIP_GROUP_INVITE"] = "Blocks and auto-declines group invitations from people who are not allowed.\nThe system message in chat is suppressed too.\n\nExample: a stranger invites you => nothing appears."
+L["TIP_WHISPER"] = "Blocks private messages from people who are not allowed.\n\nExample: a stranger sends you a PM => you do not see it."
+L["TIP_SAY"] = "Blocks /say messages from people who are not allowed.\n\nExample: a stranger speaks near you => their text does not appear."
+L["TIP_YELL"] = "Blocks /yell messages from people who are not allowed."
+L["TIP_EMOTE"] = "Hides emote text in chat from people who are not allowed.\nNote: this hides the text only, not the character animation.\n\nExample: a stranger does /dance => the line does not appear in chat, but you still see the animation."
+L["TIP_DUEL"] = "Auto-declines duel requests from people who are not allowed."
+L["TIP_TRADE"] = "Auto-closes the trade window with someone who is not allowed."
+L["TIP_GUILD_INVITE"] = "Auto-declines guild invitations from people who are not allowed."
 L["TIP_CHANNEL_NONE"] = "Messages in channels (General, Trade...) are not filtered."
-L["TIP_CHANNEL_KEYWORDS"] = "Blocks messages in channels if the sender's name contains a suspect pseudo.\nExample: if 'jetaime' is in your suspect list, a player named 'Jetaime' in General chat will be blocked."
-L["TIP_CHANNEL_ALL"] = "Blocks ALL messages in channels from unauthorized players.\nWarning: this makes public channels silent."
+L["TIP_CHANNEL_KEYWORDS"] = "Blocks messages in channels when the sender's name matches one of your patterns."
+L["TIP_CHANNEL_ALL"] = "Blocks EVERY message in channels from people who are not allowed.\nWarning: this makes public channels silent."
+L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Advanced mode: enable it only if unwanted group invitations still reach you in a dungeon, raid, or PvP match.\n\nWhen WoW locks the chat down (instance boss fights, Mythic+ keys, PvP matches), add-ons can no longer read system messages. With this mode on, while you are grouped or in an instance, Sanctuary then hides EVERY system message, not only invitations: the game does not let it tell them apart.\n\nNothing is shown in chat; debug mode keeps a trace."
 
--- Notifications
-L["GROUP_NOTIFICATIONS"] = "Notifications"
-L["NOTIF_SILENT"] = "Silent"
-L["NOTIF_MINIMAL"] = "Minimal"
-L["NOTIF_VERBOSE"] = "Detailed"
-L["TIP_NOTIF_SILENT"] = "No messages in chat. Protection works in total silence."
-L["TIP_NOTIF_MINIMAL"] = "A periodic summary appears in chat (e.g., '5 interactions blocked this session')."
-L["TIP_NOTIF_VERBOSE"] = "Each blocked interaction is reported in chat. Useful for testing."
+-- Question 3 -- what Sanctuary tells you
+L["Q3_TITLE"] = "What does Sanctuary tell you in chat?"
+L["Q3_SILENT_TITLE"] = "Nothing"
+L["Q3_SILENT_DESC"] = "Complete silence. The Journal keeps the record."
+L["Q3_MINIMAL_TITLE"] = "A summary"
+L["Q3_MINIMAL_DESC"] = "Every 5 minutes, and only if something new was blocked."
+L["Q3_VERBOSE_TITLE"] = "Every block"
+L["Q3_VERBOSE_DESC"] = "One line as it happens."
 
--- Suspect pseudos tab
-L["SUSPECTS_HEADER"] = "Name patterns"
-L["SUSPECTS_DESC"] = "Players whose name contains one of these words will be blocked, even if they are in your trusted sources.\nExample: word 'test' => blocks 'ToTuTesT', 'MyTestChar', etc."
-L["SUSPECTS_COUNT"] = "%s pattern(s)"
-L["SUSPECTS_ADD_BTN"] = "Add"
+-- Question 4 -- your lists
+L["Q4_TITLE"] = "Your lists"
+L["TILE_ALLOWED"] = "Always allowed"
+L["TILE_BLOCKED"] = "Always blocked"
+L["TILE_ALLOWED_DETAIL"] = "%s added by you \194\183 %s Battle.net friends"
+L["TILE_BLOCKED_DETAIL"] = "%s names \194\183 %s patterns"
+L["MANAGE_BTN"] = "Manage"
+L["TEST_LABEL"] = "Test a name"
 
--- Whitelist tab
-L["WL_HEADER"] = "Manual whitelist"
-L["WL_ADD_BTN"] = "Add"
-L["WL_COUNT"] = "%s player(s)"
-L["WL_ADDED_ON"] = "added on %s"
+-- Name tester
+L["TEST_ALWAYS_ALLOWED"] = "%s -- always allowed: %s"
+L["TEST_ALWAYS_BLOCKED"] = "%s -- always blocked: %s"
+L["TEST_UNKNOWN_BLOCKED"] = "%s -- unknown: blocked, following your answers 1 and 2"
+L["TEST_UNKNOWN_ALLOWED"] = "%s -- unknown: allowed, you only block your blocked names"
+L["LIST_MANUAL"] = "added by you"
+L["LIST_TRUST"] = "automatic trust"
+L["LIST_GUILD"] = "in your guild"
+L["LIST_FRIEND"] = "realm friend"
+L["LIST_BNET"] = "Battle.net friend (%s)"
+L["LIST_GROUP"] = "in your group right now"
+L["LIST_BLOCKED"] = "in your blocked names"
+L["LIST_BLOCKED_OVER"] = "in your blocked names (even though %s)"
+L["LIST_PATTERN"] = "pattern \"%s\""
 
--- Logs tab
-L["LOGS_HEADER"] = "Blocked interaction log"
-L["LOGS_ENABLE"] = "Enable logs"
-L["LOGS_SHOW_MSG"] = "Show messages"
-L["LOGS_CLEAR_BTN"] = "Clear log"
-L["LOGS_EXPORT_BTN"] = "Export"
-L["LOGS_COUNT_FULL"] = "%s entry(ies) / %s max"
-L["LOGS_CLEAR_CONFIRM"] = "Are you sure you want to clear the entire log?\nThis action is irreversible."
+-- Panels
+L["PANEL_BACK"] = "< Back"
+L["PANEL_ADD_BTN"] = "Add"
+L["PANEL_ADD_NAME_HINT"] = "Name or Name-Realm"
+L["PANEL_ADDED_BY_YOU"] = "Added by you"
+L["PANEL_AUTO_TITLE"] = "Allowed automatically"
+L["WL_SOURCE_BNET"] = "Battle.net friends"
+L["WL_SOURCE_FRIEND"] = "Realm friends"
+L["WL_SOURCE_GUILD"] = "Guild"
+L["WL_SOURCE_TRUST"] = "Automatic trust"
+L["WL_TRUST_HINT"] = "People who stayed 5 minutes in your group or your raid, if you enabled it in Advanced."
+L["WL_GROUP_NOTE"] = "Your current group or raid is allowed too, for as long as the group lasts."
+L["WL_BNET_ROW"] = "%s \194\183 %s"
+L["WL_BNET_OFFLINE"] = "%s (offline)"
+L["PANEL_BLOCKED_DESC"] = "Blocked for everything, even if they are friends or in your group -- their group messages too."
+L["PANEL_BLOCKED_NAMES"] = "Names"
+L["PANEL_BLOCKED_PATTERNS"] = "Patterns"
+L["PANEL_PATTERNS_DESC"] = "A pattern is a piece of text: any name containing it is blocked, even a friend's."
+L["PANEL_PATTERN_HINT"] = "Text to look for in names, e.g. \"test\""
+L["PANEL_EMPTY"] = "Nothing here yet."
+L["UNDO_REMOVED"] = "%s removed"
+L["UNDO_BTN"] = "Undo"
+L["CHIP_ADDED_ON"] = "Added on %s"
+L["CHIP_SOURCE_MANUAL"] = "Added by hand"
+L["CHIP_SOURCE_MENU"] = "Added from the right-click menu"
+L["CHIP_SOURCE_TRUST"] = "Automatic trust"
+
+-- Right-click menu
+L["MENU_ALLOW"] = "Sanctuary: always allow"
+L["MENU_UNALLOW"] = "Sanctuary: stop allowing"
+L["MENU_BLOCK"] = "Sanctuary: always block"
+L["MENU_UNBLOCK"] = "Sanctuary: stop blocking"
+
+-- Minimap button
+L["MINIMAP_TIP_TITLE"] = "Sanctuary -- %s"
+L["MINIMAP_TIP_LEFT"] = "Click: open."
+L["MINIMAP_TIP_RIGHT"] = "Right click: turn on / off."
+
+-- Journal
+L["LOGS_HEADER"] = "Blocked interaction journal"
+L["LOGS_COUNT_FULL"] = "%s entries / %s max"
+L["LOGS_ENABLE"] = "Record blocked interactions"
+L["TIP_LOGS_ENABLE"] = "Keeps a trace of every blocked interaction: who, when, what. Unticked, nothing is recorded -- Sanctuary still blocks."
+L["LOGS_SHOW_MSG"] = "Show the text of blocked messages"
+L["LOGS_EMPTY"] = "No blocked interaction yet."
+L["LOGS_CLEAR_BTN"] = "Clear the journal"
+L["LOGS_COPY_BTN"] = "Copy the journal"
+L["LOGS_EXPAND_ALL"] = "Expand all"
+L["LOGS_COLLAPSE_ALL"] = "Collapse all"
+L["LOGS_GROUP_HEADER"] = "%s (%d)"
+L["LOGS_LAST_ACTIVITY"] = "last: %s"
+L["LOGS_CLEAR_CONFIRM"] = "Do you really want to clear the whole journal?\nThis cannot be undone."
 L["LOGS_CLEAR_YES"] = "Clear"
 L["LOGS_CLEAR_NO"] = "Cancel"
-
--- Log type names
-L["LOG_TYPE_INVITE"] = "Invite"
-L["LOG_TYPE_WHISPER"] = "Whisper"
+L["LOG_TYPE_INVITE"] = "Group invitation"
+L["LOG_TYPE_WHISPER"] = "Private message"
+L["LOG_TYPE_DUEL"] = "Duel"
+L["LOG_TYPE_TRADE"] = "Trade"
+L["LOG_TYPE_GUILD"] = "Guild invitation"
 L["LOG_TYPE_SAY"] = "Say"
 L["LOG_TYPE_YELL"] = "Yell"
 L["LOG_TYPE_EMOTE"] = "Emote"
-L["LOG_TYPE_DUEL"] = "Duel"
-L["LOG_TYPE_TRADE"] = "Trade"
-L["LOG_TYPE_GUILD"] = "Guild"
 L["LOG_TYPE_CHANNEL"] = "Channel"
+L["LOG_TYPE_GROUP"] = "Group"
 
--- Logs grouped
-L["LOGS_EXPAND_ALL"] = "Expand all"
-L["LOGS_COLLAPSE_ALL"] = "Collapse all"
-L["LOGS_LAST_ACTIVITY"] = "last: %s"
-L["LOGS_GROUP_HEADER"] = "%s (%d)"
-
--- Export
-L["EXPORT_SUSPECT_TAG"] = "[suspect pseudo: %s]"
-L["EXPORT_TITLE"] = "Export logs"
+-- Copy window and journal export
 L["EXPORT_INSTRUCTIONS"] = "Ctrl+A then Ctrl+C to copy"
 L["EXPORT_CLOSE"] = "Close"
-L["EXPORT_HEADER"] = "=== Sanctuary - Blocked interaction log ==="
-L["EXPORT_DATE"] = "Export date: %s"
+L["EXPORT_HEADER"] = "=== Sanctuary - Blocked interaction journal ==="
+L["EXPORT_DATE"] = "Exported on %s"
 L["EXPORT_TOTAL"] = "Total: %s entries"
-L["EXPORT_COLUMNS"] = "Date | Type | Source | Message | Suspect pseudo"
+L["EXPORT_COLUMNS"] = "Date | Type | Source | Message | Pattern"
+L["EXPORT_SUSPECT_TAG"] = "[pattern: %s]"
+L["DEBUG_EXPORT_TITLE"] = "Sanctuary report"
 
--- Settings panel
-L["SETTINGS_TITLE"] = "Sanctuary v%s"
-L["SETTINGS_DESC"] = "Whitelist-based anti-harassment protection"
-L["SETTINGS_OPEN_BTN"] = "Open Sanctuary"
-
--- Status bar
-L["STATUSBAR_SESSION"] = "Session: %s blocked"
-L["STATUSBAR_LOG"] = "Log: %s/%s"
-L["STATUSBAR_SUSPECTS"] = "Patterns: %s"
-
--- Debug mode
-L["GROUP_DEBUG"] = "Diagnostics"
+-- Advanced
+L["ADV_TRUST_TITLE"] = "Automatic trust"
+L["FILTER_AUTO_TRUST"] = "Trust people who stay at least 5 minutes in my group or my raid"
+L["ADV_TRUST_DESC"] = "They are then added to \"Always allowed\", permanently. You can remove them at any time."
+L["ADV_DIAG_TITLE"] = "Diagnostics"
 L["DEBUG_ENABLE"] = "Enable debug mode"
-L["TIP_DEBUG"] = "Captures diagnostic data for\nfiltered interactions.\n\nMay contain player names, system\nnotifications, and short excerpts of\nfiltered chat messages.\nNothing is sent -- export is copy-paste.\n\nToggling debug mode keeps the log:\nuse Clear to erase it."
-L["DEBUG_EXPORT_BTN"] = "Export debug log"
-L["DEBUG_CLEAR_BTN"] = "Clear"
-L["DEBUG_EMPTY"] = "Debug log is empty. Enable debug mode, then play normally."
-L["DEBUG_EXPORT_TITLE"] = "Debug log export"
-L["DEBUG_EXPORT_INSTRUCTIONS"] = "Ctrl+A then Ctrl+C to copy"
-L["DEBUG_COUNT"] = "Debug: %s"
-L["DEBUG_ENABLED_MSG"] = "Debug mode ON. Play normally, then export."
-L["DEBUG_DISABLED_MSG"] = "Debug mode OFF. The log is kept."
+L["ADV_DEBUG_DESC"] = "Records technical data about filtered interactions -- and about system messages hidden in instances -- to help understand a problem. Nothing is sent: you copy and paste."
+L["DEBUG_EXPORT_BTN"] = "Export the report"
+L["DEBUG_CLEAR_BTN"] = "Clear the debug log"
 L["DEBUG_CLEAR_CONFIRM"] = "Erase the debug log (%s entries)?\nThis cannot be undone."
 L["DEBUG_CLEARED_MSG"] = "Debug log erased."
-L["SOUND_UNMUTE_FAILED"] = "Sanctuary could not restore the game's panel sounds. Restart the game client to get them back -- a reload or a relog will not clear this."
+L["DEBUG_ENABLED_MSG"] = "Debug mode enabled."
+L["DEBUG_DISABLED_MSG"] = "Debug mode disabled. The log is kept."
+L["DEBUG_EMPTY"] = "The debug log is empty. Enable debug mode, then play normally."
+L["ADV_JOURNAL_TITLE"] = "Journal"
+L["ADV_MAXENTRIES"] = "Maximum size"
+L["ADV_ENTRIES"] = "entries"
+L["ADV_MINIMAP_TITLE"] = "Minimap button"
+L["ADV_MINIMAP_SHOW"] = "Show the button around the minimap"
+L["ADV_STATUS"] = "Session: %s blocked \194\183 Journal: %s / %s \194\183 Debug: %s \194\183 Build %s \194\183 interface %s"
+L["ADV_DEBUG_ON"] = "on"
+L["ADV_DEBUG_OFF"] = "off"
+L["DEBUG_SUMMARY_FILE"] = "The official record is the settings file the game writes when you quit:\nWorld of Warcraft/_retail_/WTF/Account/<ACCOUNT>/SavedVariables/Sanctuary.lua"
 
--- ============================================================================
--- French overrides (frFR)
--- ============================================================================
+-- About
+L["ABOUT_VERSION"] = "Version %s"
+L["ABOUT_DESC"] = "Anti-harassment protection. Blocks interactions from strangers, without a sound, and keeps a journal of what it blocked."
+L["ABOUT_AUTHOR"] = "Author: %s"
+L["ABOUT_GITHUB"] = "GitHub: %s"
 
--- Whitelist readback (Whitelist tab)
-L["WL_AUTO_HEADER"] = "Automatically trusted"
-L["WL_AUTO_HINT"] = "Read-only. Rebuilt when the tab is opened."
-L["WL_AUTO_EMPTY"] = "No automatically trusted contact."
-L["WL_AUTO_NO_MATCH"] = "No match for this search."
-L["WL_SOURCE_GUILD"] = "Guild members"
-L["WL_SOURCE_FRIEND"] = "Friends"
-L["WL_SOURCE_BNET"] = "Battle.net friends"
-L["WL_SOURCE_GROUP"] = "Current group"
-L["WL_GROUP_ROW"] = "%s (%s)"
-L["WL_GROUP_ROW_FILTERED"] = "%s (%s shown of %s)"
-L["WL_SEARCH_LABEL"] = "Search"
-L["WL_CHECK_LABEL"] = "Does this person get through?"
-L["WL_CHECK_BTN"] = "Check"
-L["WL_CHECK_PASS"] = "%s gets through -- %s"
-L["WL_CHECK_BLOCK"] = "%s is filtered -- %s"
-L["WL_CHECK_INVALID"] = "Invalid name."
-L["WL_CHECK_BNET_ONLY"] = " (Battle.net account allowed: %s)"
-L["WL_REASON_MANUAL"] = "manually added"
-L["WL_REASON_TRUST"] = "auto-trust"
-L["WL_REASON_GUILD"] = "guild member"
-L["WL_REASON_FRIEND"] = "friend"
-L["WL_REASON_BNET"] = "Battle.net friend"
-L["WL_REASON_GROUP"] = "current group"
-L["WL_REASON_KEYWORD"] = "suspect pattern: %s"
-L["WL_REASON_NOT_WHITELISTED"] = "in none of your lists"
-
--- Diagnostic panel (debug mode only)
-L["TAB_DIAGNOSTICS"] = "Diagnostics"
+-- Diagnostics tab (debug mode only)
 L["DIAG_PANEL_HEADER"] = "Diagnostics -- debug mode"
-L["DIAG_PANEL_INTRO"] = "Same diagnostics as the /sanc commands, one click each. Visible only while debug mode is on."
-L["DIAG_RUN_ALL"] = "Run them all (except the sensitive one)"
+L["DIAG_RUN_ALL"] = "Run them all (except the manual ones)"
 L["DIAG_CLEAR"] = "Clear"
 L["DIAG_RESULT_EMPTY"] = "No diagnostic run yet."
 L["DIAG_SENSITIVE"] = "Writes a real Battle.net account name into the debug log."
+L["DIAG_MANUAL"] = "Run this one on its own, and listen."
 L["DIAG_UNKNOWN"] = "Unknown diagnostic: %s"
 L["DIAG_FAILED"] = "Diagnostic %s: FAILED (%s)"
-L["DIAG_LEFT_ON_SCREEN"] = "This popup could not be hidden: it is still on screen, invisible and clickable. Do not click anywhere."
-L["DIAG_RESTORE_BTN"] = "Restore the screen (/reload)"
+L["DIAG_LEFT_ON_SCREEN"] = "This window could not be closed: it is still on screen, invisible and clickable. Do not click anywhere."
+L["DIAG_RESTORE_BTN"] = "Put the screen back (/reload)"
 L["DIAG_SIM_INVITE"] = "Simulate an invitation"
 L["DIAG_SIM_BNET"] = "Simulate a Battle.net whisper"
 L["DIAG_SIM_BNETFRIEND"] = "Simulate a real Battle.net friend"
 L["DIAG_CHAT_INVITE"] = "Chat diagnostic (invitation)"
-L["DIAG_SOUND_INVITE"] = "Sound diagnostic"
+L["DIAG_CHAT_LOCKDOWN"] = "Test the masking in an instance"
+L["DIAG_SOUND_OPEN"] = "Window opening sound"
+L["DIAG_SOUND_INVITE"] = "Group invitation sound"
 L["DIAG_POPUP_INVITE"] = "Group invitation window"
 L["DIAG_POPUP_DUEL"] = "Duel window"
 L["DIAG_POPUP_GUILD"] = "Guild invitation window"
 L["DIAG_POPUP_LIST"] = "List the game windows"
 L["DIAG_ARG_NAME"] = "name"
-L["DIAG_ARG_INDEX"] = "no."
+L["DIAG_ARG_NAME_OR_INDEX"] = "name or no."
 L["DIAG_ARG_FILTER"] = "filter"
 L["DIAG_TIP_SOUND"] = "Turn the volume up: this one is checked by ear."
 L["DIAG_TIP_POPUP"] = "Watch the screen. Do not run while a real request is pending."
 
--- Report summary
-L["DEBUG_SUMMARY_TITLE"] = "Sanctuary -- report summary"
-L["DEBUG_SUMMARY_BTN"] = "Report summary"
-L["DEBUG_SUMMARY_INSTRUCTIONS"] = "Check at a glance. The record itself is the settings file."
-L["DEBUG_SUMMARY_FILE"] = "The official record is the settings file the game writes when you quit:\nWorld of Warcraft/_retail_/WTF/Account/<ACCOUNT>/SavedVariables/Sanctuary.lua\nThis window is a check, not a transport channel."
-L["DEBUG_FULL_BTN"] = "Full report"
-L["DEBUG_FULL_WARNING"] = "On-screen reading only -- not a record. Use the settings file."
+-- ============================================================================
+-- French overrides (frFR)
+-- ============================================================================
 
 if GetLocale() == "frFR" then
 
 -- General
-L["ADDON_LOADED"] = "Sanctuary charg\195\169 -- %s. Tapez /sanctuary ou /sanc pour ouvrir."
-L["ENABLED"] = "actif"
-L["DISABLED"] = "inactif"
-
--- Companion addons
-L["LEATRIX_DETECTED"] = "LeatrixPlus d\195\169tect\195\169 -- Sanctuary g\195\168re la suppression des messages syst\195\168me en compl\195\169ment."
-L["BADBOY_DETECTED"] = "BadBoy d\195\169tect\195\169 -- les deux addons fonctionnent ensemble sans conflit."
-
--- Date formats
+L["ADDON_LOADED_ACTIVE"] = "Actif. Tapez /sanc pour ouvrir."
+L["ADDON_LOADED_INACTIVE"] = "Inactif."
+L["SANCTUARY_ENABLED"] = "Protection activ\195\169e."
+L["SANCTUARY_DISABLED"] = "Protection d\195\169sactiv\195\169e."
+L["LOG_CLEARED"] = "Journal vid\195\169."
 L["DATE_FORMAT"] = "%d/%m/%Y"
 L["DATE_TIME_FORMAT"] = "%d/%m/%Y %H:%M:%S"
+L["SOUND_UNMUTE_FAILED"] = "Sanctuary n'a pas pu r\195\169tablir les sons de panneau du jeu. Red\195\169marrez le client pour les retrouver : un rechargement ou une reconnexion n'y suffira pas."
 
--- Whitelist
-L["WHITELIST_INVALID_NAME"] = "Nom invalide."
-L["WHITELIST_ADDED"] = "%s ajout\195\169 \195\160 la whitelist."
-
--- Log
-L["LOG_CLEARED"] = "Log vid\195\169."
-
--- Toggle
-L["SANCTUARY_ENABLED"] = "Sanctuary activ\195\169."
-L["SANCTUARY_DISABLED"] = "Sanctuary d\195\169sactiv\195\169."
-
--- Verbose
+-- Chat notifications
 L["BLOCKED_VERBOSE"] = "Bloqu\195\169 : %s de %s"
-
--- Trust
-L["TRUST_AUTO_ADDED"] = "Trust automatique : %s ajout\195\169 \195\160 la whitelist."
-
--- Minimal
 L["BLOCKED_SESSION"] = "%s interaction(s) bloqu\195\169e(s) cette session."
 
--- Suspects
-L["SUSPECT_ADDED"] = "Pseudo suspect ajout\195\169 : %s"
-L["SUSPECT_DUPLICATE"] = "Pseudo suspect d\195\169j\195\160 pr\195\169sent : %s"
-L["SUSPECT_REMOVED"] = "Pseudo suspect supprim\195\169 : %s"
+-- Header
+L["HEADER_STATE_ON"] = "Protection active"
+L["HEADER_STATE_OFF"] = "Protection d\195\169sactiv\195\169e"
+L["HEADER_TIP_NOTHING"] = "Rien n'est filtr\195\169."
+L["HEADER_TIP_ALLOWED"] = "%s personnes autoris\195\169es."
+L["HEADER_TIP_CLICK_OFF"] = "Cliquer pour d\195\169sactiver Sanctuary."
+L["HEADER_TIP_CLICK_ON"] = "Cliquer pour activer Sanctuary."
+L["KIND_GROUP_INVITE"] = "Invitations de groupe"
+L["KIND_WHISPER"] = "messages priv\195\169s"
+L["KIND_DUEL"] = "duels"
+L["KIND_TRADE"] = "\195\169changes"
+L["KIND_GUILD_INVITE"] = "invitations de guilde"
 
--- Tab names
-L["TAB_FILTERS"] = "Filtres"
-L["TAB_SUSPECTS"] = "Patterns"
-L["TAB_WHITELIST"] = "Whitelist"
-L["TAB_LOGS"] = "Logs"
-L["TAB_ABOUT"] = "A propos"
+-- Tabs
+L["TAB_PROTECTION"] = "Protection"
+L["TAB_JOURNAL"] = "Journal"
+L["TAB_ADVANCED"] = "Avanc\195\169"
+L["TAB_ABOUT"] = "\195\128 propos"
+L["TAB_DIAGNOSTICS"] = "Diagnostics"
 
--- About tab
-L["ABOUT_VERSION"] = "Version %s"
-L["ABOUT_AUTHOR"] = "Auteur : %s"
-L["ABOUT_DESC"] = "Protection anti-harc\195\168lement par whitelist. Bloque toutes les interactions des joueurs non autoris\195\169s et conserve un historique complet."
-L["ABOUT_GITHUB"] = "GitHub : %s"
-L["ABOUT_THANKS"] = "Merci \195\160 %s pour les tests."
+-- Question 1 -- who can contact you
+L["Q1_TITLE"] = "Qui peut vous contacter ?"
+L["Q1_STRANGERS_TITLE"] = "Seulement les gens que je connais"
+L["Q1_STRANGERS_DESC"] = "Vos amis, votre guilde, votre groupe, et les pseudos que vous autorisez. Les autres sont bloqu\195\169s."
+L["Q1_BLOCKEDONLY_TITLE"] = "Tout le monde, sauf ceux que je bloque"
+L["Q1_BLOCKEDONLY_DESC"] = "Rien n'est filtr\195\169, \195\160 part vos bloqu\195\169s et vos patterns."
 
--- Filter labels
+-- Question 2 -- what Sanctuary blocks
+L["Q2_TITLE"] = "Que bloque Sanctuary chez les autres ?"
+L["Q2_ALL_TITLE"] = "Tout"
+L["Q2_ALL_DESC"] = "Invitations de groupe, messages priv\195\169s, duels, \195\169changes, invitations de guilde. Recommand\195\169."
+L["Q2_CUSTOM_TITLE"] = "Je choisis"
+L["Q2_CUSTOM_DESC"] = "Choisissez vous-m\195\170me ce qui est bloqu\195\169."
+L["STRICT_EXPERIMENTAL"] = "\226\128\148 exp\195\169rimental, d\195\169crit au survol"
 L["FILTER_GROUP_INVITE"] = "Bloquer les invitations de groupe"
-L["FILTER_WHISPER"] = "Bloquer les messages priv\195\169s (whispers)"
-L["FILTER_SAY"] = "Bloquer le /dire (/say)"
-L["FILTER_YELL"] = "Bloquer le /crier (/yell)"
-L["FILTER_EMOTE"] = "Bloquer les emotes"
+L["FILTER_STRICT_GROUP_INVITE_SYSTEM"] = "Filtrage renforc\195\169 en instance"
+L["FILTER_WHISPER"] = "Bloquer les messages priv\195\169s (/w)"
+L["FILTER_SAY"] = "Bloquer le /dire (/s)"
+L["FILTER_YELL"] = "Bloquer le /crier (/y)"
+L["FILTER_EMOTE"] = "Bloquer le texte des \195\169motes"
 L["FILTER_DUEL"] = "Refuser automatiquement les duels"
 L["FILTER_TRADE"] = "Fermer automatiquement les \195\169changes"
 L["FILTER_GUILD_INVITE"] = "Refuser automatiquement les invitations de guilde"
-L["FILTER_STRICT_GROUP_INVITE_SYSTEM"] = "Filtrage renforce en instance"
+L["CHANNELS_LABEL"] = "Canaux publics (/1, /2, /3\226\128\166)"
+L["CHANNEL_NONE"] = "Ne rien filtrer"
+L["CHANNEL_KEYWORDS"] = "Filtrer les pseudos suspects"
+L["CHANNEL_ALL"] = "Tout filtrer, sauf mes autoris\195\169s"
 
--- Filter tooltips
+-- Question 2 -- tooltips
 L["TIP_GROUP_INVITE"] = "Bloque et refuse les invitations de groupe des joueurs non autoris\195\169s.\nLe message syst\195\168me dans le chat est aussi supprim\195\169.\n\nExemple : un inconnu vous invite => rien ne s'affiche."
 L["TIP_WHISPER"] = "Bloque les messages priv\195\169s des joueurs non autoris\195\169s.\n\nExemple : un inconnu vous envoie un MP => vous ne le voyez pas."
 L["TIP_SAY"] = "Bloque les messages /dire des joueurs non autoris\195\169s.\n\nExemple : un inconnu parle pr\195\168s de vous => son texte n'appara\195\174t pas."
 L["TIP_YELL"] = "Bloque les messages /crier des joueurs non autoris\195\169s."
-L["TIP_EMOTE"] = "Masque les messages d'emotes dans le chat des joueurs non autoris\195\169s.\nAttention : cela ne masque pas l'animation du personnage, seulement le texte dans le chat.\n\nExemple : un inconnu fait /danser => le texte 'X danse avec vous' n'appara\195\174t pas dans le chat, mais vous verrez toujours l'animation."
+L["TIP_EMOTE"] = "Masque le texte des \195\169motes dans le chat pour les joueurs non autoris\195\169s.\nAttention : cela masque le texte, pas l'animation du personnage.\n\nExemple : un inconnu fait /danser => la ligne n'appara\195\174t pas dans le chat, mais vous verrez toujours l'animation."
 L["TIP_DUEL"] = "Refuse automatiquement les demandes de duel des joueurs non autoris\195\169s."
 L["TIP_TRADE"] = "Ferme automatiquement la fen\195\170tre d'\195\169change avec un joueur non autoris\195\169."
 L["TIP_GUILD_INVITE"] = "Refuse automatiquement les invitations de guilde des joueurs non autoris\195\169s."
-L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Mode avance : a activer seulement si vous recevez quand meme des invitations indesirables en donjon, raid ou instance.\n\nSanctuary masquera certains messages systeme proteges que WoW ne laisse pas lire pendant que le filtre d'invitations de groupe est actif. Cela peut masquer quelques messages systeme WoW legitimes."
-
--- Auto-trust
-L["GROUP_AUTO_TRUST"] = "Trust automatique"
-L["FILTER_AUTO_TRUST"] = "Trust automatique (ajoute les joueurs en groupe 5+ min)"
-L["TIP_AUTO_TRUST"] = "Les joueurs qui restent dans votre groupe pendant 5+ minutes sont automatiquement et d\195\169finitivement ajout\195\169s \195\160 votre whitelist.\n\nExemple : vous faites un donjon avec quelqu'un pendant 10 min => il est ajout\195\169."
-
--- Group titles
-L["GROUP_MAIN_PROTECTION"] = "Protection principale"
-L["GROUP_COMMUNICATION"] = "Communication"
-L["GROUP_INTERACTIONS"] = "Interactions"
-
--- Channels
-L["GROUP_CHANNELS"] = "Canaux (/1, /2, /3...)"
-L["CHANNEL_NONE"] = "Aucun filtrage"
-L["CHANNEL_KEYWORDS"] = "Pseudos suspects uniquement"
-L["CHANNEL_ALL"] = "Tout filtrer (sauf whitelist)"
 L["TIP_CHANNEL_NONE"] = "Les messages dans les canaux (G\195\169n\195\169ral, Commerce...) ne sont pas filtr\195\169s."
-L["TIP_CHANNEL_KEYWORDS"] = "Bloque les messages dans les canaux si le pseudo de l'exp\195\169diteur contient un pseudo suspect.\nExemple : si 'jetaime' est dans vos pseudos suspects, un joueur 'Jetaime' dans le canal G\195\169n\195\169ral sera bloqu\195\169."
+L["TIP_CHANNEL_KEYWORDS"] = "Bloque les messages dans les canaux si le pseudo de l'exp\195\169diteur correspond \195\160 un de vos patterns."
 L["TIP_CHANNEL_ALL"] = "Bloque TOUS les messages dans les canaux des joueurs non autoris\195\169s.\nAttention : cela rend les canaux publics silencieux."
+L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Mode avanc\195\169 : \195\160 activer seulement si des invitations de groupe ind\195\169sirables vous parviennent encore en donjon, en raid ou en match JcJ.\n\nQuand WoW verrouille le chat (combats de boss d'instance, cl\195\169s mythiques, matchs JcJ), les add-ons ne peuvent plus lire les messages syst\195\168me. Avec ce mode coch\195\169, tant que vous \195\170tes en groupe ou en instance, Sanctuary masque alors TOUS les messages syst\195\168me, pas seulement les invitations : le jeu ne permet pas de les distinguer.\n\nRien ne s'affiche dans le chat ; le mode debug en garde la trace."
 
--- Notifications
-L["GROUP_NOTIFICATIONS"] = "Notifications"
-L["NOTIF_SILENT"] = "Silencieux"
-L["NOTIF_MINIMAL"] = "Minimal"
-L["NOTIF_VERBOSE"] = "D\195\169taill\195\169"
-L["TIP_NOTIF_SILENT"] = "Aucun message dans le chat. La protection fonctionne en silence total."
-L["TIP_NOTIF_MINIMAL"] = "Un r\195\169sum\195\169 p\195\169riodique s'affiche dans le chat (ex: '5 interactions bloqu\195\169es cette session')."
-L["TIP_NOTIF_VERBOSE"] = "Chaque interaction bloqu\195\169e est signal\195\169e dans le chat. Utile pour tester."
+-- Question 3 -- what Sanctuary tells you
+L["Q3_TITLE"] = "Que vous dit Sanctuary dans le chat ?"
+L["Q3_SILENT_TITLE"] = "Rien"
+L["Q3_SILENT_DESC"] = "Silence total. Le Journal garde la trace."
+L["Q3_MINIMAL_TITLE"] = "Un r\195\169sum\195\169"
+L["Q3_MINIMAL_DESC"] = "Toutes les 5 minutes, seulement s'il y a eu de nouveaux blocages."
+L["Q3_VERBOSE_TITLE"] = "Chaque blocage"
+L["Q3_VERBOSE_DESC"] = "Une ligne au moment o\195\185 il a lieu."
 
--- Suspects tab
-L["SUSPECTS_HEADER"] = "Patterns de pseudos"
-L["SUSPECTS_DESC"] = "Les joueurs dont le pseudo contient un de ces mots seront bloqu\195\169s, m\195\170me s'ils sont dans vos sources de confiance.\nExemple : mot 'test' => bloque 'ToTuTesT', 'MonTestPerso', etc."
-L["SUSPECTS_COUNT"] = "%s pattern(s)"
-L["SUSPECTS_ADD_BTN"] = "Ajouter"
+-- Question 4 -- your lists
+L["Q4_TITLE"] = "Vos listes"
+L["TILE_ALLOWED"] = "Toujours autoris\195\169s"
+L["TILE_BLOCKED"] = "Toujours bloqu\195\169s"
+L["TILE_ALLOWED_DETAIL"] = "%s ajout\195\169s \194\183 %s amis Battle.net"
+L["TILE_BLOCKED_DETAIL"] = "%s pseudos \194\183 %s patterns"
+L["MANAGE_BTN"] = "G\195\169rer"
+L["TEST_LABEL"] = "Tester un pseudo"
 
--- Whitelist tab
-L["WL_HEADER"] = "Whitelist manuelle"
-L["WL_ADD_BTN"] = "Ajouter"
-L["WL_COUNT"] = "%s joueur(s)"
-L["WL_ADDED_ON"] = "ajout\195\169 le %s"
+-- Name tester
+L["TEST_ALWAYS_ALLOWED"] = "%s \226\128\148 toujours autoris\195\169 : %s"
+L["TEST_ALWAYS_BLOCKED"] = "%s \226\128\148 toujours bloqu\195\169 : %s"
+L["TEST_UNKNOWN_BLOCKED"] = "%s \226\128\148 inconnu : bloqu\195\169, selon vos r\195\169ponses 1 et 2"
+L["TEST_UNKNOWN_ALLOWED"] = "%s \226\128\148 inconnu : autoris\195\169, vous ne bloquez que vos bloqu\195\169s"
+L["LIST_MANUAL"] = "ajout\195\169 par vous"
+L["LIST_TRUST"] = "trust automatique"
+L["LIST_GUILD"] = "membre de votre guilde"
+L["LIST_FRIEND"] = "ami du royaume"
+L["LIST_BNET"] = "ami Battle.net (%s)"
+L["LIST_GROUP"] = "dans votre groupe en ce moment"
+L["LIST_BLOCKED"] = "dans vos bloqu\195\169s"
+L["LIST_BLOCKED_OVER"] = "dans vos bloqu\195\169s (m\195\170me si %s)"
+L["LIST_PATTERN"] = "pattern \194\171 %s \194\187"
 
--- Logs
+-- Panels
+L["PANEL_BACK"] = "\226\128\185 Retour"
+L["PANEL_ADD_BTN"] = "Ajouter"
+L["PANEL_ADD_NAME_HINT"] = "Pseudo ou Pseudo-Royaume"
+L["PANEL_ADDED_BY_YOU"] = "Ajout\195\169s par vous"
+L["PANEL_AUTO_TITLE"] = "Autoris\195\169s automatiquement"
+L["WL_SOURCE_BNET"] = "Amis Battle.net"
+L["WL_SOURCE_FRIEND"] = "Amis du royaume"
+L["WL_SOURCE_GUILD"] = "Guilde"
+L["WL_SOURCE_TRUST"] = "Trust automatique"
+L["WL_TRUST_HINT"] = "Les joueurs rest\195\169s 5 minutes dans votre groupe ou votre raid, si vous l'avez activ\195\169 dans Avanc\195\169."
+L["WL_GROUP_NOTE"] = "Votre groupe ou raid du moment est aussi autoris\195\169, le temps du groupe."
+L["WL_BNET_ROW"] = "%s \194\183 %s"
+L["WL_BNET_OFFLINE"] = "%s (hors ligne)"
+L["PANEL_BLOCKED_DESC"] = "Bloqu\195\169s pour tout, m\195\170me s'ils sont amis ou dans votre groupe \226\128\148 leurs messages de groupe aussi."
+L["PANEL_BLOCKED_NAMES"] = "Pseudos"
+L["PANEL_BLOCKED_PATTERNS"] = "Patterns"
+L["PANEL_PATTERNS_DESC"] = "Un pattern est un texte : tout pseudo qui le contient est bloqu\195\169, m\195\170me s'il est ami."
+L["PANEL_PATTERN_HINT"] = "Texte \195\160 chercher dans les pseudos, ex. \194\171 test \194\187"
+L["PANEL_EMPTY"] = "Rien ici pour l'instant."
+L["UNDO_REMOVED"] = "%s retir\195\169"
+L["UNDO_BTN"] = "Annuler"
+L["CHIP_ADDED_ON"] = "Ajout\195\169 le %s"
+L["CHIP_SOURCE_MANUAL"] = "Ajout\195\169 \195\160 la main"
+L["CHIP_SOURCE_MENU"] = "Ajout\195\169 au clic droit"
+L["CHIP_SOURCE_TRUST"] = "Trust automatique"
+
+-- Right-click menu
+L["MENU_ALLOW"] = "Sanctuary : toujours autoriser"
+L["MENU_UNALLOW"] = "Sanctuary : ne plus autoriser"
+L["MENU_BLOCK"] = "Sanctuary : toujours bloquer"
+L["MENU_UNBLOCK"] = "Sanctuary : ne plus bloquer"
+
+-- Minimap button
+L["MINIMAP_TIP_TITLE"] = "Sanctuary \226\128\148 %s"
+L["MINIMAP_TIP_LEFT"] = "Clic : ouvrir."
+L["MINIMAP_TIP_RIGHT"] = "Clic droit : activer / d\195\169sactiver."
+
+-- Journal
 L["LOGS_HEADER"] = "Journal des interactions bloqu\195\169es"
-L["LOGS_ENABLE"] = "Activer les logs"
-L["LOGS_SHOW_MSG"] = "Afficher les messages"
+L["LOGS_COUNT_FULL"] = "%s entr\195\169es / %s max"
+L["LOGS_ENABLE"] = "Enregistrer les interactions bloqu\195\169es"
+L["TIP_LOGS_ENABLE"] = "Garde une trace de chaque interaction bloqu\195\169e : qui, quand, quoi. D\195\169coch\195\169, rien n'est enregistr\195\169 \226\128\148 Sanctuary bloque toujours."
+L["LOGS_SHOW_MSG"] = "Afficher le texte des messages bloqu\195\169s"
+L["LOGS_EMPTY"] = "Aucune interaction bloqu\195\169e pour l'instant."
 L["LOGS_CLEAR_BTN"] = "Vider le journal"
-L["LOGS_EXPORT_BTN"] = "Exporter"
-L["LOGS_COUNT_FULL"] = "%s entr\195\169e(s) / %s max"
-L["LOGS_CLEAR_CONFIRM"] = "Voulez-vous vraiment supprimer tout le journal ?\nCette action est irr\195\169versible."
-L["LOGS_CLEAR_YES"] = "Supprimer"
+L["LOGS_COPY_BTN"] = "Copier le journal"
+L["LOGS_EXPAND_ALL"] = "Tout d\195\169plier"
+L["LOGS_COLLAPSE_ALL"] = "Tout replier"
+L["LOGS_GROUP_HEADER"] = "%s (%d)"
+L["LOGS_LAST_ACTIVITY"] = "dernier : %s"
+L["LOGS_CLEAR_CONFIRM"] = "Voulez-vous vraiment vider tout le journal ?\nCette action est irr\195\169versible."
+L["LOGS_CLEAR_YES"] = "Vider"
 L["LOGS_CLEAR_NO"] = "Annuler"
-
--- Log types
-L["LOG_TYPE_INVITE"] = "Invite"
-L["LOG_TYPE_WHISPER"] = "Whisper"
-L["LOG_TYPE_SAY"] = "Dire"
-L["LOG_TYPE_YELL"] = "Crier"
-L["LOG_TYPE_EMOTE"] = "Emote"
+L["LOG_TYPE_INVITE"] = "Invitation de groupe"
+L["LOG_TYPE_WHISPER"] = "Message priv\195\169"
 L["LOG_TYPE_DUEL"] = "Duel"
 L["LOG_TYPE_TRADE"] = "\195\137change"
-L["LOG_TYPE_GUILD"] = "Guilde"
+L["LOG_TYPE_GUILD"] = "Invitation de guilde"
+L["LOG_TYPE_SAY"] = "Dire"
+L["LOG_TYPE_YELL"] = "Crier"
+L["LOG_TYPE_EMOTE"] = "\195\137mote"
 L["LOG_TYPE_CHANNEL"] = "Canal"
+L["LOG_TYPE_GROUP"] = "Groupe"
 
--- Logs grouped
-L["LOGS_EXPAND_ALL"] = "D\195\169plier tout"
-L["LOGS_COLLAPSE_ALL"] = "Replier tout"
-L["LOGS_LAST_ACTIVITY"] = "dernier : %s"
-L["LOGS_GROUP_HEADER"] = "%s (%d)"
-
--- Export
-L["EXPORT_SUSPECT_TAG"] = "[pseudo suspect : %s]"
-L["EXPORT_TITLE"] = "Exporter les logs"
+-- Copy window and journal export
 L["EXPORT_INSTRUCTIONS"] = "Ctrl+A puis Ctrl+C pour copier"
 L["EXPORT_CLOSE"] = "Fermer"
 L["EXPORT_HEADER"] = "=== Sanctuary - Journal des interactions bloqu\195\169es ==="
 L["EXPORT_DATE"] = "Export du %s"
 L["EXPORT_TOTAL"] = "Total : %s entr\195\169es"
-L["EXPORT_COLUMNS"] = "Date | Type | Source | Message | Pseudo suspect"
+L["EXPORT_COLUMNS"] = "Date | Type | Source | Message | Pattern"
+L["EXPORT_SUSPECT_TAG"] = "[pattern : %s]"
+L["DEBUG_EXPORT_TITLE"] = "Rapport Sanctuary"
 
--- Settings
-L["SETTINGS_TITLE"] = "Sanctuary v%s"
-L["SETTINGS_DESC"] = "Protection anti-harc\195\168lement par whitelist"
-L["SETTINGS_OPEN_BTN"] = "Ouvrir Sanctuary"
-
--- Status bar
-L["STATUSBAR_SESSION"] = "Session : %s bloqu\195\169(s)"
-L["STATUSBAR_LOG"] = "Log : %s/%s"
-L["STATUSBAR_SUSPECTS"] = "Patterns : %s"
-
--- Debug mode
-L["GROUP_DEBUG"] = "Diagnostics"
+-- Advanced
+L["ADV_TRUST_TITLE"] = "Trust automatique"
+L["FILTER_AUTO_TRUST"] = "Faire confiance aux joueurs qui restent au moins 5 minutes dans mon groupe ou mon raid"
+L["ADV_TRUST_DESC"] = "Ils sont alors ajout\195\169s aux \194\171 Toujours autoris\195\169s \194\187, d\195\169finitivement. Vous pouvez les retirer \195\160 tout moment."
+L["ADV_DIAG_TITLE"] = "Diagnostics"
 L["DEBUG_ENABLE"] = "Activer le mode debug"
-L["TIP_DEBUG"] = "Capture des donn\195\169es de diagnostic\npour les interactions filtr\195\169es.\n\nPeut contenir des noms de joueurs,\ndes notifications syst\195\168me et de courts\nextraits de messages filtr\195\169s.\nRien n'est envoy\195\169 -- copier-coller.\n\nActiver ou d\195\169sactiver conserve le log :\nutilisez Vider pour l'effacer."
-L["DEBUG_EXPORT_BTN"] = "Exporter le log debug"
-L["DEBUG_CLEAR_BTN"] = "Vider"
-L["DEBUG_EMPTY"] = "Le log debug est vide. Activez le mode debug, puis jouez normalement."
-L["DEBUG_EXPORT_TITLE"] = "Export du log debug"
-L["DEBUG_EXPORT_INSTRUCTIONS"] = "Ctrl+A puis Ctrl+C pour copier"
-L["DEBUG_COUNT"] = "Debug : %s"
-L["DEBUG_ENABLED_MSG"] = "Mode debug activ\195\169. Jouez normalement, puis exportez."
-L["DEBUG_DISABLED_MSG"] = "Mode debug d\195\169sactiv\195\169. Le log est conserv\195\169."
+L["ADV_DEBUG_DESC"] = "Enregistre des donn\195\169es techniques sur les interactions filtr\195\169es \226\128\148 et les messages syst\195\168me masqu\195\169s en instance \226\128\148 pour aider \195\160 comprendre un probl\195\168me. Rien n'est envoy\195\169 : vous copiez-collez."
+L["DEBUG_EXPORT_BTN"] = "Exporter le rapport"
+L["DEBUG_CLEAR_BTN"] = "Vider le debug"
 L["DEBUG_CLEAR_CONFIRM"] = "Effacer le log debug (%s entr\195\169es) ?\nCette action est irr\195\169versible."
 L["DEBUG_CLEARED_MSG"] = "Log debug effac\195\169."
-L["SOUND_UNMUTE_FAILED"] = "Sanctuary n'a pas pu r\195\169tablir les sons de panneau du jeu. Red\195\169marrez le client pour les retrouver : un rechargement ou une reconnexion n'y suffira pas."
+L["DEBUG_ENABLED_MSG"] = "Mode debug activ\195\169."
+L["DEBUG_DISABLED_MSG"] = "Mode debug d\195\169sactiv\195\169. Le log est conserv\195\169."
+L["DEBUG_EMPTY"] = "Le log debug est vide. Activez le mode debug, puis jouez normalement."
+L["ADV_JOURNAL_TITLE"] = "Journal"
+L["ADV_MAXENTRIES"] = "Taille maximale"
+L["ADV_ENTRIES"] = "entr\195\169es"
+L["ADV_MINIMAP_TITLE"] = "Bouton minimap"
+L["ADV_MINIMAP_SHOW"] = "Afficher le bouton autour de la minimap"
+L["ADV_STATUS"] = "Session : %s bloqu\195\169(s) \194\183 Journal : %s / %s \194\183 Debug : %s \194\183 Build %s \194\183 interface %s"
+L["ADV_DEBUG_ON"] = "actif"
+L["ADV_DEBUG_OFF"] = "inactif"
+L["DEBUG_SUMMARY_FILE"] = "Le relev\195\169 officiel est le fichier de r\195\169glages que le jeu \195\169crit en quittant :\nWorld of Warcraft/_retail_/WTF/Account/<COMPTE>/SavedVariables/Sanctuary.lua"
 
--- Whitelist readback (onglet Whitelist)
-L["WL_AUTO_HEADER"] = "Autoris\195\169s automatiquement"
-L["WL_AUTO_HINT"] = "Lecture seule. Reconstruite \195\160 l'ouverture de l'onglet."
-L["WL_AUTO_EMPTY"] = "Aucun contact autoris\195\169 automatiquement."
-L["WL_AUTO_NO_MATCH"] = "Aucun r\195\169sultat pour cette recherche."
-L["WL_SOURCE_GUILD"] = "Membres de la guilde"
-L["WL_SOURCE_FRIEND"] = "Amis"
-L["WL_SOURCE_BNET"] = "Amis Battle.net"
-L["WL_SOURCE_GROUP"] = "Groupe actuel"
-L["WL_GROUP_ROW"] = "%s (%s)"
-L["WL_GROUP_ROW_FILTERED"] = "%s (%s affich\195\169s sur %s)"
-L["WL_SEARCH_LABEL"] = "Rechercher"
-L["WL_CHECK_LABEL"] = "Est-ce que cette personne passe ?"
-L["WL_CHECK_BTN"] = "V\195\169rifier"
-L["WL_CHECK_PASS"] = "%s passe -- %s"
-L["WL_CHECK_BLOCK"] = "%s est filtr\195\169 -- %s"
-L["WL_CHECK_INVALID"] = "Nom invalide."
-L["WL_CHECK_BNET_ONLY"] = " (compte Battle.net autoris\195\169 : %s)"
-L["WL_REASON_MANUAL"] = "ajout\195\169 manuellement"
-L["WL_REASON_TRUST"] = "trust automatique"
-L["WL_REASON_GUILD"] = "membre de la guilde"
-L["WL_REASON_FRIEND"] = "ami"
-L["WL_REASON_BNET"] = "ami Battle.net"
-L["WL_REASON_GROUP"] = "groupe actuel"
-L["WL_REASON_KEYWORD"] = "pattern suspect : %s"
-L["WL_REASON_NOT_WHITELISTED"] = "dans aucune de vos listes"
+-- About
+L["ABOUT_VERSION"] = "Version %s"
+L["ABOUT_DESC"] = "Protection anti-harc\195\168lement. Bloque les interactions des inconnus, sans bruit, et garde un journal de ce qui a \195\169t\195\169 bloqu\195\169."
+L["ABOUT_AUTHOR"] = "Auteur : %s"
+L["ABOUT_GITHUB"] = "GitHub : %s"
 
--- Panneau de diagnostic (mode debug uniquement)
-L["TAB_DIAGNOSTICS"] = "Diagnostics"
-L["DIAG_PANEL_HEADER"] = "Diagnostics -- mode debug"
-L["DIAG_PANEL_INTRO"] = "Les m\195\170mes diagnostics que les commandes /sanc, en un clic. Visible seulement quand le mode debug est actif."
-L["DIAG_RUN_ALL"] = "Tout lancer (sauf le sensible)"
+-- Diagnostics tab (debug mode only)
+L["DIAG_PANEL_HEADER"] = "Diagnostics \226\128\148 mode debug"
+L["DIAG_RUN_ALL"] = "Tout lancer (sauf ceux \195\160 lancer \195\160 la main)"
 L["DIAG_CLEAR"] = "Effacer"
 L["DIAG_RESULT_EMPTY"] = "Aucun diagnostic lanc\195\169 pour l'instant."
 L["DIAG_SENSITIVE"] = "\195\137crit le vrai pseudo Battle.net d'un ami dans le journal de debug."
+L["DIAG_MANUAL"] = "\195\128 lancer seul, et \195\160 \195\169couter."
 L["DIAG_UNKNOWN"] = "Diagnostic inconnu : %s"
 L["DIAG_FAILED"] = "Diagnostic %s : \195\137CHEC (%s)"
 L["DIAG_LEFT_ON_SCREEN"] = "Cette fen\195\170tre n'a pas pu \195\170tre referm\195\169e : elle est encore \195\160 l'\195\169cran, invisible et cliquable. Ne cliquez nulle part."
@@ -480,23 +492,17 @@ L["DIAG_SIM_INVITE"] = "Simuler une invitation"
 L["DIAG_SIM_BNET"] = "Simuler un chuchotement Battle.net"
 L["DIAG_SIM_BNETFRIEND"] = "Simuler un vrai ami Battle.net"
 L["DIAG_CHAT_INVITE"] = "Diagnostic chat (invitation)"
-L["DIAG_SOUND_INVITE"] = "Diagnostic son"
+L["DIAG_CHAT_LOCKDOWN"] = "Tester le masquage en instance"
+L["DIAG_SOUND_OPEN"] = "Son d'ouverture de fen\195\170tre"
+L["DIAG_SOUND_INVITE"] = "Son d'invitation de groupe"
 L["DIAG_POPUP_INVITE"] = "Fen\195\170tre d'invitation de groupe"
 L["DIAG_POPUP_DUEL"] = "Fen\195\170tre de duel"
 L["DIAG_POPUP_GUILD"] = "Fen\195\170tre d'invitation de guilde"
 L["DIAG_POPUP_LIST"] = "Lister les fen\195\170tres du jeu"
 L["DIAG_ARG_NAME"] = "nom"
-L["DIAG_ARG_INDEX"] = "n\194\176"
+L["DIAG_ARG_NAME_OR_INDEX"] = "pseudo ou n\194~"
 L["DIAG_ARG_FILTER"] = "filtre"
 L["DIAG_TIP_SOUND"] = "Montez le volume : cette v\195\169rification se fait \195\160 l'oreille."
 L["DIAG_TIP_POPUP"] = "Regardez l'\195\169cran. \195\128 ne pas lancer si une vraie demande est en attente."
-
--- Resume de releve
-L["DEBUG_SUMMARY_TITLE"] = "Sanctuary -- r\195\169sum\195\169 de relev\195\169"
-L["DEBUG_SUMMARY_BTN"] = "R\195\169sum\195\169 de relev\195\169"
-L["DEBUG_SUMMARY_INSTRUCTIONS"] = "Contr\195\180le d'un coup d'oeil. Le relev\195\169 lui-m\195\170me est le fichier de r\195\169glages."
-L["DEBUG_SUMMARY_FILE"] = "Le relev\195\169 officiel est le fichier de r\195\169glages que le jeu \195\169crit en quittant :\nWorld of Warcraft/_retail_/WTF/Account/<COMPTE>/SavedVariables/Sanctuary.lua\nCette fen\195\170tre est un contr\195\180le, pas un canal de transport."
-L["DEBUG_FULL_BTN"] = "Rapport complet"
-L["DEBUG_FULL_WARNING"] = "Lecture \195\160 l'\195\169cran seulement -- ce n'est pas un relev\195\169. Utilisez le fichier de r\195\169glages."
 
 end -- frFR
