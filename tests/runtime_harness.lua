@@ -3055,6 +3055,57 @@ equal(SanctuaryCharDB.sessionStats.blockedCount, 1, "and counted in the session"
 equal(#chatMessages, 1, "and announced once in verbose mode")
 SanctuaryDB.notifications.mode = "silent"
 
+do
+
+-- C8b -- the envelope of last resort. `hookChatOutputDiagnostics` wraps
+-- ChatFrame:AddMessage because a 2026-06-25 recording showed invite lines
+-- printed outside Blizzard's filter registry, in raid and in an instance. It has
+-- to apply order 4.1 like every other path -- always blocked first, the filter
+-- flag second -- or a blocked name leaves a visible trace in the open mode,
+-- where the group-invite filter is off by definition.
+--
+-- On its own frame: an earlier section replaced ChatFrame1 with a whisper-tab
+-- stub that has no AddMessage at all, so there is nothing left here to wrap.
+local printedLines = {}
+ChatFrame3 = { AddMessage = function(_, message) printedLines[#printedLines + 1] = message end }
+ns.hookChatOutputDiagnostics()
+check(ChatFrame3.AddMessage ~= nil, "the envelope is installed on a frame that has one")
+
+resetModelState()
+SanctuaryDB.filters.scope = "blockedOnly"
+ns.addBlocked("Harasser")
+local inviteLine = string.format(ERR_INVITED_TO_GROUP_SS, "Harasser")
+equal(dispatchChatFilter("CHAT_MSG_SYSTEM", inviteLine), true,
+    "the registry filter hides a blocked name's invite line")
+ChatFrame3:AddMessage(inviteLine)
+equal(#printedLines, 0, "and so does the envelope, with the filter unticked")
+local outputEntry = lastDebug("CHAT_OUTPUT")
+equal(outputEntry and outputEntry.data.action, "SUPPRESS_BLOCKED_INVITE",
+    "which records that it suppressed the line")
+equal(outputEntry and outputEntry.data.suppressedBy, "always_blocked",
+    "and says which of the two halves decided")
+equal(outputEntry and outputEntry.data.filterEnabled, false, "the filter being off at the time")
+
+-- The control: with the filter ticked the envelope still works, and now names
+-- the filter as the decider.
+equal(select(1, ns.removeBlocked("harasser")), true, "the name is taken back out")
+SanctuaryDB.filters.scope = "strangers"
+ChatFrame3:AddMessage(inviteLine)
+equal(#printedLines, 0, "an unknown name is still hidden when the filter is ticked")
+outputEntry = lastDebug("CHAT_OUTPUT")
+equal(outputEntry and outputEntry.data.suppressedBy, "filter", "and the filter is named")
+
+-- And in the open mode a name nobody blocked keeps its line, untouched.
+SanctuaryDB.filters.scope = "blockedOnly"
+ChatFrame3:AddMessage(inviteLine)
+equal(#printedLines, 1, "while the open mode prints a stranger's line as WoW wrote it")
+outputEntry = lastDebug("CHAT_OUTPUT")
+equal(outputEntry and outputEntry.data.suppressedBy, "none", "with nothing claiming the decision")
+
+ChatFrame3 = nil
+
+end
+
 -- C9 -- Battle.net, resolved both ways.
 resetModelState()
 bnetFriends = {

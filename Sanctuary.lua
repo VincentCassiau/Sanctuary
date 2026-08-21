@@ -2806,8 +2806,19 @@ local function hookChatOutputDiagnostics()
                 local inviterName, patternIndex, patternKind = extractInviterFromSystemMessage(text)
                 if inviterName then
                     local shouldBlock, reason, keyword = getCharacterDecision(inviterName)
-                    local filterEnabled = isEnabled() and isFilterOn("groupInvite") == true
-                    local suppress = filterEnabled and shouldBlock
+                    local addonEnabled = isEnabled()
+                    local filterEnabled = addonEnabled and isFilterOn("groupInvite") == true
+                    -- Order 4.1, the same one `systemMessageFilter` applies: the
+                    -- always-blocked gate comes before the filter flag. This
+                    -- envelope exists because a 2026-06-25 recording showed
+                    -- invite lines printed outside the filter registry in raid
+                    -- and in instances; reading the flag first let a blocked
+                    -- name print its line in the open mode -- a visible trace,
+                    -- on the nominal path of the list.
+                    local alwaysBlocked = addonEnabled and isAlwaysBlocked(inviterName) and true or false
+                    local suppress = alwaysBlocked or (filterEnabled and shouldBlock) or false
+                    local suppressedBy = alwaysBlocked and "always_blocked"
+                        or (suppress and "filter" or "none")
                     if activeChatOutputProbe and activeChatOutputProbe.message == text then
                         activeChatOutputProbe.observed = true
                         activeChatOutputProbe.frame = frameIndex
@@ -2825,6 +2836,8 @@ local function hookChatOutputDiagnostics()
                         reason = reason or "nil",
                         keyword = keyword or "none",
                         filterEnabled = filterEnabled and true or false,
+                        alwaysBlocked = alwaysBlocked,
+                        suppressedBy = suppressedBy,
                         soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
                     }))
                     if suppress then
