@@ -4621,6 +4621,51 @@ SanctuaryDB.uiSize = nil
 mainFrame:Hide()
 mainFrame:Show()
 
+do
+
+-- The grip drives one dimension. The window has no horizontal scrolling at all:
+-- the content area and every tab frame are built at 780, so a width remembered
+-- from a diagonal drag either truncates the screen or leaves it floating -- and
+-- it came back on every refresh and every reopening.
+local grip = _G.SanctuaryResizeGrip
+check(grip ~= nil, "the resize grip is reachable")
+local gripDown = grip:GetScript("OnMouseDown")
+local gripUp = grip:GetScript("OnMouseUp")
+
+now = now + 5
+gripDown(grip)
+mainFrame:SetSize(1240, 560)
+gripUp(grip)
+equal(SanctuaryDB.uiSize[1], 780, "a diagonal drag records the one width there is")
+equal(SanctuaryDB.uiSize[2], 560, "and the height it was actually dragged to")
+ns.refreshUI()
+equal(mainFrame:GetWidth(), 780, "so a refresh puts the window back on that width")
+equal(mainFrame:GetHeight(), 560, "while keeping the height that was asked for")
+mainFrame:Hide()
+mainFrame:Show()
+equal(mainFrame:GetWidth(), 780, "and reopening does not bring the dragged width back")
+
+-- Double-click: two press/release pairs less than 0.4 s apart. The second
+-- OnMouseDown cleared the remembered size -- and the OnMouseUp of that very same
+-- click wrote it straight back, so the way back to the fitted mode did not
+-- survive the button being released.
+now = now + 5
+gripDown(grip)
+gripUp(grip)
+now = now + 0.2
+gripDown(grip)
+gripUp(grip)
+equal(SanctuaryDB.uiSize, nil, "a double-click forgets the remembered size for good")
+
+-- And the fitted mode is really back: the height follows the screen again.
+_G["SanctuaryTab_about"]:Click()
+equal(mainFrame:GetHeight(), 380 + 40 + 30, "the shortest screen is back to its fitted height")
+_G["SanctuaryTab_protection"]:Click()
+check(mainFrame:GetHeight() > 380 + 40 + 30, "and a taller screen makes the window taller again")
+
+end
+
+
 guildMembers = {}
 bnetFriends = {}
 charFriends = {}

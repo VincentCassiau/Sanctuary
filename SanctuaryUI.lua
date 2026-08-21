@@ -54,6 +54,12 @@ local PANEL_WIDTH = 540
 -- Room kept under the content for the tabs' own strip and the undo line, which
 -- are anchored to the bottom of the frame.
 local CONTENT_BOTTOM = 30
+-- What the whole window may measure, header and bottom strip included. Only the
+-- height is negotiable: the scroll area and every tab frame are built at
+-- FRAME_WIDTH and nothing in the window scrolls sideways, so any other width
+-- either truncates the content or leaves it floating in the void.
+local MIN_FRAME_HEIGHT = MIN_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
+local MAX_FRAME_HEIGHT = MAX_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
 local UNDO_SECONDS = 6
 local LIST_REFRESH_SECONDS = 10
 
@@ -1801,13 +1807,16 @@ local function applyHeight(height)
     local needed = math.max(MIN_HEIGHT, height or MIN_HEIGHT)
     local frameHeight
     if manualSize then
-        frameHeight = manualSize[2] or (MIN_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM)
-        mainFrame:SetSize(manualSize[1] or FRAME_WIDTH, frameHeight)
+        -- The stored width is never read back. Slot 1 stays in the record for
+        -- the shape's sake, and a settings file written before the bounds
+        -- existed can carry any height at all, so it is clamped here too.
+        frameHeight = manualSize[2] or MIN_FRAME_HEIGHT
+        frameHeight = math.min(MAX_FRAME_HEIGHT, math.max(MIN_FRAME_HEIGHT, frameHeight))
     else
         local bounded = math.min(MAX_HEIGHT, needed)
         frameHeight = bounded + HEADER_HEIGHT + CONTENT_BOTTOM
-        mainFrame:SetSize(FRAME_WIDTH, frameHeight)
     end
+    mainFrame:SetSize(FRAME_WIDTH, frameHeight)
 
     local viewport = math.max(120, frameHeight - HEADER_HEIGHT - CONTENT_BOTTOM)
     contentScroll:SetSize(FRAME_WIDTH, viewport)
@@ -1883,6 +1892,11 @@ local function createMainFrame()
     mainFrame:EnableMouse(true)
     mainFrame:SetMovable(true)
     mainFrame:SetResizable(true)
+    -- Same value on both sides for the width: the grip may only change the
+    -- height. Under pcall because SetResizeBounds is the Retail spelling and a
+    -- missing method must not take the window down with it.
+    pcall(mainFrame.SetResizeBounds, mainFrame,
+        FRAME_WIDTH, MIN_FRAME_HEIGHT, FRAME_WIDTH, MAX_FRAME_HEIGHT)
     mainFrame:SetClampedToScreen(true)
     mainFrame:Hide()
     applyBackdrop(mainFrame, C.panel, C.border, 2)
@@ -1984,27 +1998,38 @@ local function createMainFrame()
 
     -- Grip: dragging switches to manual sizing, double-clicking goes back to
     -- fitted. No numeric size setting -- decision 61.
-    resizeGrip = CreateFrame("Button", nil, mainFrame)
+    resizeGrip = CreateFrame("Button", "SanctuaryResizeGrip", mainFrame)
     resizeGrip:SetSize(16, 16)
     resizeGrip:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", -2, 2)
     resizeGrip:SetNormalTexture("Interface/ChatFrame/UI-ChatIM-SizeGrabber-Up")
     resizeGrip:SetHighlightTexture("Interface/ChatFrame/UI-ChatIM-SizeGrabber-Highlight")
     resizeGrip.lastClick = 0
+    resizeGrip.sizing = false
     resizeGrip:SetScript("OnMouseDown", function()
         local now = GetTime()
         if now - (resizeGrip.lastClick or 0) < 0.4 then
             resizeGrip.lastClick = 0
+            resizeGrip.sizing = false
             manualSize = nil
             if SanctuaryDB then SanctuaryDB.uiSize = nil end
             ns.refreshUI()
             return
         end
         resizeGrip.lastClick = now
+        resizeGrip.sizing = true
         mainFrame:StartSizing("BOTTOMRIGHT")
     end)
     resizeGrip:SetScript("OnMouseUp", function()
         mainFrame:StopMovingOrSizing()
-        manualSize = { mainFrame:GetWidth(), mainFrame:GetHeight() }
+        -- The second click of a double-click never started a resize: it cleared
+        -- the remembered size and went back to the fitted mode. Recording the
+        -- current size here unconditionally put it straight back on the button
+        -- release, so the way back to the fitted mode did not survive the click.
+        if not resizeGrip.sizing then return end
+        resizeGrip.sizing = false
+        -- Height only: the width is fixed by the resize bounds and by every
+        -- frame the window is built from.
+        manualSize = { FRAME_WIDTH, mainFrame:GetHeight() }
         if SanctuaryDB then SanctuaryDB.uiSize = { manualSize[1], manualSize[2] } end
     end)
 
