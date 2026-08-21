@@ -3318,6 +3318,65 @@ SanctuaryDB.filters.scope = "strangers"
 SanctuaryDB.logging.maxEntries = 5000
 SanctuaryCharDB.overrides.enabled = nil
 
+do
+
+-- C15b -- two files, two stamps. The account file is written once per account
+-- and the character file once per character, so the first character to load
+-- 0.4.0 stamps the account file and every other character still logs in with a
+-- v1 file of its own. Decided from the account stamp alone, those characters go
+-- through fillMissingDefaults, which adds what is missing and overwrites
+-- nothing: the `overrides.enabled = false` a right-click on the minimap button
+-- wrote under 0.3.2 survives, and Sanctuary is silently off on that character.
+SanctuaryDB.schemaVersion = 2
+SanctuaryCharDB = {
+    schemaVersion = 1,
+    overrides = { enabled = false, filters = { whisper = false } },
+    manualWhitelist = { secondchar = { displayName = "Secondchar" } },
+    groupTracker = { oldmate = 1 },
+    sessionStats = { blockedCount = 3, blockedByType = {} },
+}
+fire("ADDON_LOADED", "Sanctuary")
+equal(SanctuaryCharDB.schemaVersion, 2, "a second character's v1 file is reset on its own")
+equal(SanctuaryCharDB.overrides.enabled, nil, "the override that switched Sanctuary off is gone")
+equal(next(SanctuaryCharDB.overrides.filters), nil, "and so are the per-character filter overrides")
+equal(next(SanctuaryCharDB.groupTracker), nil, "the group tracker starts empty")
+check(SanctuaryCharDB.manualWhitelist.secondchar ~= nil, "its own list of names is kept")
+equal(ns.isEnabled(), true, "and Sanctuary is on for that character")
+equal(SanctuaryDB.schemaVersion, 2, "the account file, already stamped, is left alone")
+
+-- Idempotent, like the account half: a second load resets nothing more.
+SanctuaryCharDB.manualWhitelist.addedsince = { displayName = "Addedsince" }
+SanctuaryCharDB.groupTracker.freshmate = 2
+fire("ADDON_LOADED", "Sanctuary")
+check(SanctuaryCharDB.manualWhitelist.addedsince ~= nil, "a second load keeps what was added since")
+check(SanctuaryCharDB.groupTracker.freshmate ~= nil, "and the tracking that started since")
+
+-- C15c -- the one record that is not a setting. A MuteSoundFile survives
+-- /reload and relogging; only a full client restart clears it. The flag mirrors
+-- it into SavedVariables so the next load can lift what the previous session
+-- left behind -- and the first load of 0.4.0 always goes through the reset. The
+-- real path: a 0.3.2 session with a sound guard up at /reload, then 0.4.0
+-- copied in and reloaded without restarting the client.
+local unmutedBeforeStale = #unmuted
+SanctuaryDB = { schemaVersion = 1, protectedPopupSoundMuted = true }
+SanctuaryCharDB = { schemaVersion = 2, overrides = {}, manualWhitelist = {},
+    groupTracker = {}, sessionStats = { blockedCount = 0, blockedByType = {} } }
+fire("ADDON_LOADED", "Sanctuary")
+equal(#unmuted, unmutedBeforeStale + 2,
+    "the flag survives the reset, so the stale mute on both files is lifted")
+equal(SanctuaryDB.protectedPopupSoundMuted, nil, "and the record goes once they are")
+-- Debug mode is itself a setting and goes back to its default in that same
+-- reset, so the POPUP_GUARD_STALE_UNMUTE entry cannot be observed here. The
+-- UnmuteSoundFile calls are the thing that matters anyway.
+
+-- Nothing to lift, nothing lifted.
+unmutedBeforeStale = #unmuted
+SanctuaryDB.schemaVersion = 1
+fire("ADDON_LOADED", "Sanctuary")
+equal(#unmuted, unmutedBeforeStale, "with no flag stored, no file is touched at load")
+
+end
+
 -- C16 -- the snapshot and the report publish what the core applies.
 resetModelState()
 SanctuaryDB.filters.preset = "all"

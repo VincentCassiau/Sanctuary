@@ -5514,13 +5514,27 @@ local frame = CreateFrame("Frame")
 -- What is kept is what cannot be reconstructed: the three lists typed by hand.
 -- Idempotent by construction -- the rebuilt file carries schemaVersion 2, so a
 -- second load falls straight through to fillMissingDefaults.
-local function resetToSchemaV2()
+--
+-- Two files, two stamps, two independent decisions. The account file is written
+-- once per account, the character file once per character: the first character
+-- to load 0.4.0 stamps the account file, and every other character still logs in
+-- carrying a v1 file of its own. Deciding both from the account stamp would send
+-- those characters through `fillMissingDefaults`, which adds what is missing and
+-- overwrites nothing -- so an `overrides.enabled = false` written by 0.3.2 (a
+-- right-click on the minimap button is the ordinary way to get one) would
+-- survive and leave Sanctuary silently off on that character.
+local function resetAccountToSchemaV2()
     local carriedAccountWhitelist = SanctuaryDB and SanctuaryDB.manualWhitelist
     local carriedKeywords = SanctuaryDB and SanctuaryDB.keywords
-    local carriedCharWhitelist = SanctuaryCharDB and SanctuaryCharDB.manualWhitelist
+    -- Not a setting, and that is exactly why it travels: this flag is the only
+    -- record `releaseStaleProtectedPopupSoundMute` can read to lift a
+    -- MuteSoundFile left behind by the previous session. A mute survives
+    -- /reload and relogging -- only a full client restart clears it -- and the
+    -- first load of 0.4.0 always goes through this reset. Dropped here, the
+    -- game's generic panel sounds stay off with no way out in game.
+    local carriedPopupSoundMuted = SanctuaryDB and SanctuaryDB.protectedPopupSoundMuted
 
     SanctuaryDB = deepCopy(ACCOUNT_DEFAULTS)
-    SanctuaryCharDB = deepCopy(CHARACTER_DEFAULTS)
 
     if type(carriedAccountWhitelist) == "table" then
         SanctuaryDB.manualWhitelist = carriedAccountWhitelist
@@ -5528,18 +5542,34 @@ local function resetToSchemaV2()
     if type(carriedKeywords) == "table" then
         SanctuaryDB.keywords = carriedKeywords
     end
-    if type(carriedCharWhitelist) == "table" then
-        SanctuaryCharDB.manualWhitelist = carriedCharWhitelist
+    if carriedPopupSoundMuted then
+        SanctuaryDB.protectedPopupSoundMuted = true
     end
     -- The always-blocked list did not exist before 0.4.0; it starts empty.
     invalidateWhitelist()
 end
 
-ns.resetToSchemaV2 = resetToSchemaV2
+local function resetCharacterToSchemaV2()
+    local carriedCharWhitelist = SanctuaryCharDB and SanctuaryCharDB.manualWhitelist
 
-local function needsSchemaReset()
-    if not SanctuaryDB then return false end
-    local stored = tonumber(SanctuaryDB.schemaVersion)
+    SanctuaryCharDB = deepCopy(CHARACTER_DEFAULTS)
+
+    if type(carriedCharWhitelist) == "table" then
+        SanctuaryCharDB.manualWhitelist = carriedCharWhitelist
+    end
+    invalidateWhitelist()
+end
+
+-- Nothing inside this file needs both halves at once -- ADDON_LOADED decides
+-- them one file at a time -- but the whole 0.4.0 reset stays reachable by name.
+ns.resetToSchemaV2 = function()
+    resetAccountToSchemaV2()
+    resetCharacterToSchemaV2()
+end
+
+local function needsSchemaReset(store)
+    if not store then return false end
+    local stored = tonumber(store.schemaVersion)
     return stored == nil or stored < 2
 end
 
@@ -5549,14 +5579,16 @@ function handlers.ADDON_LOADED(addonName)
     -- Initialize SavedVariables
     if not SanctuaryDB then
         SanctuaryDB = deepCopy(ACCOUNT_DEFAULTS)
-    elseif needsSchemaReset() then
-        resetToSchemaV2()
+    elseif needsSchemaReset(SanctuaryDB) then
+        resetAccountToSchemaV2()
     else
         fillMissingDefaults(SanctuaryDB, ACCOUNT_DEFAULTS)
     end
 
     if not SanctuaryCharDB then
         SanctuaryCharDB = deepCopy(CHARACTER_DEFAULTS)
+    elseif needsSchemaReset(SanctuaryCharDB) then
+        resetCharacterToSchemaV2()
     else
         fillMissingDefaults(SanctuaryCharDB, CHARACTER_DEFAULTS)
     end
