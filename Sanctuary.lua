@@ -45,9 +45,19 @@ ns.COLOR_HIGHLIGHT = COLOR_HIGHLIGHT
 -- ============================================================================
 
 local ACCOUNT_DEFAULTS = {
-    schemaVersion = 1,
+    -- Bumped to 2 by the 0.4.0 model (scope/preset switches, always-blocked
+    -- list). A settings file still carrying schema 1 is not migrated: it is
+    -- rebuilt from these defaults, keeping only the three lists the person typed
+    -- by hand. See handlers.ADDON_LOADED.
+    schemaVersion = 2,
 
     filters = {
+        -- Question 1. "strangers" filters everyone who is not allowed;
+        -- "blockedOnly" filters nobody but the always-blocked list.
+        scope              = "strangers",  -- "strangers" | "blockedOnly"
+        -- Question 2. "all" applies the recommended set and ignores the stored
+        -- per-filter values; "custom" applies exactly what is stored.
+        preset             = "all",        -- "all" | "custom"
         groupInvite        = true,
         whisper            = true,
         duel               = true,
@@ -77,8 +87,16 @@ local ACCOUNT_DEFAULTS = {
     },
 
     manualWhitelist = {},
+    -- Always blocked, by exact name. [normalized key] = { displayName, addedAt,
+    -- source = "manual"|"menu" }. Beats every trust source, in both scopes and
+    -- whatever the filters say.
+    blockedNames = {},
     log = {},
     keywords = {},  -- suspicious keyword list (e.g., "jetaime", "belle")
+    minimap = {
+        hide = false,
+        angle = 220,
+    },
     uiPosition = nil, -- saved window position { point, x, y }
     uiSize = nil,         -- saved window size { width, height }
     uiSettings = {
@@ -96,7 +114,7 @@ local ACCOUNT_DEFAULTS = {
 }
 
 local CHARACTER_DEFAULTS = {
-    schemaVersion = 1,
+    schemaVersion = 2,
     overrides = {
         enabled = nil,
         filters = {},
@@ -198,6 +216,23 @@ local function safeText(value, maxLen, nilText)
     end
     return text
 end
+
+-- Retail exposes a chat messaging lockdown state. One reader for everyone --
+-- the snapshot, the runtime markers, the masking decision and the diagnostic
+-- button -- so they can never publish different answers for the same instant.
+-- An unreadable or missing API is unknown, never "not locked down".
+local function readChatLockdown()
+    if type(C_ChatInfo) ~= "table" or type(C_ChatInfo.InChatMessagingLockdown) ~= "function" then
+        return false, false
+    end
+    local ok, lockdown = pcall(C_ChatInfo.InChatMessagingLockdown)
+    if ok and not isRestrictedValue(lockdown) then
+        return lockdown and true or false, true
+    end
+    return false, false
+end
+
+ns.readChatLockdown = readChatLockdown
 
 local function getRuntimeContext()
     local inGroupValue = false
@@ -355,29 +390,37 @@ local function getClientBuildContext()
         data.addonMetaInterface = "unavailable"
     end
 
-    -- Retail exposes a chat messaging lockdown state; treat an unreadable or
-    -- missing API as unknown rather than as "not locked down".
-    data.chatLockdown = false
-    data.chatLockdownKnown = false
-    if type(C_ChatInfo) == "table" and type(C_ChatInfo.InChatMessagingLockdown) == "function" then
-        local ok, lockdown = pcall(C_ChatInfo.InChatMessagingLockdown)
-        if ok and not isRestrictedValue(lockdown) then
-            data.chatLockdown = lockdown and true or false
-            data.chatLockdownKnown = true
+    -- The .toc "Interface" field can list several versions; what the client
+    -- actually resolved for this addon is the one the AddOns manager grades as
+    -- current or "Out of date", and it is the only one worth comparing to the
+    -- client's own interface.
+    if type(C_AddOns) == "table" and type(C_AddOns.GetAddOnInterfaceVersion) == "function" then
+        local ok, interfaceVersion = pcall(C_AddOns.GetAddOnInterfaceVersion, ADDON_NAME)
+        if ok and interfaceVersion ~= nil and not isRestrictedValue(interfaceVersion) then
+            data.addonInterface = tonumber(interfaceVersion) or safeText(interfaceVersion, 20, "nil")
+        else
+            data.addonInterface = "error"
         end
+    else
+        data.addonInterface = "unavailable"
     end
+
+    data.chatLockdown, data.chatLockdownKnown = readChatLockdown()
 
     return data
 end
 
 ns.getClientBuildContext = getClientBuildContext
 
-local function addSnapshotFields(target, fields)
+local addSnapshotFields
+do
+addSnapshotFields = function(target, fields)
     target = target or {}
     for key, value in pairs(fields or {}) do
         target[key] = value
     end
     return target
+end
 end
 
 -- ChatTypeInfo.SYSTEM.id is the message type Retail passes as the fifth
@@ -535,6 +578,8 @@ local function parseBool(str)
 end
 
 local FILTER_STATE_KEYS = {
+    "scope",
+    "preset",
     "groupInvite",
     "whisper",
     "duel",
@@ -548,10 +593,77 @@ local FILTER_STATE_KEYS = {
     "strictGroupInviteSystemMessages",
 }
 
+-- The two switches question 1 and question 2 write. Reading them through these
+-- helpers rather than through getEffective is what keeps an unset or corrupted
+-- value from becoming a third, undefined mode.
+local function getScope()
+    return getEffective("filters.scope") == "blockedOnly" and "blockedOnly" or "strangers"
+end
+
+local function getPreset()
+    return getEffective("filters.preset") == "custom" and "custom" or "all"
+end
+
+-- The single reading of "is this filter in force right now". Every decision path
+-- goes through it; a raw getEffective("filters.…") on a decision path would
+-- publish the stored checkbox instead of the mode the person actually chose.
+local isFilterOn
+do
+
+-- What the recommended preset applies, whatever is stored underneath. The
+-- stored values are kept untouched so switching back to "I choose" restores the
+-- boxes the person had ticked.
+local PRESET_ALL_ON = {
+    groupInvite = true, whisper = true, duel = true, trade = true, guildInvite = true,
+}
+local PRESET_ALL_OFF = { say = true, yell = true, emote = true }
+
+isFilterOn = function(key)
+    if key == "autoTrust" then
+        -- Advanced setting, outside question 2 and outside the scope switch.
+        return getEffective("filters.autoTrust") == true
+    end
+
+    if key == "channelMode" then
+        if getScope() == "blockedOnly" then return "none" end
+        if getPreset() == "all" then return "none" end
+        local mode = getEffective("filters.channelMode")
+        if mode ~= "keywords" and mode ~= "all" then return "none" end
+        return mode
+    end
+
+    -- "Everyone except the people I block": nothing about strangers is filtered,
+    -- enhanced instance filtering included. Hiding the whole system category for
+    -- someone who asked to filter almost nothing would be a regression.
+    if getScope() == "blockedOnly" then return false end
+
+    if key == "strictGroupInviteSystemMessages" then
+        return getEffective("filters.strictGroupInviteSystemMessages") == true
+            and isFilterOn("groupInvite") == true
+    end
+
+    if getPreset() == "all" then
+        if PRESET_ALL_ON[key] then return true end
+        if PRESET_ALL_OFF[key] then return false end
+    end
+    return getEffective("filters." .. key) == true
+end
+
+end
+
+-- Publishes what the core applies, never the raw stored values: a report or a
+-- snapshot showing `whisper = false` while whispers are being filtered sends the
+-- reader looking for a bug that is not there.
 local function getEffectiveFilterState()
     local filters = {}
     for _, key in ipairs(FILTER_STATE_KEYS) do
-        filters[key] = getEffective("filters." .. key)
+        if key == "scope" then
+            filters.scope = getScope()
+        elseif key == "preset" then
+            filters.preset = getPreset()
+        else
+            filters[key] = isFilterOn(key)
+        end
     end
     return filters
 end
@@ -568,8 +680,13 @@ ns.parseBool = parseBool
 ns.deepCopy = deepCopy
 ns.fillMissingDefaults = fillMissingDefaults
 ns.getEffectiveFilterState = getEffectiveFilterState
+ns.isFilterOn = isFilterOn
+ns.getScope = getScope
+ns.getPreset = getPreset
 
--- Keyword blacklist: blocks names containing any suspect keyword
+-- Keyword blacklist: blocks names containing any suspect keyword.
+-- Private on purpose since 0.4.0: isAlwaysBlocked is the only caller, so a
+-- pattern and an exact blocked name can never be tested by different code.
 local function matchesKeyword(name)
     if not name or not SanctuaryDB or not SanctuaryDB.keywords then return false, nil end
     local cleanName = stripWoWFormatting(name)
@@ -585,7 +702,126 @@ local function matchesKeyword(name)
     return false, nil
 end
 
-ns.matchesKeyword = matchesKeyword
+-- ----------------------------------------------------------------------------
+-- The always-blocked door
+-- ----------------------------------------------------------------------------
+
+-- One key shape for the exact-name list: formatting stripped, lower case, no
+-- spaces. Spaces are removed rather than collapsed so a Battle.net display name
+-- typed with or without them lands on the same key.
+local function normalizeBlockedKey(name)
+    local clean = stripWoWFormatting(name)
+    if not clean then return nil end
+    clean = clean:gsub("%s", ""):lower()
+    if clean == "" then return nil end
+    return clean
+end
+
+-- Two lookups, in this order: the full key, then the same name without its
+-- realm. Blocking "Toto-Ysondre" therefore blocks only that character, while
+-- blocking "Toto" blocks every realm -- which is what someone typing a bare
+-- name means.
+local function isBlockedName(name)
+    if not SanctuaryDB or type(SanctuaryDB.blockedNames) ~= "table" then return nil end
+    local key = normalizeBlockedKey(name)
+    if not key then return nil end
+    if SanctuaryDB.blockedNames[key] then return key end
+    local nameOnly = key:match("^([^-]+)%-") or nil
+    if nameOnly and SanctuaryDB.blockedNames[nameOnly] then return nameOnly end
+    return nil
+end
+
+-- Computed rather than cached: `next` answers in constant time, and a cached
+-- flag would go stale the moment anything writes SanctuaryDB directly -- which
+-- the schema reset, the harness and a hand-edited settings file all do.
+local function hasAlwaysBlockedEntries()
+    if not SanctuaryDB then return false end
+    local blocked = SanctuaryDB.blockedNames
+    if type(blocked) == "table" and next(blocked) ~= nil then return true end
+    local keywords = SanctuaryDB.keywords
+    return type(keywords) == "table" and next(keywords) ~= nil
+end
+
+-- Forward declaration: the Battle.net account <-> character map is filled by
+-- rebuildWhitelist, further down.
+local ensureWhitelistCache
+
+local isAlwaysBlocked
+do
+
+local function isAlwaysBlockedDirect(name)
+    local blockedKey = isBlockedName(name)
+    if blockedKey then
+        local data = SanctuaryDB.blockedNames[blockedKey]
+        local label = (type(data) == "table" and data.displayName) or blockedKey
+        return true, "blocked_name", label
+    end
+    local matched, keyword = matchesKeyword(name)
+    if matched then return true, "keyword", keyword end
+    return false, nil, nil
+end
+
+-- The single gate every decision path asks first. It beats every trust source
+-- and every filter setting, in both scopes -- that is the whole point of the
+-- list.
+--
+-- Battle.net resolves both ways. Sanctuary already knows which character each of
+-- its Battle.net friends is playing, so blocking the account blocks the
+-- character on the normal WoW paths, and blocking the character blocks the
+-- account's whispers. The one gap, stated in the release notes: a friend who is
+-- offline has no known character, so they have to be blocked by account.
+isAlwaysBlocked = function(name)
+    if name == nil then return false, nil, nil end
+    if not hasAlwaysBlockedEntries() then return false, nil, nil end
+
+    local blocked, reason, detail = isAlwaysBlockedDirect(name)
+    if blocked then return true, reason, detail end
+
+    if ensureWhitelistCache then ensureWhitelistCache() end
+
+    local accountKey = normalizeBNetName(name)
+    local character = accountKey and Sanctuary.bnetCharacterByAccount
+        and Sanctuary.bnetCharacterByAccount[accountKey]
+    if character then
+        blocked, reason, detail = isAlwaysBlockedDirect(character)
+        if blocked then return true, reason, detail end
+    end
+
+    local characterKey = normalizeName(name)
+    local account = characterKey and Sanctuary.bnetAccountByCharacter
+        and Sanctuary.bnetAccountByCharacter[characterKey]
+    if account then
+        blocked, reason, detail = isAlwaysBlockedDirect(account)
+        if blocked then return true, reason, detail end
+    end
+
+    return false, nil, nil
+end
+
+end
+
+ns.normalizeBlockedKey = normalizeBlockedKey
+ns.isBlockedName = function(name) return isBlockedName(name) ~= nil end
+ns.hasAlwaysBlockedEntries = hasAlwaysBlockedEntries
+ns.isAlwaysBlocked = isAlwaysBlocked
+
+-- Armed means "this guard has to be in place", which is not the same as "this
+-- filter is ticked": one always-blocked name is enough to require the popup mask
+-- and the sound guard even in the mode where nothing else is filtered. Empty
+-- lists arm nothing, so a person who blocks nobody keeps WoW's native behaviour
+-- down to the sound.
+local FILTER_KEY_BY_POPUP = {
+    PARTY_INVITE = "groupInvite",
+    DUEL_REQUESTED = "duel",
+}
+
+local function isProtectionArmed(kind)
+    if not isEnabled() then return false end
+    local key = FILTER_KEY_BY_POPUP[kind] or kind
+    return isFilterOn(key) == true or hasAlwaysBlockedEntries()
+end
+
+ns.isProtectionArmed = isProtectionArmed
 
 -- Forward declarations for helpers used before their concrete section.
 local debugLog, countBNetWithCharName, captureDebugSnapshot, isBNetSenderInGroup
@@ -606,6 +842,11 @@ Sanctuary.whitelistSources = {}
 Sanctuary.whitelistLabels = {}
 Sanctuary.bnetWhitelistSources = {}
 Sanctuary.bnetWhitelistLabels = {}
+-- Battle.net identity, both ways. Sanctuary already reads which character each
+-- friend is on; recording it here is what lets the always-blocked list and the
+-- name tester resolve an account from a character and back.
+Sanctuary.bnetCharacterByAccount = {}
+Sanctuary.bnetAccountByCharacter = {}
 Sanctuary.whitelistDirty = true
 
 local function getBNetFriendInfo(index)
@@ -650,6 +891,8 @@ local function rebuildWhitelist()
     local sourceLabels = {}
     local bnetSources = {}
     local bnetSourceLabels = {}
+    local characterByAccount = {}
+    local accountByCharacter = {}
 
     local function noteSource(store, labelStore, key, source, displayName)
         if not key or store[key] then return end
@@ -735,6 +978,15 @@ local function rebuildWhitelist()
                 local gameInfo = info.gameAccountInfo
                 if gameInfo and gameInfo.characterName and gameInfo.characterName ~= "" then
                     addCharacterName(gameInfo.characterName, "bnet", info.accountName)
+                    -- Keyed on the blocked-list key shape, not on the whitelist
+                    -- one, so a lookup can go straight from either identity to
+                    -- the other without a second normalisation rule.
+                    local accountKey = normalizeBNetName(info.accountName)
+                    local characterKey = normalizeName(gameInfo.characterName)
+                    if accountKey and characterKey then
+                        characterByAccount[accountKey] = gameInfo.characterName
+                        accountByCharacter[characterKey] = info.accountName
+                    end
                 end
             end
         end
@@ -773,6 +1025,8 @@ local function rebuildWhitelist()
     Sanctuary.whitelistLabels = sourceLabels
     Sanctuary.bnetWhitelistSources = bnetSources
     Sanctuary.bnetWhitelistLabels = bnetSourceLabels
+    Sanctuary.bnetCharacterByAccount = characterByAccount
+    Sanctuary.bnetAccountByCharacter = accountByCharacter
     Sanctuary.whitelistDirty = false
 
     if SanctuaryDB and SanctuaryDB.debugEnabled then
@@ -860,19 +1114,62 @@ local function invalidateWhitelist()
     Sanctuary.whitelistDirty = true
 end
 
--- Single source of truth for character-name decisions. Suspect patterns are
--- intentionally evaluated first: this matches the UI/README contract that a
--- pattern overrides every trust source.
-local function getCharacterDecision(name)
-    local keywordMatch, keyword = matchesKeyword(name)
-    if keywordMatch then
-        return true, "keyword", keyword
+ensureWhitelistCache = function()
+    if Sanctuary.whitelistDirty then
+        rebuildWhitelist()
     end
-    if isWhitelisted(name) then
+end
+
+-- Which of the three tiers a name falls into, and why. The whole 0.4.0 model is
+-- this function: always blocked, else always allowed, else unknown -- and only
+-- the third tier depends on a setting.
+--
+-- Attribution when several trust sources allow the same person is not recomputed
+-- here: the caches record the first writer, and the manual lists are filled
+-- first, so a name the person typed keeps its own label even when they are also
+-- in the guild.
+local function classifyName(name)
+    local blocked, reason, detail = isAlwaysBlocked(name)
+    if blocked then
+        return { verdict = "always_blocked", list = reason, detail = detail }
+    end
+
+    ensureWhitelistCache()
+
+    local characterKey = normalizeName(name)
+    local source = characterKey and Sanctuary.whitelistSources[characterKey] or nil
+    if source then
+        local label = Sanctuary.whitelistLabels[characterKey]
+        return { verdict = "always_allowed", list = source, detail = label }
+    end
+
+    local accountKey = normalizeBNetName(name)
+    local bnetSource = accountKey and Sanctuary.bnetWhitelistSources[accountKey] or nil
+    if bnetSource then
+        local label = Sanctuary.bnetWhitelistLabels[accountKey] or name
+        return { verdict = "always_allowed", list = bnetSource, detail = label }
+    end
+
+    return { verdict = "unknown", list = nil, detail = nil }
+end
+
+-- Single source of truth for character-name decisions. Signature unchanged --
+-- twenty-one call sites read it as (shouldBlock, reason, detail).
+local function getCharacterDecision(name)
+    local classification = classifyName(name)
+    if classification.verdict == "always_blocked" then
+        return true, classification.list, classification.detail
+    end
+    if classification.verdict == "always_allowed" then
         return false, "whitelist", nil
+    end
+    if getScope() == "blockedOnly" then
+        return false, "open_scope", nil
     end
     return true, "not_whitelisted", nil
 end
+
+ns.classifyName = classifyName
 
 -- Export whitelist functions to namespace
 ns.isWhitelisted = isWhitelisted
@@ -907,9 +1204,7 @@ ns.getBNetFriendInfo = getBNetFriendInfo
 -- refresh button and no periodic timer -- and why BN_FRIEND_INFO_CHANGED firing
 -- twenty times in half an hour costs nothing while the tab is closed.
 function ns.ensureWhitelist()
-    if Sanctuary.whitelistDirty then
-        rebuildWhitelist()
-    end
+    ensureWhitelistCache()
 end
 
 -- Automatic trust sources, in the order the tab shows them. "trust" and
@@ -943,7 +1238,17 @@ function ns.getAutoWhitelistGroups(filterText)
                 local label = (labels and labels[key]) or key
                 if needle == "" or tostring(label):lower():find(needle, 1, true)
                     or key:find(needle, 1, true) then
-                    group.entries[#group.entries + 1] = { key = key, label = label }
+                    local entry = { key = key, label = label }
+                    if source == "bnet" then
+                        -- The panel shows "Character · Account", or the account
+                        -- alone followed by "(offline)". Both halves travel with
+                        -- the entry so the interface never has to look the twin
+                        -- identity up a second way.
+                        entry.account = label
+                        entry.character = Sanctuary.bnetCharacterByAccount
+                            and Sanctuary.bnetCharacterByAccount[key] or nil
+                    end
+                    group.entries[#group.entries + 1] = entry
                 end
             end
         end
@@ -964,8 +1269,8 @@ function ns.getAutoWhitelistGroups(filterText)
     return groups
 end
 
--- Answers "does this person get through, and why" for one typed name. It reuses
--- getCharacterDecision unchanged, so the answer is the decision itself and not a
+-- Answers "which list does this name fall into, and why" for one typed name. It
+-- reuses classifyName unchanged, so the answer is the decision itself and not a
 -- second implementation of it that could drift.
 function ns.describeAccessDecision(name)
     if type(name) ~= "string" or name:gsub("%s", "") == "" then
@@ -978,34 +1283,260 @@ function ns.describeAccessDecision(name)
     end
 
     ns.ensureWhitelist()
-    local blocked, reason, keyword = getCharacterDecision(name)
+    local classification = classifyName(name)
+    local blockedNow = getCharacterDecision(name)
 
-    -- A Battle.net friend whose current character is unknown still gets through
-    -- on Battle.net whispers. Saying only "BLOCK" here would read as a bug to
-    -- someone who knows that contact passes, so the account match is reported.
-    local bnetKey = normalizeBNetName(name)
+    -- Someone blocked by name who is also allowed by a trust source is the case
+    -- the tester exists for. Adding to the blocked list never removes the
+    -- allowed entry, so the answer says both: blocked, even though.
+    local overridden, overriddenDetail = nil, nil
+    if classification.verdict == "always_blocked" then
+        local characterKey = normalizeName(name)
+        local accountKey = normalizeBNetName(name)
+        if characterKey and Sanctuary.whitelistSources[characterKey] then
+            overridden = Sanctuary.whitelistSources[characterKey]
+            overriddenDetail = Sanctuary.whitelistLabels[characterKey]
+        elseif accountKey and Sanctuary.bnetWhitelistSources[accountKey] then
+            overridden = Sanctuary.bnetWhitelistSources[accountKey]
+            overriddenDetail = Sanctuary.bnetWhitelistLabels[accountKey] or name
+        end
+    end
 
     return {
         valid = true,
         input = name,
         normalized = normalized,
-        blocked = blocked and true or false,
-        reason = reason or "unknown",
-        keyword = keyword,
-        source = Sanctuary.whitelistSources and Sanctuary.whitelistSources[normalized] or nil,
-        bnetSource = bnetKey and Sanctuary.bnetWhitelistSources
-            and Sanctuary.bnetWhitelistSources[bnetKey] or nil,
+        verdict = classification.verdict,
+        list = classification.list,
+        detail = classification.detail,
+        overriddenList = overridden,
+        overriddenDetail = overriddenDetail,
+        blockedNow = blockedNow and true or false,
+        scope = getScope(),
     }
+end
+
+-- ----------------------------------------------------------------------------
+-- What the interface reads
+-- ----------------------------------------------------------------------------
+
+-- The two tiles of question 4. Counted from the caches rather than from the
+-- stored tables so the number on screen is the number the decision uses.
+function ns.getListCounts()
+    ns.ensureWhitelist()
+
+    -- Battle.net friends are counted once, by account, on the account cache:
+    -- an online friend is also in the character cache under `bnet`, and counting
+    -- both sides would inflate the tile by however many of them happen to be
+    -- connected. The current group is not counted at all -- it is temporary, and
+    -- the panel says so in a line rather than listing it.
+    local allowed = { manual = 0, trust = 0, bnet = 0, friend = 0, guild = 0, total = 0 }
+    for _, source in pairs(Sanctuary.whitelistSources or {}) do
+        if source ~= "bnet" and allowed[source] ~= nil then
+            allowed[source] = allowed[source] + 1
+        end
+    end
+    for _, source in pairs(Sanctuary.bnetWhitelistSources or {}) do
+        if source == "bnet" then
+            allowed.bnet = allowed.bnet + 1
+        end
+    end
+    allowed.total = allowed.manual + allowed.trust + allowed.bnet
+        + allowed.friend + allowed.guild
+
+    local blocked = { names = 0, patterns = 0, total = 0 }
+    if SanctuaryDB then
+        for _ in pairs(SanctuaryDB.blockedNames or {}) do
+            blocked.names = blocked.names + 1
+        end
+        blocked.patterns = #(SanctuaryDB.keywords or {})
+    end
+    blocked.total = blocked.names + blocked.patterns
+
+    return { allowed = allowed, blocked = blocked }
+end
+
+-- The header tooltip: what is being filtered right now, and for how many people
+-- nothing is. `kinds` is resolved, never the stored checkboxes.
+do
+local PROTECTION_KINDS = { "groupInvite", "whisper", "duel", "trade", "guildInvite" }
+
+function ns.describeProtection()
+    local kinds = {}
+    for _, key in ipairs(PROTECTION_KINDS) do
+        if isFilterOn(key) == true then
+            kinds[#kinds + 1] = key
+        end
+    end
+    return {
+        enabled = isEnabled(),
+        kinds = kinds,
+        allowedCount = ns.getListCounts().allowed.total,
+    }
+end
+end
+
+-- The label of a log entry's type lives here, not in the interface, so the tab
+-- and the export can never disagree.
+do
+local LOG_TYPE_KEYS = {
+    groupInvite = "LOG_TYPE_INVITE",
+    whisper     = "LOG_TYPE_WHISPER",
+    say         = "LOG_TYPE_SAY",
+    yell        = "LOG_TYPE_YELL",
+    emote       = "LOG_TYPE_EMOTE",
+    duel        = "LOG_TYPE_DUEL",
+    trade       = "LOG_TYPE_TRADE",
+    guildInvite = "LOG_TYPE_GUILD",
+    channel     = "LOG_TYPE_CHANNEL",
+    group       = "LOG_TYPE_GROUP",
+}
+
+function ns.getLogEntryDisplayType(entry)
+    local blockType = type(entry) == "table" and entry.type or entry
+    local key = LOG_TYPE_KEYS[blockType]
+    if key and L[key] then return L[key] end
+    return tostring(blockType or "?")
+end
+end
+
+-- ----------------------------------------------------------------------------
+-- List writes
+-- ----------------------------------------------------------------------------
+
+-- All six return (ok, key, data): "Undo" needs the exact record back to put it
+-- where it was, and a caller that only wants to know whether anything changed
+-- reads the first value.
+
+function ns.addAllowed(name, source)
+    if not SanctuaryDB then return false end
+    local clean = stripWoWFormatting(name)
+    if not clean or clean:gsub("%s", "") == "" then return false end
+    local key = normalizeName(clean)
+    if not key then return false end
+    SanctuaryDB.manualWhitelist = SanctuaryDB.manualWhitelist or {}
+    if SanctuaryDB.manualWhitelist[key] then
+        return false, key, SanctuaryDB.manualWhitelist[key]
+    end
+    local data = {
+        displayName = clean,
+        addedAt = time(),
+        source = source == "trust" and "trust" or nil,
+    }
+    SanctuaryDB.manualWhitelist[key] = data
+    invalidateWhitelist()
+    return true, key, data
+end
+
+function ns.removeAllowed(key)
+    if not SanctuaryDB or not key then return false end
+    local data = SanctuaryDB.manualWhitelist and SanctuaryDB.manualWhitelist[key]
+    if not data then return false end
+    SanctuaryDB.manualWhitelist[key] = nil
+    invalidateWhitelist()
+    return true, key, data
+end
+
+-- Restores an entry exactly as it was, timestamp and origin included. Undo must
+-- not rewrite the date the person added someone.
+function ns.restoreAllowed(key, data)
+    if not SanctuaryDB or not key or type(data) ~= "table" then return false end
+    SanctuaryDB.manualWhitelist = SanctuaryDB.manualWhitelist or {}
+    SanctuaryDB.manualWhitelist[key] = data
+    invalidateWhitelist()
+    return true, key, data
+end
+
+function ns.addBlocked(name, source)
+    if not SanctuaryDB then return false end
+    local clean = stripWoWFormatting(name)
+    if not clean or clean:gsub("%s", "") == "" then return false end
+    local key = normalizeBlockedKey(clean)
+    if not key then return false end
+    SanctuaryDB.blockedNames = SanctuaryDB.blockedNames or {}
+    if SanctuaryDB.blockedNames[key] then
+        return false, key, SanctuaryDB.blockedNames[key]
+    end
+    -- Deliberately does NOT remove the name from the allowed list. The blocked
+    -- list wins anyway, the tester says so in one sentence, and silently
+    -- deleting a line somebody typed would be a data loss they never asked for.
+    local data = {
+        displayName = clean,
+        addedAt = time(),
+        source = source == "menu" and "menu" or "manual",
+    }
+    SanctuaryDB.blockedNames[key] = data
+    invalidateWhitelist()
+    return true, key, data
+end
+
+function ns.removeBlocked(key)
+    if not SanctuaryDB or not key then return false end
+    local data = SanctuaryDB.blockedNames and SanctuaryDB.blockedNames[key]
+    if not data then return false end
+    SanctuaryDB.blockedNames[key] = nil
+    invalidateWhitelist()
+    return true, key, data
+end
+
+function ns.restoreBlocked(key, data)
+    if not SanctuaryDB or not key or type(data) ~= "table" then return false end
+    SanctuaryDB.blockedNames = SanctuaryDB.blockedNames or {}
+    SanctuaryDB.blockedNames[key] = data
+    invalidateWhitelist()
+    return true, key, data
+end
+
+do
+local function normalizePatternText(text)
+    if type(text) ~= "string" then return nil end
+    local clean = stripWoWFormatting(text)
+    if not clean then return nil end
+    clean = clean:gsub("%s", ""):lower()
+    if clean == "" then return nil end
+    return clean
+end
+
+ns.normalizePatternText = normalizePatternText
+
+function ns.addPattern(text)
+    if not SanctuaryDB then return false end
+    local clean = normalizePatternText(text)
+    if not clean then return false end
+    SanctuaryDB.keywords = SanctuaryDB.keywords or {}
+    for _, existing in ipairs(SanctuaryDB.keywords) do
+        if existing == clean then return false, clean, clean end
+    end
+    SanctuaryDB.keywords[#SanctuaryDB.keywords + 1] = clean
+    invalidateWhitelist()
+    return true, clean, clean
+end
+
+function ns.removePattern(text)
+    if not SanctuaryDB or not SanctuaryDB.keywords then return false end
+    local clean = normalizePatternText(text)
+    if not clean then return false end
+    for index, existing in ipairs(SanctuaryDB.keywords) do
+        if existing == clean then
+            table.remove(SanctuaryDB.keywords, index)
+            invalidateWhitelist()
+            return true, clean, clean
+        end
+    end
+    return false
+end
 end
 
 -- ============================================================================
 -- SECTION F: Logging Engine
 -- ============================================================================
 
+local logBlock
+do
 local lastLogKey = ""
 local lastLogTime = 0
 
-local function logBlock(blockType, sourceName, message, guid, keyword)
+logBlock = function(blockType, sourceName, message, guid, keyword)
     if not SanctuaryDB then return end
     if not SanctuaryDB.logging.enabled then return end
 
@@ -1074,6 +1605,8 @@ local function logBlock(blockType, sourceName, message, guid, keyword)
             COLOR_HIGHLIGHT .. blockType .. COLOR_RESET,
             COLOR_HIGHLIGHT .. (sourceText or "?") .. COLOR_RESET))
     end
+end
+
 end
 
 -- Export logging to namespace
@@ -1320,7 +1853,7 @@ captureDebugSnapshot = function(trigger)
         manualWL = manualAccount .. "+" .. manualChar,
         keywords = SanctuaryDB.keywords and #SanctuaryDB.keywords or 0,
         filters = getEffectiveFilterState(),
-        groupInviteFilter = getEffective("filters.groupInvite") == true,
+        groupInviteFilter = isFilterOn("groupInvite") == true,
         partyInviteOriginalSound = tostring(capturePartyInviteOriginalSound() or "nil"),
         partyInviteSoundGuardActive = partyInviteSoundGuardDepth > 0,
         chatFramesSeen = chatFramesSeen,
@@ -1433,9 +1966,9 @@ local function buildDebugReportText()
     add("CharFriends: " .. tostring(readSocialCount(function()
         return C_FriendList.GetNumFriends()
     end)))
-    add("GroupInviteFilter: " .. tostring(getEffective("filters.groupInvite"))
+    add("GroupInviteFilter: " .. tostring(isFilterOn("groupInvite"))
         .. " | StrictGroupInviteSystemMessages: "
-        .. tostring(getEffective("filters.strictGroupInviteSystemMessages"))
+        .. tostring(isFilterOn("strictGroupInviteSystemMessages"))
         .. " | PartyInviteSoundGuard: " .. tostring(partyInviteSoundGuardDepth > 0))
     add("Filters: " .. serializeDebugData(getEffectiveFilterState()))
 
@@ -1500,6 +2033,14 @@ function ns.getReportMarkers(log)
         playerState = false,
         playerDied = false,
         playerRevived = false,
+        -- Strict mode in instances. Counted rather than flagged: the number of
+        -- hidden lines is what a recording is read for, and "visible" is the
+        -- counter-measurement that says whether the fix took.
+        secretSystemSuppressed = 0,
+        secretSystemVisible = 0,
+        secretSystemEligible = 0,
+        strictModeOn = false,
+        lockdownArmedInInstance = false,
         snapshots = 0,
         -- Every distinct build that wrote a snapshot into this log. A recording
         -- is only about one build; more than one means entries from an earlier
@@ -1523,6 +2064,11 @@ function ns.getReportMarkers(log)
                 markers.addonMetaBuild = data.addonMetaBuild
                 markers.addonMetaVersion = data.addonMetaVersion
                 markers.addonMetaInterface = data.addonMetaInterface
+                markers.addonInterface = data.addonInterface
+                if type(data.filters) == "table" then
+                    markers.strictModeOn =
+                        data.filters.strictGroupInviteSystemMessages == true
+                end
                 if data.build ~= nil then
                     local seen = false
                     for _, known in ipairs(markers.builds) do
@@ -1534,6 +2080,19 @@ function ns.getReportMarkers(log)
                 end
             elseif cat == "CHAT_OUTPUT" and data.action == "NO_MATCH" then
                 markers.chatOutputNoMatch = true
+            -- Kept in blocks of their own so a later change to one counter
+            -- cannot silently move another.
+            elseif cat == "CHAT_OUTPUT" and data.action == "SUPPRESS_SECRET_SYSTEM" then
+                markers.secretSystemSuppressed = markers.secretSystemSuppressed + 1
+            elseif cat == "CHAT_OUTPUT" and data.action == "SECRET_VALUE"
+                and data.isSystemTypeID == true then
+                markers.secretSystemVisible = markers.secretSystemVisible + 1
+            elseif cat == "SYSTEM_INVITE" and data.result == "STRICT_POLICY_ELIGIBLE" then
+                markers.secretSystemEligible = markers.secretSystemEligible + 1
+            elseif cat == "CHAT_TEST" and data.kind == "lockdown" then
+                if data.armed == true and data.inInstance == true then
+                    markers.lockdownArmedInInstance = true
+                end
             elseif cat == "POPUP" and data.action == "MASK_AWAITING_EVENT"
                 and (tonumber(data.affected) or 0) >= 1 then
                 markers.popupMaskAwaitingEvent = true
@@ -1647,6 +2206,10 @@ function ns.captureReportManifest(trigger)
         addonMetaVersion = context.addonMetaVersion,
         addonMetaBuild = context.addonMetaBuild,
         addonMetaInterface = context.addonMetaInterface,
+        -- The interface version the client actually resolved for this addon.
+        -- It is what the AddOns manager grades "Out of date" on, and until now
+        -- the recording carried nothing to compare against the client's.
+        addonInterface = context.addonInterface,
         clientVersion = context.clientVersion,
         clientBuild = context.clientBuild,
         clientInterface = context.clientInterface,
@@ -1673,7 +2236,7 @@ end
 -- this the right build, and is the instrumentation running -- and says where
 -- the actual record is. It is short enough that a rendering defect cannot hide
 -- inside it, and losing it costs nothing since it transports no data.
-function ns.buildDebugSummaryText()
+function ns.buildDebugSummaryText(includeFileNote)
     if not SanctuaryDB then return "" end
 
     local manifest = ns.captureReportManifest("summary")
@@ -1688,7 +2251,8 @@ function ns.buildDebugSummaryText()
         .. " | Locale: " .. manifest.locale)
     add("AddonMeta: version=" .. escapeExportText(manifest.addonMetaVersion)
         .. " build=" .. escapeExportText(manifest.addonMetaBuild)
-        .. " interface=" .. escapeExportText(manifest.addonMetaInterface))
+        .. " interface=" .. escapeExportText(manifest.addonInterface
+            or manifest.addonMetaInterface))
     add("Client: " .. escapeExportText(manifest.clientVersion)
         .. " build=" .. escapeExportText(manifest.clientBuild)
         .. " interface=" .. escapeExportText(manifest.clientInterface))
@@ -1709,9 +2273,9 @@ function ns.buildDebugSummaryText()
     add("--- ETAT ---")
     add("AddonEnabled: " .. tostring(manifest.addonEnabled)
         .. " | DebugEnabled: " .. tostring(manifest.debugEnabled))
-    add("GroupInviteFilter: " .. tostring(getEffective("filters.groupInvite"))
+    add("GroupInviteFilter: " .. tostring(isFilterOn("groupInvite"))
         .. " | StrictGroupInviteSystemMessages: "
-        .. tostring(getEffective("filters.strictGroupInviteSystemMessages"))
+        .. tostring(isFilterOn("strictGroupInviteSystemMessages"))
         .. " | PartyInviteSoundGuard: " .. tostring(partyInviteSoundGuardDepth > 0))
     add("Whitelist: " .. tostring(ns.getWhitelistCacheSize()) .. " personnages / "
         .. tostring(ns.getBNetWhitelistCacheSize()) .. " comptes Battle.net")
@@ -1727,12 +2291,31 @@ function ns.buildDebugSummaryText()
         .. " instance=" .. yesno(markers.worldInInstance)
         .. " mort=" .. yesno(markers.playerState)
         .. " snapshots=" .. tostring(markers.snapshots))
+    add("Instance: masques=" .. tostring(markers.secretSystemSuppressed)
+        .. " visibles=" .. tostring(markers.secretSystemVisible)
+        .. " eligibles=" .. tostring(markers.secretSystemEligible)
+        .. " renforce=" .. yesno(markers.strictModeOn)
+        .. " verrouillage=" .. yesno(markers.lockdownArmedInInstance))
 
-    add("")
-    add("--- RELEVE ---")
-    add(L["DEBUG_SUMMARY_FILE"])
+    if includeFileNote ~= false then
+        add("")
+        add("--- RELEVE ---")
+        add(L["DEBUG_SUMMARY_FILE"])
+    end
 
     return table.concat(lines, "\n") .. "\n"
+end
+
+-- The single "Export the report" button: the summary that says whether the
+-- recording is usable, then the recording itself. The file-location note is
+-- dropped here -- this text is the transport, so telling the reader to go and
+-- find the file instead would contradict the button they just pressed.
+function ns.buildExportReportText()
+    if not SanctuaryDB then return "" end
+    -- Forced, as before: "play, untick debug, export later" is a normal path,
+    -- and it used to produce a report whose last snapshot dated from activation.
+    captureDebugSnapshot("export")
+    return ns.buildDebugSummaryText(false) .. "\n" .. buildDebugReportText()
 end
 
 -- ============================================================================
@@ -1743,11 +2326,13 @@ end
 local invitePatterns = {}
 local invitePatternKinds = {}
 
+local formatStringToPattern
+do
 local function escapePattern(s)
     return s:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
 end
 
-local function formatStringToPattern(formatString)
+formatStringToPattern = function(formatString)
     if type(formatString) ~= "string" or formatString == "" then return nil end
 
     -- Replace printf tokens before escaping the remaining literal text. Numbered
@@ -1764,6 +2349,7 @@ local function formatStringToPattern(formatString)
         :gsub(stringToken, "(.+)")
         :gsub(numberToken, "%%d+")
     return "^" .. pattern .. "$"
+end
 end
 
 local function buildInvitePatterns()
@@ -1814,25 +2400,44 @@ local function extractInviterFromSystemMessage(msg)
     return nil, nil, nil
 end
 
-local function shouldSuppressSecretGroupInviteSystemMessage(msg)
-    if not isRestrictedValue(msg) then return false end
-    if not isEnabled() or getEffective("filters.groupInvite") ~= true then return false end
-    if getEffective("filters.strictGroupInviteSystemMessages") ~= true then return false end
+-- Shared core of the strict-mode predicate. One rule, one place: the filter, the
+-- output envelope and the eligibility marker all read it, so they cannot drift.
+-- The settings are read on every call, which is what makes the mode reversible
+-- without a /reload.
+local function evaluateStrictSecretSuppression()
+    if not isEnabled() then return false, "addon_disabled" end
+    if isFilterOn("groupInvite") ~= true then return false, "filter_off" end
+    if isFilterOn("strictGroupInviteSystemMessages") ~= true then return false, "strict_off" end
 
     local context = getRuntimeContext()
-    return context.inGroup or context.inRaid or context.inInstance
+    if not (context.inGroup or context.inRaid or context.inInstance) then
+        return false, "no_context"
+    end
+    return true, "suppressed"
 end
+
+local function shouldSuppressSecretGroupInviteSystemMessage(msg)
+    if not isRestrictedValue(msg) then return false end
+    return (evaluateStrictSecretSuppression())
+end
+
+-- The order every attributable decision path follows:
+--   isEnabled() -> isAlwaysBlocked(sender) -> isFilterOn(kind) -> getCharacterDecision
+-- The always-blocked list comes before the filter flag on purpose: it is what
+-- makes it beat a filter the person unticked.
 
 -- System-message filters are invoked once per destination chat frame, so they
 -- must stay side-effect free. Logging/debugging happens in CHAT_MSG_SYSTEM.
 local function systemMessageFilter(self, event, msg, ...)
     if not isEnabled() then return false end
-    if not getEffective("filters.groupInvite") then return false end
 
     if shouldSuppressSecretGroupInviteSystemMessage(msg) then return true end
 
     local inviterName = extractInviterFromSystemMessage(msg)
     if not inviterName then return false end
+
+    if isAlwaysBlocked(inviterName) then return true end
+    if isFilterOn("groupInvite") ~= true then return false end
 
     local shouldBlock = getCharacterDecision(inviterName)
     return shouldBlock
@@ -1842,9 +2447,8 @@ end
 local function whisperFilter(self, event, msg, sender, ...)
     if not isEnabled() then return false end
 
-    local keywordMatch = matchesKeyword(sender)
-    if keywordMatch then return true end
-    if not getEffective("filters.whisper") then return false end
+    if isAlwaysBlocked(sender) then return true end
+    if isFilterOn("whisper") ~= true then return false end
 
     local shouldBlock = getCharacterDecision(sender)
     return shouldBlock
@@ -1856,15 +2460,16 @@ local function bnetWhisperFilter(self, event, msg, sender, ...)
 
     local bnetSender = resolveBNetWhisperSender(sender, ...)
     local decisionName = bnetSender.accountName or sender
-    local keywordMatch = matchesKeyword(decisionName)
-    if keywordMatch then return true end
-    if not getEffective("filters.whisper") then return false end
+    if isAlwaysBlocked(decisionName) then return true end
+    if isFilterOn("whisper") ~= true then return false end
 
     if isBNetWhitelisted(decisionName) then return false end
     if isBNetSenderInGroup and isBNetSenderInGroup(decisionName) then return false end
     return true
 end
 
+local isSelf
+do
 local function normalizeRealmToken(realm)
     if not realm or realm == "" then return nil end
     return realm:lower():gsub("[%s%-']", "")
@@ -1872,7 +2477,7 @@ end
 
 -- Never filter the player's own public messages. Realm information is honored
 -- when present so a same-named player on another realm is not mistaken for self.
-local function isSelf(sender)
+isSelf = function(sender)
     local clean = stripWoWFormatting(sender)
     if not clean then return false end
 
@@ -1894,15 +2499,15 @@ local function isSelf(sender)
     end
     return true
 end
+end
 
 -- Say filter (P2 — off by default)
 local function sayFilter(self, event, msg, sender, ...)
     if not isEnabled() then return false end
     if isSelf(sender) then return false end
 
-    local keywordMatch = matchesKeyword(sender)
-    if keywordMatch then return true end
-    if not getEffective("filters.say") then return false end
+    if isAlwaysBlocked(sender) then return true end
+    if isFilterOn("say") ~= true then return false end
 
     local shouldBlock = getCharacterDecision(sender)
     return shouldBlock
@@ -1913,9 +2518,8 @@ local function yellFilter(self, event, msg, sender, ...)
     if not isEnabled() then return false end
     if isSelf(sender) then return false end
 
-    local keywordMatch = matchesKeyword(sender)
-    if keywordMatch then return true end
-    if not getEffective("filters.yell") then return false end
+    if isAlwaysBlocked(sender) then return true end
+    if isFilterOn("yell") ~= true then return false end
 
     local shouldBlock = getCharacterDecision(sender)
     return shouldBlock
@@ -1926,29 +2530,51 @@ local function emoteFilter(self, event, msg, sender, ...)
     if not isEnabled() then return false end
     if isSelf(sender) then return false end
 
-    local keywordMatch = matchesKeyword(sender)
-    if keywordMatch then return true end
-    if not getEffective("filters.emote") then return false end
+    if isAlwaysBlocked(sender) then return true end
+    if isFilterOn("emote") ~= true then return false end
 
     local shouldBlock = getCharacterDecision(sender)
     return shouldBlock
 end
 
--- Channel filter (/1, /2, /3...) with 3 modes: none, keywords, all
+-- Channel filter (/1, /2, /3...) with 3 modes: none, keywords, all.
+-- The always-blocked gate now runs before the mode: a pattern used to let a
+-- public channel through while "no filtering" was selected, which contradicted
+-- "always blocked, whatever the settings".
 local function channelFilter(self, event, msg, sender, ...)
     if not isEnabled() then return false end
     if isSelf(sender) then return false end
 
-    local mode = getEffective("filters.channelMode") or "none"
-    if mode == "none" then return false end
+    if isAlwaysBlocked(sender) then return true end
 
-    local keywordMatch = matchesKeyword(sender)
-    if keywordMatch then return true end
+    local mode = isFilterOn("channelMode")
     if mode ~= "all" then return false end
 
     local shouldBlock = getCharacterDecision(sender)
     return shouldBlock
 end
+
+-- Group, raid and instance chat. The only channels Sanctuary ever touches, and
+-- only for the always-blocked list: never a stranger, never the player, and no
+-- setting is consulted. This is the unwanted team-mate case that motivated the
+-- list -- their /p was the one thing that stayed visible.
+local function groupChatFilter(self, event, msg, sender, ...)
+    if not isEnabled() then return false end
+    if isSelf(sender) then return false end
+    return isAlwaysBlocked(sender) and true or false
+end
+
+local GROUP_CHAT_EVENTS = {
+    "CHAT_MSG_PARTY",
+    "CHAT_MSG_PARTY_LEADER",
+    "CHAT_MSG_RAID",
+    "CHAT_MSG_RAID_LEADER",
+    "CHAT_MSG_RAID_WARNING",
+    "CHAT_MSG_INSTANCE_CHAT",
+    "CHAT_MSG_INSTANCE_CHAT_LEADER",
+}
+
+ns.GROUP_CHAT_EVENTS = GROUP_CHAT_EVENTS
 
 -- Register all filters
 local chatFiltersRegistered = false
@@ -1977,6 +2603,9 @@ local function registerChatFilters()
     addFilter("CHAT_MSG_EMOTE", emoteFilter)
     addFilter("CHAT_MSG_TEXT_EMOTE", emoteFilter)
     addFilter("CHAT_MSG_CHANNEL", channelFilter)
+    for _, event in ipairs(GROUP_CHAT_EVENTS) do
+        addFilter(event, groupChatFilter)
+    end
 
     debugLog("CHAT_FILTER_REGISTRY", {
         action = "REGISTERED",
@@ -1997,9 +2626,11 @@ local activeChatOutputProbe
 -- The secret payload itself is never read, converted or serialized; only this
 -- category is measured, and only to learn whether the leaked lines really are
 -- ChatTypeInfo.SYSTEM before any suppression is considered.
+local describeSecretOutputMessageType
+do
 local SECRET_OUTPUT_MESSAGE_TYPE_INDEX = 4
 
-local function describeSecretOutputMessageType(...)
+describeSecretOutputMessageType = function(...)
     local messageTypeID = select(SECRET_OUTPUT_MESSAGE_TYPE_INDEX, ...)
     local systemTypeID = readSystemChatTypeID()
     local described = {
@@ -2036,74 +2667,123 @@ local function describeSecretOutputMessageType(...)
     described.signature = tostring(described.messageTypeID) .. "/" .. tostring(described.systemTypeID)
     return described
 end
+end
+
+-- Whether a secret line reaching AddMessage must be dropped. Pure: no writes, no
+-- logs, no native call, and re-evaluated on every frame of every burst, which is
+-- what makes unticking the box take effect on the next line without a /reload.
+--
+-- There is deliberately no lockdown step. The state is read and recorded, but it
+-- cannot refuse the masking: a wrong `false` would cancel the whole fix,
+-- silently, in the exact scenario the fix exists for.
+local function shouldSuppressSecretSystemOutput(text, described)
+    if not isRestrictedValue(text) then return false, "readable" end
+    if not described.isSystemTypeIDKnown then return false, "type_unknown" end
+    if not described.isSystemTypeID then return false, "type_not_system" end
+    return evaluateStrictSecretSuppression()
+end
+
+ns.shouldSuppressSecretSystemOutput = shouldSuppressSecretSystemOutput
 
 -- One chat payload is dispatched to every subscribed ChatFrame, so a single
--- secret system line produces one AddMessage call per frame. Collapse that burst
--- into a single diagnostic carrying the frame list instead of N near-identical
--- entries, otherwise the log volume hides the signal it is meant to measure.
+-- secret system line produces one AddMessage call per frame. The tracker answers
+-- one question -- "is this a new message?" -- and it answers it whether or not
+-- debug mode is on, because the masking decision is taken per frame while the
+-- burst identity belongs to the message.
 local secretChatOutputBurst = nil
 
-local function recordSecretChatOutput(frameIndex, ...)
-    if not SanctuaryDB or not SanctuaryDB.debugEnabled then return end
-
-    local described = describeSecretOutputMessageType(...)
+local function trackSecretChatOutput(frameIndex, described)
     local now = GetTime()
     local burst = secretChatOutputBurst
 
     -- Only a readable message type discriminates two payloads. When the category
     -- is secret or absent the signature degenerates and two distinct messages
-    -- landing on different frames within the window would merge into one
-    -- frameCount, so an unreadable category always gets its own entry.
-    -- A frame index that already belongs to the burst means a *new* message,
-    -- not another destination for the same one: Blizzard dispatches a payload
-    -- at most once per frame. Only a not-yet-seen frame extends the burst.
+    -- landing on different frames within the window would merge into one, so an
+    -- unreadable category always counts as a new message and never opens a burst.
+    -- A frame index that already belongs to the burst also means a *new* message:
+    -- Blizzard dispatches a payload at most once per frame.
     if described.messageTypeIDKnown and burst and burst.signature == described.signature
         and (now - burst.time) < 0.5 and not burst.frames[frameIndex] then
-        local entry = SanctuaryDB.debugLog and SanctuaryDB.debugLog[#SanctuaryDB.debugLog]
-        if entry and entry.seq == burst.seq and entry.data then
-            burst.frames[frameIndex] = true
-            burst.frameList[#burst.frameList + 1] = frameIndex
-            entry.data.frames = table.concat(burst.frameList, ",")
-            entry.data.frameCount = #burst.frameList
-            return
-        end
+        burst.frames[frameIndex] = true
+        burst.frameList[#burst.frameList + 1] = frameIndex
+        return false, burst
     end
 
-    debugLog("CHAT_OUTPUT", addRuntimeContext({
-        frame = frameIndex,
-        frames = tostring(frameIndex),
-        frameCount = 1,
-        action = "SECRET_VALUE",
-        msg = SECRET_VALUE_PLACEHOLDER,
-        messageTypeID = described.messageTypeID,
-        messageTypeIDKnown = described.messageTypeIDKnown,
-        systemTypeID = described.systemTypeID,
-        isSystemTypeID = described.isSystemTypeID,
-        isSystemTypeIDKnown = described.isSystemTypeIDKnown,
-        argCount = select("#", ...),
-        filterEnabled = isEnabled() and getEffective("filters.groupInvite") == true,
-        strictGroupInviteSystemMessages = getEffective("filters.strictGroupInviteSystemMessages") == true,
-        soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
-    }))
-
-    local entry = SanctuaryDB.debugLog and SanctuaryDB.debugLog[#SanctuaryDB.debugLog]
-    if entry and described.messageTypeIDKnown then
+    if described.messageTypeIDKnown then
         secretChatOutputBurst = {
-            seq = entry.seq,
             signature = described.signature,
             time = now,
             frames = { [frameIndex] = true },
             frameList = { frameIndex },
         }
     else
-        -- No burst is opened on an unreadable category: nothing may attach to it.
         secretChatOutputBurst = nil
     end
+    return true, secretChatOutputBurst
+end
+
+local function recordSecretChatOutput(frameIndex, described, isNewMessage, burst, suppress, reason, argCount)
+    if not SanctuaryDB or not SanctuaryDB.debugEnabled then return end
+
+    if not isNewMessage and burst and burst.debugSeq then
+        local entry = SanctuaryDB.debugLog and SanctuaryDB.debugLog[#SanctuaryDB.debugLog]
+        if entry and entry.seq == burst.debugSeq and entry.data then
+            entry.data.frames = table.concat(burst.frameList, ",")
+            entry.data.frameCount = #burst.frameList
+            return
+        end
+    end
+
+    local lockdown, lockdownKnown = readChatLockdown()
+    debugLog("CHAT_OUTPUT", addRuntimeContext({
+        frame = frameIndex,
+        frames = burst and table.concat(burst.frameList, ",") or tostring(frameIndex),
+        frameCount = burst and #burst.frameList or 1,
+        action = suppress and "SUPPRESS_SECRET_SYSTEM" or "SECRET_VALUE",
+        reason = reason or "unknown",
+        chatLockdown = lockdown,
+        chatLockdownKnown = lockdownKnown,
+        msg = SECRET_VALUE_PLACEHOLDER,
+        messageTypeID = described.messageTypeID,
+        messageTypeIDKnown = described.messageTypeIDKnown,
+        systemTypeID = described.systemTypeID,
+        isSystemTypeID = described.isSystemTypeID,
+        isSystemTypeIDKnown = described.isSystemTypeIDKnown,
+        argCount = argCount or 0,
+        filterEnabled = isEnabled() and isFilterOn("groupInvite") == true,
+        strictGroupInviteSystemMessages = isFilterOn("strictGroupInviteSystemMessages") == true,
+        soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
+    }))
+
+    local entry = SanctuaryDB.debugLog and SanctuaryDB.debugLog[#SanctuaryDB.debugLog]
+    if entry and burst then
+        burst.debugSeq = entry.seq
+    end
+end
+
+-- Frames seen but not wrapped are reported once each. A recording showing 11
+-- frames seen for 10 wrapped had no way to say which one, or why.
+local noteChatOutputWrapSkipped
+do
+local chatOutputWrapSkipped = setmetatable({}, { __mode = "k" })
+
+noteChatOutputWrapSkipped = function(frameIndex, chatFrame, reason)
+    if chatOutputWrapSkipped[chatFrame] == reason then return end
+    chatOutputWrapSkipped[chatFrame] = reason
+    debugLog("CHAT_OUTPUT", {
+        frame = frameIndex,
+        action = "WRAP_SKIPPED",
+        reason = reason,
+    })
+end
 end
 
 local function hookChatOutputDiagnostics()
     for i = 1, 20 do
         local chatFrame = _G["ChatFrame" .. i]
+        if chatFrame and not chatFrame.AddMessage then
+            noteChatOutputWrapSkipped(i, chatFrame, "no_add_message")
+        end
         if chatFrame and chatOutputWrapped[chatFrame] ~= chatFrame.AddMessage and chatFrame.AddMessage then
             local frameIndex = i
             local original = chatFrame.AddMessage
@@ -2113,18 +2793,26 @@ local function hookChatOutputDiagnostics()
                 end
 
                 if isRestrictedValue(text) then
-                    -- Instrumentation step only: the secret line still reaches
-                    -- the original AddMessage. Suppressing here is not allowed
-                    -- until the measured message type proves it can be done
-                    -- without hiding a legitimate message.
-                    recordSecretChatOutput(frameIndex, ...)
+                    -- A secret system line cannot be read, so it cannot be told
+                    -- apart from an invitation. Blizzard's filter registry skips
+                    -- addon callbacks entirely on a secret payload, which leaves
+                    -- this envelope as the only place the line can be stopped.
+                    -- Hiding the whole system category here is a product
+                    -- decision, taken knowingly and confined to the opt-in mode:
+                    -- the predicate refuses in six other ways first.
+                    local described = describeSecretOutputMessageType(...)
+                    local suppress, reason = shouldSuppressSecretSystemOutput(text, described)
+                    local isNewMessage, burst = trackSecretChatOutput(frameIndex, described)
+                    recordSecretChatOutput(frameIndex, described, isNewMessage, burst,
+                        suppress, reason, select("#", ...))
+                    if suppress then return end
                     return original(self, text, ...)
                 end
 
                 local inviterName, patternIndex, patternKind = extractInviterFromSystemMessage(text)
                 if inviterName then
                     local shouldBlock, reason, keyword = getCharacterDecision(inviterName)
-                    local filterEnabled = isEnabled() and getEffective("filters.groupInvite") == true
+                    local filterEnabled = isEnabled() and isFilterOn("groupInvite") == true
                     local suppress = filterEnabled and shouldBlock
                     if activeChatOutputProbe and activeChatOutputProbe.message == text then
                         activeChatOutputProbe.observed = true
@@ -2162,7 +2850,7 @@ local function hookChatOutputDiagnostics()
                             frame = frameIndex,
                             action = "NO_MATCH",
                             msg = safeText(text, 300, "nil"),
-                            filterEnabled = isEnabled() and getEffective("filters.groupInvite") == true,
+                            filterEnabled = isEnabled() and isFilterOn("groupInvite") == true,
                             soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
                         }))
                     end
@@ -2192,9 +2880,18 @@ ns.hookChatOutputDiagnostics = hookChatOutputDiagnostics
 -- StaticPopup_Show is also used by protected Blizzard UI such as CAMP/QUIT.
 -- Retail live testing confirmed that wrapping it globally can break quit/logout
 -- flows, so Sanctuary only adjusts the specific invite/duel dialog definitions.
+-- Sound-guard machinery. Scoped: two dozen names below are private to it, and
+-- a Lua chunk may only hold 200 live locals. What the rest of the file needs is
+-- declared here.
+local acquireProtectedPopupSoundGuard, guildInviteFrameSoundGuardToken, playAllowedProtectedPopupSounds, protectedPopupSoundGuardDialogs
+local refreshInviteSoundMuteState, releaseGuildInviteFrameSoundGuard, releaseProtectedPopupSoundGuard, releaseProtectedPopupSoundGuards
+local releaseStaleProtectedPopupSoundMute, restoreStaticPopupSoundAfterShow
+
+do
+
 local STATIC_POPUP_SOUND_GUARDS = {
-    PARTY_INVITE = "filters.groupInvite",
-    DUEL_REQUESTED = "filters.duel",
+    PARTY_INVITE = "groupInvite",
+    DUEL_REQUESTED = "duel",
 }
 
 local PROTECTED_POPUP_SOUND_FILES = {
@@ -2208,11 +2905,9 @@ partyInviteSoundGuardDepth = 0
 local protectedPopupSoundGuardDepth = 0
 local protectedPopupSoundGuardSerial = 0
 local protectedPopupSoundGuardTokens = {}
-local protectedPopupSoundGuardDialogs = setmetatable({}, { __mode = "k" })
+protectedPopupSoundGuardDialogs = setmetatable({}, { __mode = "k" })
 local staticPopupOnShowGuardHooked = false
-local guildInviteFrameSoundGuardToken = nil
-local releaseProtectedPopupSoundGuards
-local releaseGuildInviteFrameSoundGuard
+guildInviteFrameSoundGuardToken = nil
 
 capturePartyInviteOriginalSound = function()
     local state = staticPopupSoundGuardStates.PARTY_INVITE
@@ -2300,7 +2995,7 @@ local function setStaticPopupSoundSuppressed(which, shouldSuppress, reason)
     return true
 end
 
-local function restoreStaticPopupSoundAfterShow(which, reason)
+restoreStaticPopupSoundAfterShow = function(which, reason)
     local state = staticPopupSoundGuardStates[which]
     if not state or not state.temporarilyRestoredForShow then return false end
 
@@ -2445,7 +3140,7 @@ end
 
 -- Clears a mute left behind by a previous session. Called at load, where no
 -- guard can be active yet, and only for files this addon recorded as muted.
-local function releaseStaleProtectedPopupSoundMute()
+releaseStaleProtectedPopupSoundMute = function()
     if not SanctuaryDB or not SanctuaryDB.protectedPopupSoundMuted then return false end
 
     for _, fileID in ipairs(PROTECTED_POPUP_SOUND_FILES) do
@@ -2465,7 +3160,7 @@ local function releaseStaleProtectedPopupSoundMute()
     return true
 end
 
-local function acquireProtectedPopupSoundGuard(which, reason)
+acquireProtectedPopupSoundGuard = function(which, reason)
     protectedPopupSoundGuardSerial = protectedPopupSoundGuardSerial + 1
     local token = protectedPopupSoundGuardSerial
     protectedPopupSoundGuardTokens[token] = true
@@ -2489,7 +3184,7 @@ local function acquireProtectedPopupSoundGuard(which, reason)
     return token
 end
 
-local function releaseProtectedPopupSoundGuard(token, which, reason)
+releaseProtectedPopupSoundGuard = function(token, which, reason)
     if token and not protectedPopupSoundGuardTokens[token] then return false end
     if token then
         protectedPopupSoundGuardTokens[token] = nil
@@ -2524,7 +3219,7 @@ local function releaseProtectedPopupSoundGuard(token, which, reason)
     return true
 end
 
-local function playAllowedProtectedPopupSounds(which, reason)
+playAllowedProtectedPopupSounds = function(which, reason)
     local openSound = SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPEN
     local openOk = true
     local openErr = nil
@@ -2612,10 +3307,13 @@ local function installStaticPopupSoundOnShowGuard()
     return false
 end
 
-local function refreshInviteSoundMuteState()
+refreshInviteSoundMuteState = function()
     installStaticPopupSoundOnShowGuard()
-    for which, filterPath in pairs(STATIC_POPUP_SOUND_GUARDS) do
-        local shouldSuppress = isEnabled() and getEffective(filterPath) == true
+    -- Armed, not "ticked": one always-blocked name is enough to need the guard,
+    -- and empty lists with every filter unticked arm nothing at all -- the
+    -- native sound then plays exactly as WoW intends.
+    for which in pairs(STATIC_POPUP_SOUND_GUARDS) do
+        local shouldSuppress = isProtectionArmed(which)
         setStaticPopupSoundSuppressed(which, shouldSuppress, shouldSuppress and "filter_enabled" or "filter_disabled")
     end
 
@@ -2624,18 +3322,21 @@ local function refreshInviteSoundMuteState()
         releaseGuildInviteFrameSoundGuard("filter_disabled")
         return
     end
-    if not getEffective("filters.duel") then
+    if not isProtectionArmed("DUEL_REQUESTED") then
         releaseProtectedPopupSoundGuards("DUEL_REQUESTED", "filter_disabled")
     end
-    if not getEffective("filters.guildInvite") then
+    if not isProtectionArmed("guildInvite") then
         releaseGuildInviteFrameSoundGuard("filter_disabled")
     end
-    if not getEffective("filters.groupInvite") then
+    if not isProtectionArmed("PARTY_INVITE") then
         releaseProtectedPopupSoundGuards("PARTY_INVITE", "filter_disabled")
         if unmaskVisiblePopup then
             unmaskVisiblePopup("PARTY_INVITE")
         end
     end
+end
+
+
 end
 
 ns.getPartyInviteOriginalSound = capturePartyInviteOriginalSound
@@ -2759,14 +3460,23 @@ end
 -- call StaticPopup_Hide for these interactions: Midnight attaches stateful
 -- countdown tickers to some invite dialogs and direct hiding can leave them
 -- alive across popup reuse.
+-- Popup masking and guild-invite frame. Same reason as the block above: only
+-- the names declared here leave the section.
+local GUILD_INVITE_FRAME_KEY, applyPopupDecision, clearPendingGuildInviteFrameDecision, clearPendingPopupDecision
+local consumePendingPopupDecision, countVisiblePopup, getGuildInviteFrame, guildInviteFrameLastHideSerial
+local guildInviteFrameLastMaskSerial, hidePopupDialogSilently, hideVisiblePopupSilently, installGuildInviteFrameGuard
+local isGuildInviteFrameProtectionActive, isGuildInviteFrameShown, isPopupProtectionActive, maskVisiblePopup
+local scheduleVisiblePopupSilentHide, synchronizeGuildInviteFrameDecision, synchronizePopupDecision, unmaskAllInteractionPopups
+local unmaskGuildInviteFrame
+
+do
+
 local maskedPopupState = setmetatable({}, { __mode = "k" })
 local popupHideHooked = setmetatable({}, { __mode = "k" })
 pendingPopupDecisions = {}
 local popupDecisionSerial = 0
 local POPUP_DECISION_MAX_AGE = 1.0
-local GUILD_INVITE_FRAME_KEY = "GUILD_INVITE_FRAME"
-local unmaskGuildInviteFrame
-local clearPendingGuildInviteFrameDecision
+GUILD_INVITE_FRAME_KEY = "GUILD_INVITE_FRAME"
 
 local function restorePopup(dialog)
     local state = maskedPopupState[dialog]
@@ -2812,7 +3522,7 @@ local function forEachStaticPopup(callback)
     end
 end
 
-local function countVisiblePopup(which)
+countVisiblePopup = function(which)
     local count = 0
     forEachStaticPopup(function(dialog)
         if dialog.IsShown and dialog:IsShown() and dialog.which == which then
@@ -2822,7 +3532,7 @@ local function countVisiblePopup(which)
     return count
 end
 
-local function maskVisiblePopup(which)
+maskVisiblePopup = function(which)
     local masked = 0
     forEachStaticPopup(function(dialog)
         if maskPopupDialog(dialog, which) then
@@ -2844,7 +3554,7 @@ unmaskVisiblePopup = function(which)
     return restored
 end
 
-local function unmaskAllInteractionPopups()
+unmaskAllInteractionPopups = function()
     local restored = unmaskVisiblePopup(nil)
     if unmaskGuildInviteFrame then
         restored = restored + (unmaskGuildInviteFrame() or 0)
@@ -2866,7 +3576,7 @@ releaseProtectedPopupSoundGuards = function(which, reason)
     return released
 end
 
-local function hidePopupDialogSilently(dialog, which, reason)
+hidePopupDialogSilently = function(dialog, which, reason)
     if not dialog or not dialog.IsShown or not dialog:IsShown() then return false end
     if dialog.which ~= which then return false end
 
@@ -2904,7 +3614,7 @@ local function hidePopupDialogSilently(dialog, which, reason)
     return ok and true or false
 end
 
-local function hideVisiblePopupSilently(which, reason)
+hideVisiblePopupSilently = function(which, reason)
     local hidden = 0
     forEachStaticPopup(function(dialog)
         if hidePopupDialogSilently(dialog, which, reason) then
@@ -2914,7 +3624,7 @@ local function hideVisiblePopupSilently(which, reason)
     return hidden
 end
 
-local function scheduleVisiblePopupSilentHide(which, reason)
+scheduleVisiblePopupSilentHide = function(which, reason)
     C_Timer.After(0, function()
         local hidden = hideVisiblePopupSilently(which, reason)
         debugLog("POPUP", {
@@ -2926,18 +3636,18 @@ local function scheduleVisiblePopupSilentHide(which, reason)
     end)
 end
 
-local function clearPendingPopupDecision(which)
+clearPendingPopupDecision = function(which)
     pendingPopupDecisions[which] = nil
 end
 
-local function applyPopupDecision(which, shouldBlock)
+applyPopupDecision = function(which, shouldBlock)
     if shouldBlock then
         return maskVisiblePopup(which)
     end
     return unmaskVisiblePopup(which)
 end
 
-local function synchronizePopupDecision(which, shouldBlock, name, reason)
+synchronizePopupDecision = function(which, shouldBlock, name, reason)
     popupDecisionSerial = popupDecisionSerial + 1
     local decision = {
         serial = popupDecisionSerial,
@@ -2977,7 +3687,7 @@ local function synchronizePopupDecision(which, shouldBlock, name, reason)
     return decision.serial
 end
 
-local function consumePendingPopupDecision(which)
+consumePendingPopupDecision = function(which)
     local decision = pendingPopupDecisions[which]
     if not decision then return nil end
     pendingPopupDecisions[which] = nil
@@ -2987,30 +3697,31 @@ local function consumePendingPopupDecision(which)
     return decision
 end
 
-local function isPopupProtectionActive(which)
-    if not isEnabled() then return false end
-    if which == "PARTY_INVITE" then
-        return getEffective("filters.groupInvite") == true
-    elseif which == "DUEL_REQUESTED" then
-        return getEffective("filters.duel") == true
+-- Armed on the filter OR on the always-blocked list. Without the second half a
+-- blocked name would still flash its window and play its sound as soon as the
+-- matching filter is unticked -- which is the nominal path of "everyone except
+-- the people I block".
+isPopupProtectionActive = function(which)
+    if which == "PARTY_INVITE" or which == "DUEL_REQUESTED" then
+        return isProtectionArmed(which)
     end
     return false
 end
 
-local function isGuildInviteFrameProtectionActive()
-    return isEnabled() and getEffective("filters.guildInvite") == true
+isGuildInviteFrameProtectionActive = function()
+    return isProtectionArmed("guildInvite")
 end
 
 local guildInviteFrameHooked = false
 local guildInviteFrameMaskedState = nil
-local guildInviteFrameLastMaskSerial = 0
-local guildInviteFrameLastHideSerial = 0
+guildInviteFrameLastMaskSerial = 0
+guildInviteFrameLastHideSerial = 0
 
-local function getGuildInviteFrame()
+getGuildInviteFrame = function()
     return _G and _G.GuildInviteFrame or nil
 end
 
-local function isGuildInviteFrameShown(frame)
+isGuildInviteFrameShown = function(frame)
     frame = frame or getGuildInviteFrame()
     return frame and frame.IsShown and frame:IsShown() or false
 end
@@ -3143,7 +3854,7 @@ local function applyGuildInviteFrameDecision(shouldBlock, reason)
     return unmaskGuildInviteFrame and unmaskGuildInviteFrame() or 0, false
 end
 
-local function synchronizeGuildInviteFrameDecision(shouldBlock, inviter, reason)
+synchronizeGuildInviteFrameDecision = function(shouldBlock, inviter, reason)
     popupDecisionSerial = popupDecisionSerial + 1
     local decision = {
         serial = popupDecisionSerial,
@@ -3184,7 +3895,7 @@ local function synchronizeGuildInviteFrameDecision(shouldBlock, inviter, reason)
     return decision.serial
 end
 
-local function installGuildInviteFrameGuard()
+installGuildInviteFrameGuard = function()
     local frame = getGuildInviteFrame()
     if not frame or guildInviteFrameHooked or not frame.HookScript then
         return frame
@@ -3243,6 +3954,9 @@ unmaskGuildInviteFrame = function()
     return restoreGuildInviteFrame()
 end
 
+
+end
+
 ns.maskVisiblePopup = maskVisiblePopup
 ns.unmaskVisiblePopup = unmaskVisiblePopup
 ns.unmaskAllInteractionPopups = unmaskAllInteractionPopups
@@ -3250,22 +3964,84 @@ ns.clearPendingPopupDecision = clearPendingPopupDecision
 ns.clearPendingGuildInviteFrameDecision = clearPendingGuildInviteFrameDecision
 ns.unmaskGuildInviteFrame = unmaskGuildInviteFrame
 
+-- The master switch, in the core rather than in the interface: the header
+-- control, the minimap right-click and the harness all flip protection the same
+-- way, so none of them can forget to release a guard or to unmask a window.
+function ns.setEnabled(enabled)
+    if not SanctuaryCharDB then return isEnabled() end
+    SanctuaryCharDB.overrides = SanctuaryCharDB.overrides or {}
+    SanctuaryCharDB.overrides.enabled = enabled and true or false
+
+    local newState = isEnabled()
+    debugLog("TOGGLE", { enabled = newState })
+    refreshInviteSoundMuteState()
+
+    if newState then
+        printSuccess(L["SANCTUARY_ENABLED"])
+    else
+        -- At OFF nothing Sanctuary hid may stay hidden: a masked dialog is
+        -- invisible and still clickable.
+        clearPendingPopupDecision("PARTY_INVITE")
+        clearPendingPopupDecision("DUEL_REQUESTED")
+        clearPendingGuildInviteFrameDecision()
+        unmaskAllInteractionPopups()
+        printMsg(COLOR_OFF .. L["SANCTUARY_DISABLED"] .. COLOR_RESET)
+    end
+    return newState
+end
+
 -- ============================================================================
 -- SECTION H: Event Handlers (side effects happen HERE, not in filters)
 -- ============================================================================
+
+-- The one decision order the four interaction handlers share:
+--   isAlwaysBlocked(sender) -> isFilterOn(kind) -> getCharacterDecision(sender)
+local function decideInteraction(kind, name)
+    local blocked, reason, detail = isAlwaysBlocked(name)
+    if blocked then return true, reason, detail end
+    if isFilterOn(FILTER_KEY_BY_POPUP[kind] or kind) ~= true then
+        return false, "filter_off", nil
+    end
+    return getCharacterDecision(name)
+end
+
+-- What the debug log calls a block. "blocked_name" gets its own word: reading
+-- BLOCK_NOT_WHITELISTED on someone the person blocked by hand would send a
+-- reader looking through the wrong list.
+local function describeBlockAction(shouldBlock, reason)
+    if not shouldBlock then return "ALLOW" end
+    if reason == "keyword" then return "BLOCK_KEYWORD" end
+    if reason == "blocked_name" then return "BLOCK_BLOCKED_NAME" end
+    return "BLOCK_NOT_WHITELISTED"
+end
+
+-- Which half of isProtectionArmed put the guard in place. In a report, "the
+-- window was masked although the filter is off" is only readable with this.
+local function describeArmedBy(kind)
+    if isFilterOn(FILTER_KEY_BY_POPUP[kind] or kind) == true then return "filter" end
+    return "blocked_list"
+end
+
+-- The log's `keyword` column means "the pattern that matched", nothing else. An
+-- exact blocked name is not a pattern and must not be exported as one.
+local function keywordOf(reason, detail)
+    if reason == "keyword" then return detail end
+    return nil
+end
 
 -- PARTY_INVITE_REQUEST: classify the inviter, synchronize with the secure
 -- popup post-hook, then use Blizzard's native decline API when blocked.
 function handlers.PARTY_INVITE_REQUEST(name, isTank, isHealer, isDamage,
     isNativeRealm, allowMultipleRoles, inviterGUID, questSessionActive)
-    if not isEnabled() or not getEffective("filters.groupInvite") then
+    if not isProtectionArmed("PARTY_INVITE") then
         clearPendingPopupDecision("PARTY_INVITE")
         unmaskVisiblePopup("PARTY_INVITE")
         refreshInviteSoundMuteState()
         return
     end
 
-    local shouldBlock, reason, keyword = getCharacterDecision(name)
+    local shouldBlock, reason, detail = decideInteraction("PARTY_INVITE", name)
+    local keyword = keywordOf(reason, detail)
     local decisionId = synchronizePopupDecision("PARTY_INVITE", shouldBlock, name, reason)
     local replayedSound = false
     local releasedSoundGuards = 0
@@ -3282,9 +4058,10 @@ function handlers.PARTY_INVITE_REQUEST(name, isTank, isHealer, isDamage,
         normalized = normalizeName(name),
         guid = inviterGUID or "nil",
         isWL = reason == "whitelist",
-        keyword = keyword or "none",
-        action = shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
-        filterEnabled = getEffective("filters.groupInvite") == true,
+        keyword = detail or "none",
+        action = describeBlockAction(shouldBlock, reason),
+        filterEnabled = isFilterOn("groupInvite") == true,
+        armedBy = describeArmedBy("PARTY_INVITE"),
         popupProtectionActive = isPopupProtectionActive("PARTY_INVITE"),
         soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
         replayedSound = replayedSound and true or false,
@@ -3311,14 +4088,15 @@ end
 
 -- DUEL_REQUESTED follows the same event-order-safe popup path.
 function handlers.DUEL_REQUESTED(playerName)
-    if not isEnabled() or not getEffective("filters.duel") then
+    if not isProtectionArmed("DUEL_REQUESTED") then
         clearPendingPopupDecision("DUEL_REQUESTED")
         unmaskVisiblePopup("DUEL_REQUESTED")
         releaseProtectedPopupSoundGuards("DUEL_REQUESTED", "filter_disabled_event")
         return
     end
 
-    local shouldBlock, reason, keyword = getCharacterDecision(playerName)
+    local shouldBlock, reason, detail = decideInteraction("DUEL_REQUESTED", playerName)
+    local keyword = keywordOf(reason, detail)
     synchronizePopupDecision("DUEL_REQUESTED", shouldBlock, playerName, reason)
     local replayedSound = false
     if not shouldBlock then
@@ -3331,10 +4109,11 @@ function handlers.DUEL_REQUESTED(playerName)
         name = playerName,
         normalized = normalizeName(playerName),
         reason = reason or "nil",
-        keyword = keyword or "none",
-        filterEnabled = getEffective("filters.duel") == true,
+        keyword = detail or "none",
+        filterEnabled = isFilterOn("duel") == true,
+        armedBy = describeArmedBy("DUEL_REQUESTED"),
         replayedSound = replayedSound and true or false,
-        action = shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
+        action = describeBlockAction(shouldBlock, reason),
     })
 
     if not shouldBlock then return end
@@ -3354,26 +4133,28 @@ end
 function handlers.GUILD_INVITE_REQUEST(inviter, guildName)
     installGuildInviteFrameGuard()
 
-    if not isEnabled() or not getEffective("filters.guildInvite") then
+    if not isProtectionArmed("guildInvite") then
         clearPendingGuildInviteFrameDecision()
         unmaskGuildInviteFrame()
         releaseGuildInviteFrameSoundGuard("filter_disabled_event")
         return
     end
 
-    local shouldBlock, reason, keyword = getCharacterDecision(inviter)
+    local shouldBlock, reason, detail = decideInteraction("guildInvite", inviter)
+    local keyword = keywordOf(reason, detail)
     synchronizeGuildInviteFrameDecision(shouldBlock, inviter, reason)
     debugLog("GUILD_INVITE", {
         name = inviter,
         normalized = normalizeName(inviter),
         guild = guildName or "nil",
         reason = reason or "nil",
-        keyword = keyword or "none",
-        filterEnabled = getEffective("filters.guildInvite") == true,
+        keyword = detail or "none",
+        filterEnabled = isFilterOn("guildInvite") == true,
+        armedBy = describeArmedBy("guildInvite"),
         frameShown = isGuildInviteFrameShown() and true or false,
         frameAlpha = (getGuildInviteFrame() and getGuildInviteFrame().GetAlpha) and tostring(getGuildInviteFrame():GetAlpha()) or "nil",
         soundGuardActive = guildInviteFrameSoundGuardToken and true or false,
-        action = shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
+        action = describeBlockAction(shouldBlock, reason),
     })
 
     if not shouldBlock then return end
@@ -3389,8 +4170,7 @@ end
 
 -- TRADE_SHOW: auto-close + log (P1)
 function handlers.TRADE_SHOW()
-    if not isEnabled() then return end
-    if not getEffective("filters.trade") then return end
+    if not isProtectionArmed("trade") then return end
 
     -- Trade partner detection is limited by the WoW API. Prefer the unit token,
     -- then fall back to the recipient label.
@@ -3402,14 +4182,16 @@ function handlers.TRADE_SHOW()
         return
     end
 
-    local shouldBlock, reason, keyword = getCharacterDecision(tradeName)
+    local shouldBlock, reason, detail = decideInteraction("trade", tradeName)
+    local keyword = keywordOf(reason, detail)
     debugLog("TRADE", {
         name = tradeName,
         normalized = normalizeName(tradeName),
         reason = reason or "nil",
-        keyword = keyword or "none",
-        filterEnabled = getEffective("filters.trade") == true,
-        action = shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
+        keyword = detail or "none",
+        filterEnabled = isFilterOn("trade") == true,
+        armedBy = describeArmedBy("trade"),
+        action = describeBlockAction(shouldBlock, reason),
     })
 
     if not shouldBlock then return end
@@ -3426,9 +4208,11 @@ end
 -- Whitelist refresh events. WoW fires roster events in bursts (and sometimes
 -- continuously); keep diagnostics useful by logging only changes or a 60s
 -- heartbeat per event type.
+local debugLogSocial
+do
 local lastSocialDebugByEvent = {}
 
-local function debugLogSocial(eventName)
+debugLogSocial = function(eventName)
     if not SanctuaryDB or not SanctuaryDB.debugEnabled then return end
 
     local gm = 0; pcall(function() gm = GetNumGuildMembers() end)
@@ -3450,6 +4234,7 @@ local function debugLogSocial(eventName)
         friends = cf,
         bnetCN = bnetCN,
     })
+end
 end
 
 function handlers.GUILD_ROSTER_UPDATE()
@@ -3486,7 +4271,7 @@ local function refreshGroupTracker()
     invalidateWhitelist()
     if not SanctuaryCharDB or not SanctuaryCharDB.groupTracker then return end
 
-    if not isEnabled() or not getEffective("filters.autoTrust") then
+    if not isEnabled() or not isFilterOn("autoTrust") then
         wipe(SanctuaryCharDB.groupTracker)
         return
     end
@@ -3531,7 +4316,7 @@ ns.refreshGroupTracker = refreshGroupTracker
 -- (for example while already grouped/in a dungeon). This handler records that
 -- path once; the chat-frame filter above performs the actual suppression.
 function handlers.CHAT_MSG_SYSTEM(msg, ...)
-    if not isEnabled() or not getEffective("filters.groupInvite") then return end
+    if not isProtectionArmed("groupInvite") then return end
 
     local inviterName, patternIndex, patternKind = extractInviterFromSystemMessage(msg)
     if not inviterName then
@@ -3541,12 +4326,15 @@ function handlers.CHAT_MSG_SYSTEM(msg, ...)
             -- strict mode only makes this line *eligible* for suppression here.
             -- SUPPRESS_* stays reserved for a suppression actually applied.
             local strictEligible = shouldSuppressSecretGroupInviteSystemMessage(msg)
+            local lockdown, lockdownKnown = readChatLockdown()
             debugLog("SYSTEM_INVITE", addRuntimeContext({
                 msg = SECRET_VALUE_PLACEHOLDER,
                 result = strictEligible and "STRICT_POLICY_ELIGIBLE" or "SECRET_VALUE",
-                filterEnabled = getEffective("filters.groupInvite") == true,
-                strictGroupInviteSystemMessages = getEffective("filters.strictGroupInviteSystemMessages") == true,
+                filterEnabled = isFilterOn("groupInvite") == true,
+                strictGroupInviteSystemMessages = isFilterOn("strictGroupInviteSystemMessages") == true,
                 soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
+                chatLockdown = lockdown,
+                chatLockdownKnown = lockdownKnown,
                 argCount = select("#", ...),
             }))
         elseif SanctuaryDB and SanctuaryDB.debugEnabled and type(msg) == "string" then
@@ -3555,7 +4343,7 @@ function handlers.CHAT_MSG_SYSTEM(msg, ...)
                 debugLog("SYSTEM_INVITE", addRuntimeContext({
                     msg = safeText(msg, 300, "nil"),
                     result = "NO_MATCH",
-                    filterEnabled = getEffective("filters.groupInvite") == true,
+                    filterEnabled = isFilterOn("groupInvite") == true,
                     soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
                     argCount = select("#", ...),
                 }))
@@ -3564,15 +4352,27 @@ function handlers.CHAT_MSG_SYSTEM(msg, ...)
         return
     end
 
-    local shouldBlock, reason, keyword = getCharacterDecision(inviterName)
+    local shouldBlock, reason, detail = decideInteraction("groupInvite", inviterName)
+    local keyword = keywordOf(reason, detail)
+    local result = "PASS_WHITELISTED"
+    if shouldBlock then
+        if reason == "keyword" then
+            result = "SUPPRESS_KEYWORD"
+        elseif reason == "blocked_name" then
+            result = "SUPPRESS_BLOCKED_NAME"
+        else
+            result = "SUPPRESS_NOT_WHITELISTED"
+        end
+    end
     debugLog("SYSTEM_INVITE", addRuntimeContext({
         msg = safeText(msg, 300, "nil"),
         name = inviterName,
         pattern = patternIndex or "?",
         isWL = reason == "whitelist",
-        keyword = keyword or "none",
-        result = shouldBlock and (reason == "keyword" and "SUPPRESS_KEYWORD" or "SUPPRESS_NOT_WHITELISTED") or "PASS_WHITELISTED",
-        filterEnabled = getEffective("filters.groupInvite") == true,
+        keyword = detail or "none",
+        result = result,
+        filterEnabled = isFilterOn("groupInvite") == true,
+        armedBy = describeArmedBy("groupInvite"),
         soundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
         patternKind = patternKind or "unknown",
         argCount = select("#", ...),
@@ -3587,26 +4387,36 @@ function handlers.CHAT_MSG_SYSTEM(msg, ...)
     end
 end
 
+-- Same order as the interaction handlers: the always-blocked list first, then
+-- the filter flag, then the trust decision. `reason == "filter_off"` is what the
+-- caller reads to know nothing was decided at all.
+local function decideChat(filterKey, sender)
+    local blocked, reason, detail = isAlwaysBlocked(sender)
+    local filterOn = isFilterOn(filterKey) == true
+    if blocked then return true, reason, detail, filterOn end
+    if not filterOn then return false, "filter_off", nil, false end
+    local shouldBlock, decisionReason, decisionDetail = getCharacterDecision(sender)
+    return shouldBlock, decisionReason, decisionDetail, true
+end
+
 -- Whisper event handler for logging + exact-tab closing
 function handlers.CHAT_MSG_WHISPER(msg, sender, ...)
     if not isEnabled() then return end
 
-    local shouldBlock, reason, keyword = getCharacterDecision(sender)
-    local filterEnabled = getEffective("filters.whisper") == true
-    if reason ~= "keyword" and not filterEnabled then
-        debugLogChatDecision("whisper", sender, msg, "PASS_FILTER_DISABLED", reason, keyword, {
+    local shouldBlock, reason, detail, filterEnabled = decideChat("whisper", sender)
+    if reason == "filter_off" then
+        debugLogChatDecision("whisper", sender, msg, "PASS_FILTER_DISABLED", reason, nil, {
             filterEnabled = false,
         })
         return
     end
     debugLogChatDecision("whisper", sender, msg,
-        shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
-        reason, keyword, {
+        describeBlockAction(shouldBlock, reason), reason, detail, {
             filterEnabled = filterEnabled,
         })
     if not shouldBlock then return end
 
-    logBlock("whisper", sender, msg, nil, keyword)
+    logBlock("whisper", sender, msg, nil, keywordOf(reason, detail))
     closeBlockedWhisperTabs(sender, false)
 end
 
@@ -3615,10 +4425,10 @@ function handlers.CHAT_MSG_BN_WHISPER(msg, sender, ...)
 
     local bnetSender = resolveBNetWhisperSender(sender, ...)
     local decisionName = bnetSender.accountName or sender
-    local keywordMatch, keyword = matchesKeyword(decisionName)
-    local filterEnabled = getEffective("filters.whisper") == true
-    if not keywordMatch and not filterEnabled then
-        debugLogChatDecision("bn_whisper", decisionName, msg, "PASS_FILTER_DISABLED", "filter_disabled", keyword, {
+    local alwaysBlocked, alwaysReason, alwaysDetail = isAlwaysBlocked(decisionName)
+    local filterEnabled = isFilterOn("whisper") == true
+    if not alwaysBlocked and not filterEnabled then
+        debugLogChatDecision("bn_whisper", decisionName, msg, "PASS_FILTER_DISABLED", "filter_disabled", nil, {
             filterEnabled = false,
             rawSender = bnetSender.rawSenderText,
             bnetSenderID = bnetSender.bnSenderIDState,
@@ -3629,11 +4439,13 @@ function handlers.CHAT_MSG_BN_WHISPER(msg, sender, ...)
 
     local action = "BLOCK_NOT_WHITELISTED"
     local reason = "not_whitelisted"
+    local detail = nil
     local bnetWhitelisted = isBNetWhitelisted(decisionName)
     local bnetGroup = false
-    if keywordMatch then
-        action = "BLOCK_KEYWORD"
-        reason = "keyword"
+    if alwaysBlocked then
+        action = describeBlockAction(true, alwaysReason)
+        reason = alwaysReason
+        detail = alwaysDetail
     elseif bnetWhitelisted then
         action = "ALLOW"
         reason = "bnet_whitelist"
@@ -3645,7 +4457,7 @@ function handlers.CHAT_MSG_BN_WHISPER(msg, sender, ...)
         end
     end
 
-    debugLogChatDecision("bn_whisper", decisionName, msg, action, reason, keyword, {
+    debugLogChatDecision("bn_whisper", decisionName, msg, action, reason, detail, {
         filterEnabled = filterEnabled,
         bnetWhitelisted = bnetWhitelisted and true or false,
         inGroup = bnetGroup,
@@ -3656,89 +4468,92 @@ function handlers.CHAT_MSG_BN_WHISPER(msg, sender, ...)
     })
     if action == "ALLOW" then return end
 
-    logBlock("whisper", decisionName, msg, nil, keyword)
+    logBlock("whisper", decisionName, msg, nil, keywordOf(reason, detail))
     closeBlockedWhisperTabs(sender, true)
 end
 
-function handlers.CHAT_MSG_SAY(msg, sender, ...)
+-- The three public-speech handlers share one body: same order, same debug
+-- shape, only the filter key and the log type change.
+local function handlePublicSpeech(kind, msg, sender)
     if not isEnabled() or isSelf(sender) then return end
-    local shouldBlock, reason, keyword = getCharacterDecision(sender)
-    local filterEnabled = getEffective("filters.say") == true
-    if reason ~= "keyword" and not filterEnabled then
-        debugLogChatDecision("say", sender, msg, "PASS_FILTER_DISABLED", reason, keyword, {
+    local shouldBlock, reason, detail, filterEnabled = decideChat(kind, sender)
+    if reason == "filter_off" then
+        debugLogChatDecision(kind, sender, msg, "PASS_FILTER_DISABLED", reason, nil, {
             filterEnabled = false,
         })
         return
     end
-    debugLogChatDecision("say", sender, msg,
-        shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
-        reason, keyword, {
+    debugLogChatDecision(kind, sender, msg,
+        describeBlockAction(shouldBlock, reason), reason, detail, {
             filterEnabled = filterEnabled,
         })
-    if shouldBlock then logBlock("say", sender, msg, nil, keyword) end
+    if shouldBlock then logBlock(kind, sender, msg, nil, keywordOf(reason, detail)) end
+end
+
+function handlers.CHAT_MSG_SAY(msg, sender, ...)
+    handlePublicSpeech("say", msg, sender)
 end
 
 function handlers.CHAT_MSG_YELL(msg, sender, ...)
-    if not isEnabled() or isSelf(sender) then return end
-    local shouldBlock, reason, keyword = getCharacterDecision(sender)
-    local filterEnabled = getEffective("filters.yell") == true
-    if reason ~= "keyword" and not filterEnabled then
-        debugLogChatDecision("yell", sender, msg, "PASS_FILTER_DISABLED", reason, keyword, {
-            filterEnabled = false,
-        })
-        return
-    end
-    debugLogChatDecision("yell", sender, msg,
-        shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
-        reason, keyword, {
-            filterEnabled = filterEnabled,
-        })
-    if shouldBlock then logBlock("yell", sender, msg, nil, keyword) end
+    handlePublicSpeech("yell", msg, sender)
 end
 
 function handlers.CHAT_MSG_EMOTE(msg, sender, ...)
-    if not isEnabled() or isSelf(sender) then return end
-    local shouldBlock, reason, keyword = getCharacterDecision(sender)
-    local filterEnabled = getEffective("filters.emote") == true
-    if reason ~= "keyword" and not filterEnabled then
-        debugLogChatDecision("emote", sender, msg, "PASS_FILTER_DISABLED", reason, keyword, {
-            filterEnabled = false,
-        })
-        return
-    end
-    debugLogChatDecision("emote", sender, msg,
-        shouldBlock and (reason == "keyword" and "BLOCK_KEYWORD" or "BLOCK_NOT_WHITELISTED") or "ALLOW",
-        reason, keyword, {
-            filterEnabled = filterEnabled,
-        })
-    if shouldBlock then logBlock("emote", sender, msg, nil, keyword) end
+    handlePublicSpeech("emote", msg, sender)
 end
 
 handlers.CHAT_MSG_TEXT_EMOTE = handlers.CHAT_MSG_EMOTE
 
+-- Group, raid and instance chat: one handler for the seven events, and the only
+-- thing it ever reacts to is the always-blocked list. It exists so a hidden
+-- message still lands in the Journal, in the session counters and in the
+-- per-block chat line, exactly like every other blocked interaction.
+local function handleGroupChat(msg, sender)
+    if not isEnabled() or isSelf(sender) then return end
+    local blocked, reason, detail = isAlwaysBlocked(sender)
+    if not blocked then return end
+    debugLogChatDecision("group", sender, msg,
+        describeBlockAction(true, reason), reason, detail, { filterEnabled = true })
+    logBlock("group", sender, msg, nil, keywordOf(reason, detail))
+end
+
+for _, event in ipairs(GROUP_CHAT_EVENTS) do
+    handlers[event] = function(msg, sender, ...)
+        handleGroupChat(msg, sender)
+    end
+end
+
 function handlers.CHAT_MSG_CHANNEL(msg, sender, ...)
     if not isEnabled() or isSelf(sender) then return end
-    local mode = getEffective("filters.channelMode") or "none"
-    if mode == "none" then
+    local mode = isFilterOn("channelMode") or "none"
+
+    -- The always-blocked list is read before the mode, so a blocked name is
+    -- still blocked on a public channel when channel filtering is off.
+    local alwaysBlocked, alwaysReason, alwaysDetail = isAlwaysBlocked(sender)
+    if alwaysBlocked then
+        debugLogChatDecision("channel", sender, msg,
+            describeBlockAction(true, alwaysReason), alwaysReason, alwaysDetail, {
+                channelMode = mode,
+            })
+        logBlock("channel", sender, msg, nil, keywordOf(alwaysReason, alwaysDetail))
+        return
+    end
+
+    if mode ~= "all" then
         debugLogChatDecision("channel", sender, msg, "PASS_MODE_NONE", "channel_none", nil, {
             channelMode = mode,
         })
         return
     end
 
-    local shouldBlock, reason, keyword = getCharacterDecision(sender)
-    if reason == "keyword" then
-        debugLogChatDecision("channel", sender, msg, "BLOCK_KEYWORD", reason, keyword, {
-            channelMode = mode,
-        })
-        logBlock("channel", sender, msg, nil, keyword)
-    elseif mode == "all" and shouldBlock then
+    local shouldBlock, reason = getCharacterDecision(sender)
+    if shouldBlock then
         debugLogChatDecision("channel", sender, msg, "BLOCK_NOT_WHITELISTED", reason, nil, {
             channelMode = mode,
         })
         logBlock("channel", sender, msg, nil)
     else
-        debugLogChatDecision("channel", sender, msg, "ALLOW", reason, keyword, {
+        debugLogChatDecision("channel", sender, msg, "ALLOW", reason, nil, {
             channelMode = mode,
         })
     end
@@ -3747,6 +4562,11 @@ end
 -- ============================================================================
 -- SECTION I: Slash Command Handler
 -- ============================================================================
+
+-- Scoped block. Lua caps a chunk at 200 live locals and this section holds two
+-- dozen of them, none of which is read outside it: everything the rest of the
+-- addon needs from here is published on `ns` before the block closes.
+do
 
 local function trimCommandText(text)
     if type(text) ~= "string" then return "" end
@@ -3783,7 +4603,7 @@ local function simulateInvite(name)
     local shouldBlock, reason, keyword = getCharacterDecision(target)
     local normalMessage = buildInviteSystemMessage(target, false)
     local alreadyGroupMessage = buildInviteSystemMessage(target, true)
-    local groupInviteFilterEnabled = isEnabled() and getEffective("filters.groupInvite") == true
+    local groupInviteFilterEnabled = isEnabled() and isFilterOn("groupInvite") == true
     local popupProtectionActive = isPopupProtectionActive("PARTY_INVITE")
     local popupAction = "pass"
 
@@ -3838,8 +4658,10 @@ local function simulateBNetWhisper(sender, sourceLabel, bnSenderID)
     local rawSender = bnSenderID and "|Ksanctuary|k" or target
     local bnetSender = resolveBNetWhisperSender(rawSender, getBNetWhisperPayloadArgs(rawSender, bnSenderID))
     local decisionName = bnetSender.accountName or (bnSenderID and rawSender) or target
-    local keywordMatch, keyword = matchesKeyword(decisionName)
-    local filterEnabled = isEnabled() and getEffective("filters.whisper") == true
+    -- Through the same gate as the real path, so the simulation cannot report a
+    -- verdict the filter would not reach.
+    local keywordMatch, keywordReason, keyword = isAlwaysBlocked(decisionName)
+    local filterEnabled = isEnabled() and isFilterOn("whisper") == true
     local bnetWhitelisted = isBNetWhitelisted(decisionName)
     local inGroup = isBNetSenderInGroup and isBNetSenderInGroup(decisionName) or false
     local filtered = bnetWhisperFilter(nil, "CHAT_MSG_BN_WHISPER", "Sanctuary diagnostic", rawSender,
@@ -3847,7 +4669,7 @@ local function simulateBNetWhisper(sender, sourceLabel, bnSenderID)
     local reason = "not_whitelisted"
 
     if keywordMatch then
-        reason = "keyword"
+        reason = keywordReason
     elseif not isEnabled() then
         reason = "addon_disabled"
     elseif not filterEnabled then
@@ -3889,12 +4711,49 @@ local function simulateBNetWhisper(sender, sourceLabel, bnSenderID)
     return result
 end
 
-local function simulateBNetFriend(indexText)
-    local friendIndex = tonumber(trimCommandText(indexText)) or 1
-    if friendIndex < 1 then friendIndex = 1 end
+-- The argument is a name or a number. Typing a friend's name is how the person
+-- checks the contact they actually care about; the index stays because it is the
+-- only way to reach a friend whose name is awkward to type.
+local function findBNetFriendByName(text)
+    local wantedAccount = normalizeBNetName(text)
+    local wantedCharacter = normalizeName(text)
+    if not wantedAccount and not wantedCharacter then return nil, nil end
 
-    local info = getBNetFriendInfo(friendIndex)
+    local numFriends = 0
+    pcall(function() numFriends = BNGetNumFriends() or 0 end)
+    for i = 1, numFriends do
+        local candidate = getBNetFriendInfo(i)
+        if candidate then
+            if wantedAccount and normalizeBNetName(candidate.accountName) == wantedAccount then
+                return candidate, i
+            end
+            local gameInfo = candidate.gameAccountInfo
+            local characterName = gameInfo and gameInfo.characterName
+            if wantedCharacter and characterName and characterName ~= ""
+                and normalizeName(characterName) == wantedCharacter then
+                return candidate, i
+            end
+        end
+    end
+    return nil, nil
+end
+
+local function simulateBNetFriend(argText)
+    local text = trimCommandText(argText)
+    local friendIndex = tonumber(text)
+    local info
+    if friendIndex then
+        if friendIndex < 1 then friendIndex = 1 end
+        info = getBNetFriendInfo(friendIndex)
+    elseif text ~= "" then
+        info, friendIndex = findBNetFriendByName(text)
+    else
+        friendIndex = 1
+        info = getBNetFriendInfo(1)
+    end
+
     if not info or not info.accountName or info.accountName == "" then
+        friendIndex = friendIndex or 1
         local result = {
             kind = "bnet",
             label = "friend #" .. friendIndex,
@@ -3903,7 +4762,7 @@ local function simulateBNetFriend(indexText)
             filtered = true,
             shouldBlock = true,
             reason = "bnet_api_unavailable",
-            filterEnabled = isEnabled() and getEffective("filters.whisper") == true,
+            filterEnabled = isEnabled() and isFilterOn("whisper") == true,
             bnetWhitelisted = false,
             inGroup = false,
         }
@@ -3976,9 +4835,47 @@ local function formatBNetSimulationResult(result)
     )
 end
 
+-- Answers what the masking predicate would decide right now for a hypothetical
+-- secret system line. It writes a CHAT_TEST entry and nothing else: no
+-- CHAT_OUTPUT, so a diagnostic can never inflate the instance markers a
+-- recording is read on.
+local function runChatLockdownDiagnostic()
+    local armed, reason = evaluateStrictSecretSuppression()
+    local context = getRuntimeContext()
+    local lockdown, lockdownKnown = readChatLockdown()
+    local health = ns.getInstrumentationHealth()
+
+    local contextLabel = "world"
+    if context.inInstance then
+        contextLabel = "instance"
+    elseif context.inRaid then
+        contextLabel = "raid"
+    elseif context.inGroup then
+        contextLabel = "group"
+    end
+
+    local result = {
+        available = true,
+        kind = "lockdown",
+        armed = armed and true or false,
+        reason = reason or "unknown",
+        strict = isFilterOn("strictGroupInviteSystemMessages") == true,
+        filter = isFilterOn("groupInvite") == true,
+        context = contextLabel,
+        inInstance = context.inInstance and true or false,
+        lockdown = lockdownKnown and (lockdown and "true" or "false") or "unknown",
+        frames = tostring(health.chatFramesWrapped) .. "/" .. tostring(health.chatFramesSeen),
+    }
+    debugLog("CHAT_TEST", result)
+    return result
+end
+
 local function runChatDiagnostic(kind)
     local normalizedKind = trimCommandText(kind):lower()
     if normalizedKind == "" then normalizedKind = "invite" end
+    if normalizedKind == "lockdown" then
+        return runChatLockdownDiagnostic()
+    end
     if normalizedKind ~= "invite" then
         return {
             available = false,
@@ -3991,7 +4888,7 @@ local function runChatDiagnostic(kind)
     local message = buildInviteSystemMessage(target, true)
     local inviterName = extractInviterFromSystemMessage(message)
     local shouldBlock, reason = getCharacterDecision(inviterName or target)
-    local filterEnabled = isEnabled() and getEffective("filters.groupInvite") == true
+    local filterEnabled = isEnabled() and isFilterOn("groupInvite") == true
     local expectedGuarded = filterEnabled and shouldBlock
 
     local probe = { message = message }
@@ -4039,6 +4936,18 @@ local function formatChatDiagnosticResult(result)
             result.reason or "unknown"
         )
     end
+    if result.kind == "lockdown" then
+        return string.format(
+            "Diagnostic chat lockdown: armed=%s reason=%s strict=%s filter=%s context=%s lockdown=%s frames=%s",
+            result.armed and "yes" or "no",
+            result.reason or "unknown",
+            result.strict and "on" or "off",
+            result.filter and "on" or "off",
+            result.context or "unknown",
+            tostring(result.lockdown),
+            tostring(result.frames)
+        )
+    end
     return string.format(
         "Diagnostic chat invite: output=%s observed=%s filter=%s reason=%s",
         result.output or "unknown",
@@ -4048,35 +4957,46 @@ local function formatChatDiagnosticResult(result)
     )
 end
 
-local function runSoundDiagnostic()
-    local inviteSound = capturePartyInviteOriginalSound()
-    local openSound = (SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPEN) or "igMainMenuOpen"
-    local openOk = pcall(PlaySound, openSound)
-    local inviteOk = inviteSound and pcall(PlaySound, inviteSound) or false
-    debugLog("SOUND_TEST", {
-        openSound = tostring(openSound),
-        inviteSound = tostring(inviteSound or "nil"),
-        openOk = openOk and true or false,
-        inviteOk = inviteOk and true or false,
-        guardActive = partyInviteSoundGuardDepth > 0,
-    })
-    return {
-        openSound = openSound,
-        inviteSound = inviteSound,
-        openOk = openOk and true or false,
-        inviteOk = inviteOk and true or false,
+-- Split in two since 0.4.0: the single diagnostic played both sounds inside one
+-- call, which is precisely the case where nobody can tell whether they heard two
+-- sounds or one. Two buttons, one sound each, checked by ear one after the other.
+local function runSoundDiagnostic(kind)
+    local normalizedKind = trimCommandText(kind):lower()
+    if normalizedKind ~= "open" then normalizedKind = "invite" end
+
+    local sound
+    if normalizedKind == "open" then
+        sound = (SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPEN) or "igMainMenuOpen"
+    else
+        sound = capturePartyInviteOriginalSound()
+    end
+
+    local played = sound and pcall(PlaySound, sound) or false
+    local result = {
+        kind = normalizedKind,
+        sound = sound,
+        played = played and true or false,
         guardActive = partyInviteSoundGuardDepth > 0,
     }
+    debugLog("SOUND_TEST", {
+        kind = normalizedKind,
+        sound = tostring(sound or "nil"),
+        played = result.played,
+        guardActive = result.guardActive,
+    })
+    return result
 end
 
 local function formatSoundDiagnosticResult(result)
-    if not result.inviteSound then
-        return "Diagnostic sound invite: ERROR (native party invite sound unavailable)"
+    if not result.sound then
+        return string.format("Diagnostic sound %s: ERROR (native sound unavailable)",
+            result.kind or "unknown")
     end
     return string.format(
-        "Diagnostic sound invite: popup-open=%s invite=%s guard=%s",
-        result.openOk and "played" or "failed",
-        result.inviteOk and tostring(result.inviteSound) or "failed",
+        "Diagnostic sound %s: sound=%s played=%s guard=%s",
+        result.kind or "unknown",
+        tostring(result.sound),
+        result.played and "yes" or "no",
         result.guardActive and "active" or "inactive"
     )
 end
@@ -4367,18 +5287,6 @@ local function formatPopupDiagnosticResult(result)
     )
 end
 
-local function resolveSimulationTarget(args)
-    local text = trimCommandText(args)
-    local first, rest = text:match("^(%S+)%s*(.*)$")
-    if first and first:lower() == "invite" then
-        text = trimCommandText(rest)
-    end
-    if text == "" then
-        text = "SanctuaryTest"
-    end
-    return text
-end
-
 -- ----------------------------------------------------------------------------
 -- Diagnostic catalogue (debug panel)
 -- ----------------------------------------------------------------------------
@@ -4391,21 +5299,22 @@ end
 --
 -- `run(argText)` returns { text = <line shown to the maintainer>,
 -- leftOnScreen = <the diagnostic could not put the screen back> }.
+-- `manual = true` means "run them all" skips it, like `sensitive`: a bulk run
+-- must not fire two sounds back to back, since the whole point of splitting them
+-- is hearing one, then the other.
 ns.DIAGNOSTIC_CATALOG = {
     {
         id = "sim_invite",
         labelKey = "DIAG_SIM_INVITE",
-        command = "/sanc sim <nom>",
         argKey = "DIAG_ARG_NAME",
         argDefault = "SanctuaryTest",
         run = function(argText)
-            return { text = formatSimulationResult(simulateInvite(resolveSimulationTarget(argText))) }
+            return { text = formatSimulationResult(simulateInvite(argText or "")) }
         end,
     },
     {
         id = "sim_bnet",
         labelKey = "DIAG_SIM_BNET",
-        command = "/sanc sim bnet",
         run = function(argText)
             return { text = formatBNetSimulationResult(simulateBNetWhisper(argText or "")) }
         end,
@@ -4413,8 +5322,7 @@ ns.DIAGNOSTIC_CATALOG = {
     {
         id = "sim_bnetfriend",
         labelKey = "DIAG_SIM_BNETFRIEND",
-        command = "/sanc sim bnetfriend <n>",
-        argKey = "DIAG_ARG_INDEX",
+        argKey = "DIAG_ARG_NAME_OR_INDEX",
         argDefault = "1",
         -- Writes a real Battle.net account name into the debug log. The panel
         -- says so before the click rather than in a note read afterwards.
@@ -4426,45 +5334,56 @@ ns.DIAGNOSTIC_CATALOG = {
     {
         id = "diag_chat",
         labelKey = "DIAG_CHAT_INVITE",
-        command = "/sanc diag chat invite",
         run = function()
             return { text = formatChatDiagnosticResult(runChatDiagnostic("invite")) }
         end,
     },
     {
-        id = "diag_sound",
-        labelKey = "DIAG_SOUND_INVITE",
-        command = "/sanc diag sound invite",
-        tipKey = "DIAG_TIP_SOUND",
+        id = "diag_chat_lockdown",
+        labelKey = "DIAG_CHAT_LOCKDOWN",
         run = function()
-            return { text = formatSoundDiagnosticResult(runSoundDiagnostic()) }
+            return { text = formatChatDiagnosticResult(runChatDiagnostic("lockdown")) }
+        end,
+    },
+    {
+        id = "diag_sound_open",
+        labelKey = "DIAG_SOUND_OPEN",
+        tipKey = "DIAG_TIP_SOUND",
+        manual = true,
+        run = function()
+            return { text = formatSoundDiagnosticResult(runSoundDiagnostic("open")) }
+        end,
+    },
+    {
+        id = "diag_sound_invite",
+        labelKey = "DIAG_SOUND_INVITE",
+        tipKey = "DIAG_TIP_SOUND",
+        manual = true,
+        run = function()
+            return { text = formatSoundDiagnosticResult(runSoundDiagnostic("invite")) }
         end,
     },
     {
         id = "diag_popup_invite",
         labelKey = "DIAG_POPUP_INVITE",
-        command = "/sanc diag popup invite",
         tipKey = "DIAG_TIP_POPUP",
         popupKind = "invite",
     },
     {
         id = "diag_popup_duel",
         labelKey = "DIAG_POPUP_DUEL",
-        command = "/sanc diag popup duel",
         tipKey = "DIAG_TIP_POPUP",
         popupKind = "duel",
     },
     {
         id = "diag_popup_guild",
         labelKey = "DIAG_POPUP_GUILD",
-        command = "/sanc diag popup guild",
         tipKey = "DIAG_TIP_POPUP",
         popupKind = "guild",
     },
     {
         id = "diag_popup_list",
         labelKey = "DIAG_POPUP_LIST",
-        command = "/sanc diag popup list <filtre>",
         argKey = "DIAG_ARG_FILTER",
         argDefault = "",
         run = function(argText)
@@ -4543,58 +5462,15 @@ ns.formatPopupDiagnosticResult = formatPopupDiagnosticResult
 ns.runPopupListDiagnostic = runPopupListDiagnostic
 ns.formatPopupListDiagnosticResult = formatPopupListDiagnosticResult
 
--- /sanc and /sanctuary open the GUI. Diagnostic subcommands stay hidden.
+end -- diagnostics scope
+
+-- /sanc and /sanctuary open the window. Nothing else: every diagnostic is a
+-- button of the Diagnostics tab, so there is no command list to remember, no
+-- argument to mistype, and no way to fire a diagnostic by accident.
 SLASH_SANCTUARY1 = "/sanctuary"
 SLASH_SANCTUARY2 = "/sanc"
-SlashCmdList["SANCTUARY"] = function(msg)
+SlashCmdList["SANCTUARY"] = function()
     xpcall(function()
-        local command, rest = trimCommandText(msg):match("^(%S+)%s*(.*)$")
-        command = command and command:lower() or ""
-        if command == "simulate" or command == "sim" then
-            local simKind, simRest = trimCommandText(rest):match("^(%S+)%s*(.*)$")
-            simKind = simKind and simKind:lower() or ""
-            if simKind == "bnet" then
-                local result = simulateBNetWhisper(simRest)
-                printMsg(formatBNetSimulationResult(result))
-            elseif simKind == "bnetfriend" then
-                local result = simulateBNetFriend(simRest)
-                printMsg(formatBNetSimulationResult(result))
-            else
-                local result = simulateInvite(resolveSimulationTarget(rest))
-                printMsg(formatSimulationResult(result))
-            end
-            return
-        end
-
-        if command == "diag" then
-            local diagKind, diagRest = trimCommandText(rest):match("^(%S+)%s*(.*)$")
-            diagKind = diagKind and diagKind:lower() or ""
-            diagRest = trimCommandText(diagRest)
-            if diagKind == "chat" then
-                local chatKind = diagRest:match("^(%S+)") or "invite"
-                printMsg(formatChatDiagnosticResult(runChatDiagnostic(chatKind)))
-                return
-            elseif diagKind == "sound" then
-                local soundKind = diagRest:match("^(%S+)") or "invite"
-                if soundKind:lower() ~= "invite" then
-                    printError("Diagnostic inconnu. Utilisez /sanc diag sound invite.")
-                    return
-                end
-                printMsg(formatSoundDiagnosticResult(runSoundDiagnostic()))
-                return
-            elseif diagKind == "popup" then
-                local popupCommand, popupRest = diagRest:match("^(%S+)%s*(.*)$")
-                popupCommand = popupCommand and popupCommand:lower() or ""
-                popupRest = trimCommandText(popupRest)
-                if popupCommand == "list" then
-                    printMsg(formatPopupListDiagnosticResult(runPopupListDiagnostic(popupRest)))
-                else
-                    printMsg(formatPopupDiagnosticResult(runPopupDiagnostic(diagRest)))
-                end
-                return
-            end
-        end
-
         if ns.ToggleUI then
             ns.ToggleUI()
         end
@@ -4607,12 +5483,52 @@ end
 
 local frame = CreateFrame("Frame")
 
+-- 0.4.0 changes what a setting means, not only where it is stored: the two
+-- switches of questions 1 and 2 now decide what the per-filter values are worth.
+-- Carrying a 0.3.x file forward would therefore need a translation table for
+-- every combination, and every one of those translations would be a guess about
+-- what the person meant. The settings go back to the defaults instead.
+--
+-- What is kept is what cannot be reconstructed: the three lists typed by hand.
+-- Idempotent by construction -- the rebuilt file carries schemaVersion 2, so a
+-- second load falls straight through to fillMissingDefaults.
+local function resetToSchemaV2()
+    local carriedAccountWhitelist = SanctuaryDB and SanctuaryDB.manualWhitelist
+    local carriedKeywords = SanctuaryDB and SanctuaryDB.keywords
+    local carriedCharWhitelist = SanctuaryCharDB and SanctuaryCharDB.manualWhitelist
+
+    SanctuaryDB = deepCopy(ACCOUNT_DEFAULTS)
+    SanctuaryCharDB = deepCopy(CHARACTER_DEFAULTS)
+
+    if type(carriedAccountWhitelist) == "table" then
+        SanctuaryDB.manualWhitelist = carriedAccountWhitelist
+    end
+    if type(carriedKeywords) == "table" then
+        SanctuaryDB.keywords = carriedKeywords
+    end
+    if type(carriedCharWhitelist) == "table" then
+        SanctuaryCharDB.manualWhitelist = carriedCharWhitelist
+    end
+    -- The always-blocked list did not exist before 0.4.0; it starts empty.
+    invalidateWhitelist()
+end
+
+ns.resetToSchemaV2 = resetToSchemaV2
+
+local function needsSchemaReset()
+    if not SanctuaryDB then return false end
+    local stored = tonumber(SanctuaryDB.schemaVersion)
+    return stored == nil or stored < 2
+end
+
 function handlers.ADDON_LOADED(addonName)
     if addonName ~= ADDON_NAME then return end
 
     -- Initialize SavedVariables
     if not SanctuaryDB then
         SanctuaryDB = deepCopy(ACCOUNT_DEFAULTS)
+    elseif needsSchemaReset() then
+        resetToSchemaV2()
     else
         fillMissingDefaults(SanctuaryDB, ACCOUNT_DEFAULTS)
     end
@@ -4634,22 +5550,13 @@ function handlers.ADDON_LOADED(addonName)
     -- Reset session stats
     SanctuaryCharDB.sessionStats = { blockedCount = 0, blockedByType = {} }
 
-    -- Detect companion addons
-    local leatrixLoaded = C_AddOns and C_AddOns.IsAddOnLoaded
-        and C_AddOns.IsAddOnLoaded("Leatrix_Plus")
-    local badBoyLoaded = C_AddOns and C_AddOns.IsAddOnLoaded
-        and C_AddOns.IsAddOnLoaded("BadBoy")
-
-    -- Welcome message
-    local enabled = isEnabled()
-    local statusText = enabled and (COLOR_ON .. L["ENABLED"] .. COLOR_RESET) or (COLOR_OFF .. L["DISABLED"] .. COLOR_RESET)
-    printMsg(string.format(L["ADDON_LOADED"], statusText))
-
-    if leatrixLoaded then
-        printMsg(L["LEATRIX_DETECTED"])
-    end
-    if badBoyLoaded then
-        printMsg(L["BADBOY_DETECTED"])
+    -- One line at load, and only one. The Leatrix and BadBoy notices went with
+    -- 0.4.0: neither carried any compatibility logic, they were only a message,
+    -- and a session that starts with three unexplained lines reads as a fault.
+    if isEnabled() then
+        printMsg(COLOR_ON .. L["ADDON_LOADED_ACTIVE"] .. COLOR_RESET)
+    else
+        printMsg(COLOR_OFF .. L["ADDON_LOADED_INACTIVE"] .. COLOR_RESET)
     end
 
     -- A mute survives /reload and relogging, so one left behind by a previous
@@ -4674,10 +5581,13 @@ local hasEnteredWorld = false
 
 function handlers.PLAYER_ENTERING_WORLD()
     invalidateWhitelist()
+    local lockdown, lockdownKnown = readChatLockdown()
     debugLog("WORLD", addRuntimeContext({
         isInGuild = IsInGuild() and true or false,
         isInGroup = IsInGroup() and true or false,
         initial = not hasEnteredWorld,
+        chatLockdown = lockdown,
+        chatLockdownKnown = lockdownKnown,
     }))
 
     -- Reset session-only tracking once at login, not on every dungeon/loading
@@ -4711,8 +5621,11 @@ end
 local function debugLogPlayerState(eventName)
     if not SanctuaryDB or not SanctuaryDB.debugEnabled then return end
 
+    local lockdown, lockdownKnown = readChatLockdown()
     debugLog("PLAYER_STATE", addRuntimeContext({
         event = eventName,
+        chatLockdown = lockdown,
+        chatLockdownKnown = lockdownKnown,
     }))
 end
 
@@ -4762,6 +5675,12 @@ local events = {
     "CHAT_MSG_TEXT_EMOTE",
     "CHAT_MSG_CHANNEL",
 }
+
+-- The seven group/raid/instance events, registered next to the others so the
+-- always-blocked list can log what its filter hides.
+for _, event in ipairs(GROUP_CHAT_EVENTS) do
+    events[#events + 1] = event
+end
 
 for _, event in ipairs(events) do
     frame:RegisterEvent(event)
@@ -4821,7 +5740,7 @@ end)
 -- Auto-trust: check if group members passed the threshold
 C_Timer.NewTicker(30, function()
     if not isEnabled() then return end
-    if not getEffective("filters.autoTrust") then return end
+    if not isFilterOn("autoTrust") then return end
     if not SanctuaryCharDB or not SanctuaryCharDB.groupTracker then return end
     if not SanctuaryDB then return end
 
@@ -4830,21 +5749,20 @@ C_Timer.NewTicker(30, function()
 
     for name, joinTime in pairs(SanctuaryCharDB.groupTracker) do
         if (now - joinTime) >= threshold then
-            if not SanctuaryDB.manualWhitelist[name] then
-                SanctuaryDB.manualWhitelist[name] = {
-                    displayName = name,
-                    addedAt = time(),
-                    source = "trust",
-                }
-                invalidateWhitelist()
-                printMsg(string.format(L["TRUST_AUTO_ADDED"], name))
-            end
+            -- Goes through the same write the panel and the right-click menu
+            -- use, so an automatically trusted contact is an entry like any
+            -- other -- shown in its own group, and removable. Nothing is
+            -- printed: the panel is where it shows up.
+            ns.addAllowed(name, "trust")
             SanctuaryCharDB.groupTracker[name] = nil
         end
     end
 end)
 
--- Minimal notification ticker (for "minimal" mode)
+-- Minimal notification ticker (for "minimal" mode).
+-- "Only if something new was blocked": the count is compared to the last one
+-- announced, so an idle session stays silent instead of repeating the same
+-- number every five minutes.
 C_Timer.NewTicker(60, function()
     if not SanctuaryDB then return end
     if SanctuaryDB.notifications.mode ~= "minimal" then return end
@@ -4853,12 +5771,14 @@ C_Timer.NewTicker(60, function()
 
     local stats = SanctuaryCharDB.sessionStats
     local count = stats.blockedCount or 0
-    if count > 0 then
+    local announced = Sanctuary.lastAnnouncedBlockedCount or 0
+    if count > announced then
         local interval = (SanctuaryDB.notifications.minimalIntervalMinutes or 5) * 60
         local now = GetTime()
         if not Sanctuary.lastMinimalNotif or (now - Sanctuary.lastMinimalNotif) >= interval then
             printMsg(string.format(L["BLOCKED_SESSION"], COLOR_WARN .. count .. COLOR_RESET))
             Sanctuary.lastMinimalNotif = now
+            Sanctuary.lastAnnouncedBlockedCount = count
         end
     end
 end)
