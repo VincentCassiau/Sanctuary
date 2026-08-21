@@ -502,6 +502,11 @@ end
 
 -- Initialize SavedVariables and filters.
 fire("ADDON_LOADED", "Sanctuary")
+-- Question 2 answers "I choose" for the whole legacy suite below: those sections
+-- exercise one filter at a time, which is exactly what the custom preset means.
+-- The recommended preset ignores the stored per-filter values on purpose, and it
+-- gets its own section further down.
+SanctuaryDB.filters.preset = "custom"
 fire("PLAYER_ENTERING_WORLD")
 equal(ns.VERSION, "0.3.2", "version exported")
 equal(#muted, 0, "no global sound files muted at rest")
@@ -1002,6 +1007,21 @@ local function expectSecretOutputReachesFrame(label, messageTypeID)
     equal(#chatMessages, before + 1, label .. " still reaches the original AddMessage")
 end
 
+-- The two strict-mode calls below used to assert the opposite: the line reached
+-- the frame, because nothing stopped it. That is the defect 0.4.0 fixes, so the
+-- assertions are reformulated rather than removed -- and the journal must stay
+-- untouched, because a masked system line has no sender and no content to record.
+local function expectSecretOutputMasked(label, messageTypeID)
+    local beforeMessages = #chatMessages
+    local beforeLog = #SanctuaryDB.log
+    local ok = pcall(function()
+        ChatFrame1:AddMessage(secretChatPayload, 1, 1, 0, messageTypeID)
+    end)
+    check(ok, label .. " does not break the chat output guard")
+    equal(#chatMessages, beforeMessages, label .. " never reaches the original AddMessage")
+    equal(#SanctuaryDB.log, beforeLog, label .. " writes nothing to the block journal")
+end
+
 -- Five-person group inside a dungeon: the field-reported scenario.
 inGroup = true
 inRaid = false
@@ -1011,7 +1031,7 @@ groupMembers = { "Harasser-TestRealm", "A-TestRealm", "B-TestRealm", "C-TestReal
 equal(GetNumGroupMembers(), 5, "five-person group modelled")
 SanctuaryDB.filters.strictGroupInviteSystemMessages = true
 expectRegistrySkipsSecret("strict mode in a five-person dungeon group")
-expectSecretOutputReachesFrame("strict mode in a five-person dungeon group", ChatTypeInfo.SYSTEM.id)
+expectSecretOutputMasked("strict mode in a five-person dungeon group", ChatTypeInfo.SYSTEM.id)
 SanctuaryDB.filters.strictGroupInviteSystemMessages = false
 expectRegistrySkipsSecret("relaxed mode in a five-person dungeon group")
 expectSecretOutputReachesFrame("relaxed mode in a five-person dungeon group", ChatTypeInfo.SYSTEM.id)
@@ -1021,7 +1041,7 @@ inRaid = true
 currentInstanceType = "raid"
 SanctuaryDB.filters.strictGroupInviteSystemMessages = true
 expectRegistrySkipsSecret("strict mode in raid")
-expectSecretOutputReachesFrame("strict mode in raid", ChatTypeInfo.SYSTEM.id)
+expectSecretOutputMasked("strict mode in raid", ChatTypeInfo.SYSTEM.id)
 SanctuaryDB.filters.strictGroupInviteSystemMessages = false
 expectRegistrySkipsSecret("relaxed mode in raid")
 expectSecretOutputReachesFrame("relaxed mode in raid", ChatTypeInfo.SYSTEM.id)
@@ -1730,29 +1750,27 @@ equal(closedChatFrames[#closedChatFrames], ChatFrame3, "blocked BNet tab closed 
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].cat, "WHISPER_TAB", "BNet tab close debug logged")
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.chatType, "BN_WHISPER", "BNet tab close debug type")
 
-local beforeSlashMessages = #chatMessages
-SlashCmdList["SANCTUARY"]("simulate Simulatedbad")
-check(#chatMessages == beforeSlashMessages + 1, "slash simulation prints one diagnostic line")
-check(chatMessages[#chatMessages]:find("Simulation invite", 1, true) ~= nil, "slash simulation output label")
-equal(declinedGroups, beforeSimulationDeclines, "slash simulation does not decline groups")
+-- Every diagnostic is reached through the catalogue now: there is no command to
+-- type, so the tests drive the entry the panel's button drives. What is asserted
+-- is unchanged -- the line produced, the debug entry, the sounds, the screen.
+local diagLine = ns.runDiagnosticById("sim_invite", "Simulatedbad").text
+check(diagLine:find("Simulation invite", 1, true) ~= nil, "the invite simulation names itself")
+check(diagLine:find("Simulatedbad", 1, true) ~= nil, "and names the target it was given")
+equal(declinedGroups, beforeSimulationDeclines, "the invite simulation does not decline groups")
 
-beforeSlashMessages = #chatMessages
-SlashCmdList["SANCTUARY"]("simulate bnetfriend 1")
-check(#chatMessages == beforeSlashMessages + 1, "slash BNet simulation prints one diagnostic line")
-check(chatMessages[#chatMessages]:find("Simulation bnet whisper", 1, true) ~= nil, "slash BNet simulation output label")
+diagLine = ns.runDiagnosticById("sim_bnetfriend", "1").text
+check(diagLine:find("Simulation bnet whisper", 1, true) ~= nil, "the Battle.net friend simulation names itself")
 
-beforeSlashMessages = #chatMessages
 SanctuaryDB.debugLog = {}
-SlashCmdList["SANCTUARY"]("diag chat invite")
-check(#chatMessages == beforeSlashMessages + 1, "slash chat diagnostic prints one diagnostic line")
-check(chatMessages[#chatMessages]:find("Diagnostic chat invite", 1, true) ~= nil, "slash chat diagnostic output label")
+diagLine = ns.runDiagnosticById("diag_chat").text
+check(diagLine:find("Diagnostic chat invite", 1, true) ~= nil, "the chat diagnostic names itself")
 local chatOutputLog = lastDebug("CHAT_OUTPUT")
-check(chatOutputLog ~= nil, "slash chat diagnostic triggers chat output guard")
-equal(chatOutputLog.data.action, "SUPPRESS_BLOCKED_INVITE", "slash chat diagnostic suppresses direct invite output")
+check(chatOutputLog ~= nil, "the chat diagnostic triggers the chat output guard")
+equal(chatOutputLog.data.action, "SUPPRESS_BLOCKED_INVITE", "the chat diagnostic suppresses direct invite output")
 local chatTestLog = lastDebug("CHAT_TEST")
-check(chatTestLog ~= nil, "slash chat diagnostic logs result")
-equal(chatTestLog.data.output, "guarded", "slash chat diagnostic reports guarded output")
-check(chatTestLog.data.observed, "slash chat diagnostic reports observed guard")
+check(chatTestLog ~= nil, "the chat diagnostic logs its result")
+equal(chatTestLog.data.output, "guarded", "the chat diagnostic reports guarded output")
+check(chatTestLog.data.observed, "the chat diagnostic reports the observed guard")
 
 local savedDefaultChatFrame = DEFAULT_CHAT_FRAME
 local rawDiagnosticMessages = {}
@@ -1768,58 +1786,77 @@ check(not unguardedDiagnostic.observed, "chat diagnostic does not fake observati
 equal(#rawDiagnosticMessages, 1, "unguarded chat diagnostic would print the probe message")
 DEFAULT_CHAT_FRAME = savedDefaultChatFrame
 
-beforeSlashMessages = #chatMessages
+-- The two sounds are separate buttons since 0.4.0: played inside one call, no
+-- one could tell whether they had heard two sounds or one.
 playedSounds = {}
 SanctuaryDB.debugLog = {}
-SlashCmdList["SANCTUARY"]("diag sound invite")
-check(#chatMessages == beforeSlashMessages + 1, "slash sound diagnostic prints one diagnostic line")
-check(chatMessages[#chatMessages]:find("Diagnostic sound invite", 1, true) ~= nil, "slash sound diagnostic output label")
-equal(#playedSounds, 2, "slash sound diagnostic plays popup-open plus native invite")
-equal(playedSounds[1], SOUNDKIT.IG_MAINMENU_OPEN, "slash sound diagnostic plays native popup-open")
-equal(playedSounds[2], 880, "slash sound diagnostic plays native party invite")
+diagLine = ns.runDiagnosticById("diag_sound_open").text
+check(diagLine:find("Diagnostic sound open", 1, true) ~= nil, "the window-open sound diagnostic names itself")
+equal(#playedSounds, 1, "the window-open sound diagnostic plays exactly one sound")
+equal(playedSounds[1], SOUNDKIT.IG_MAINMENU_OPEN, "and it is the native panel-open sound")
+
+playedSounds = {}
+SanctuaryDB.debugLog = {}
+diagLine = ns.runDiagnosticById("diag_sound_invite").text
+check(diagLine:find("Diagnostic sound invite", 1, true) ~= nil, "the invite sound diagnostic names itself")
+equal(#playedSounds, 1, "the invite sound diagnostic plays exactly one sound")
+equal(playedSounds[1], 880, "and it is the captured native party invite sound")
 local soundTestLog = lastDebug("SOUND_TEST")
-check(soundTestLog ~= nil, "slash sound diagnostic logs diagnostic")
-equal(soundTestLog.data.inviteSound, "880", "slash sound diagnostic logs native party invite sound")
+check(soundTestLog ~= nil, "the sound diagnostic logs its result")
+equal(soundTestLog.data.sound, "880", "naming the sound it played")
 
-beforeSlashMessages = #chatMessages
 playedSounds = {}
 SanctuaryDB.debugLog = {}
-SlashCmdList["SANCTUARY"]("diag popup duel")
+diagLine = ns.runDiagnosticById("diag_popup_duel").text
 runTimers()
-check(#chatMessages == beforeSlashMessages + 1, "slash duel popup diagnostic prints one diagnostic line")
-check(chatMessages[#chatMessages]:find("Diagnostic popup duel", 1, true) ~= nil, "slash duel popup diagnostic output label")
-equal(#playedSounds, 0, "slash duel popup diagnostic stays silent")
+check(diagLine:find("Diagnostic popup duel", 1, true) ~= nil, "the duel popup diagnostic names itself")
+equal(#playedSounds, 0, "the duel popup diagnostic stays silent")
 local popupTestLog = lastDebug("POPUP_TEST")
-check(popupTestLog ~= nil, "slash duel popup diagnostic logs diagnostic")
-equal(popupTestLog.data.which, "DUEL_REQUESTED", "slash duel popup diagnostic logs popup kind")
-check(popupTestLog.data.hidden, "slash duel popup diagnostic hides diagnostic popup")
+check(popupTestLog ~= nil, "the duel popup diagnostic logs its result")
+equal(popupTestLog.data.which, "DUEL_REQUESTED", "the duel popup diagnostic logs the popup kind")
+check(popupTestLog.data.hidden, "the duel popup diagnostic hides the dialog it opened")
 
-beforeSlashMessages = #chatMessages
 playedSounds = {}
 SanctuaryDB.debugLog = {}
 local beforeDiagGuilds = declinedGuilds
-SlashCmdList["SANCTUARY"]("diag popup guild")
+diagLine = ns.runDiagnosticById("diag_popup_guild").text
 runTimers()
-check(#chatMessages == beforeSlashMessages + 1, "slash guild popup diagnostic prints one diagnostic line")
-check(chatMessages[#chatMessages]:find("Diagnostic popup guild", 1, true) ~= nil, "slash guild popup diagnostic output label")
-equal(#playedSounds, 0, "slash guild popup diagnostic stays silent")
+check(diagLine:find("Diagnostic popup guild", 1, true) ~= nil, "the guild popup diagnostic names itself")
+equal(#playedSounds, 0, "the guild popup diagnostic stays silent")
 popupTestLog = lastDebug("POPUP_TEST")
-check(popupTestLog ~= nil, "slash guild popup diagnostic logs diagnostic")
-equal(popupTestLog.data.which, "GUILD_INVITE_FRAME", "slash guild popup diagnostic logs frame key")
-equal(popupTestLog.data.frame, "GuildInviteFrame", "slash guild popup diagnostic logs frame kind")
-equal(popupTestLog.data.reason, "guild_invite_frame_probe", "slash guild popup diagnostic probes special frame")
-check(popupTestLog.data.masked, "slash guild popup diagnostic masks special frame")
-check(popupTestLog.data.hidden, "slash guild popup diagnostic hides special frame")
-equal(declinedGuilds, beforeDiagGuilds, "slash guild popup diagnostic does not call native decline")
+check(popupTestLog ~= nil, "the guild popup diagnostic logs its result")
+equal(popupTestLog.data.which, "GUILD_INVITE_FRAME", "the guild popup diagnostic logs the frame key")
+equal(popupTestLog.data.frame, "GuildInviteFrame", "the guild popup diagnostic logs the frame kind")
+equal(popupTestLog.data.reason, "guild_invite_frame_probe", "the guild popup diagnostic probes the special frame")
+check(popupTestLog.data.masked, "the guild popup diagnostic masks the special frame")
+check(popupTestLog.data.hidden, "the guild popup diagnostic hides the special frame")
+equal(declinedGuilds, beforeDiagGuilds, "the guild popup diagnostic does not call the native decline")
 
-beforeSlashMessages = #chatMessages
 SanctuaryDB.debugLog = {}
-SlashCmdList["SANCTUARY"]("diag popup list guild")
-check(#chatMessages == beforeSlashMessages + 1, "slash popup list diagnostic prints one line")
-check(chatMessages[#chatMessages]:find("Diagnostic popup list guild", 1, true) ~= nil, "slash popup list diagnostic output label")
+diagLine = ns.runDiagnosticById("diag_popup_list", "guild").text
+check(diagLine:find("Diagnostic popup list guild", 1, true) ~= nil, "the popup list diagnostic names itself")
 local popupListLog = lastDebug("POPUP_LIST")
-check(popupListLog ~= nil, "slash popup list diagnostic logs result")
-equal(popupListLog.data.query, "guild", "slash popup list diagnostic logs query")
+check(popupListLog ~= nil, "the popup list diagnostic logs its result")
+equal(popupListLog.data.query, "guild", "the popup list diagnostic logs the query")
+
+-- The lockdown diagnostic answers what the masking predicate would decide now.
+-- It writes a CHAT_TEST entry and nothing else: no CHAT_OUTPUT, so it can never
+-- inflate the very markers a recording is graded on.
+SanctuaryDB.debugLog = {}
+local beforeLockdownLog = #SanctuaryDB.log
+-- Strict mode ticked and no group: the last refusal of the predicate, and the
+-- one the maintainer can actually reproduce alone on a trial account.
+SanctuaryDB.filters.strictGroupInviteSystemMessages = true
+diagLine = ns.runDiagnosticById("diag_chat_lockdown").text
+check(diagLine:find("Diagnostic chat lockdown", 1, true) ~= nil, "the lockdown diagnostic names itself")
+check(diagLine:find("armed=no", 1, true) ~= nil, "outside any group it is not armed")
+check(diagLine:find("reason=no_context", 1, true) ~= nil, "and says which refusal it hit")
+equal(#SanctuaryDB.log, beforeLockdownLog, "the lockdown diagnostic writes nothing to the block journal")
+local lockdownLog = lastDebug("CHAT_TEST")
+check(lockdownLog ~= nil, "the lockdown diagnostic logs a CHAT_TEST entry")
+equal(lockdownLog.data.kind, "lockdown", "marked as the lockdown kind")
+equal(lastDebug("CHAT_OUTPUT"), nil, "and never a CHAT_OUTPUT entry")
+SanctuaryDB.filters.strictGroupInviteSystemMessages = false
 
 showGuildInviteFrame("BusyGuild", "Busy Guild")
 local busyGuildDiagnostic = ns.runPopupDiagnostic("guild")
@@ -1829,11 +1866,16 @@ check(GuildInviteFrame:IsShown(), "guild popup diagnostic does not hide a busy f
 hideGuildInviteFrameForCleanup()
 runTimers()
 
+-- /sanc has no sub-commands left: whatever is typed after it, the window opens
+-- and nothing is printed.
 local uiToggles = 0
+local beforeSlashMessages = #chatMessages
 ns.ToggleUI = function() uiToggles = uiToggles + 1 end
 SlashCmdList["SANCTUARY"]("")
 SlashCmdList["SANCTUARY"]("unknown")
-equal(uiToggles, 2, "non-simulation slash commands still open the UI")
+SlashCmdList["SANCTUARY"]("diag sound blabla")
+equal(uiToggles, 3, "every slash invocation opens the window")
+equal(#chatMessages, beforeSlashMessages, "and none of them prints anything")
 ns.ToggleUI = nil
 
 -- Auto-trust tracking must survive a dungeon loading screen.
@@ -2172,19 +2214,21 @@ for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG) do
     check(type(entry.labelKey) == "string" and type(ns.L[entry.labelKey]) == "string"
         and ns.L[entry.labelKey] ~= "",
         "catalogue entry " .. tostring(entry.id) .. " has a label")
-    check(type(entry.command) == "string" and entry.command:find("/sanc", 1, true) == 1,
-        "catalogue entry " .. tostring(entry.id) .. " names the command it replaces")
     check(type(entry.run) == "function",
         "catalogue entry " .. tostring(entry.id) .. " is runnable")
 end
 
--- Every command of the old checklist has a button, and the group invitation
+-- Every diagnostic of the old checklist has a button, the group invitation
 -- window -- which had no command at all and was reached through a raw /run --
--- now has one too.
+-- has one too, and so does the lockdown probe that used to be a slash command.
+-- No entry names a command any more: there are none left to name.
 for _, id in ipairs({ "sim_invite", "sim_bnet", "sim_bnetfriend", "diag_chat",
-    "diag_sound", "diag_popup_invite", "diag_popup_duel", "diag_popup_guild",
+    "diag_chat_lockdown", "diag_sound_open", "diag_sound_invite",
+    "diag_popup_invite", "diag_popup_duel", "diag_popup_guild",
     "diag_popup_list" }) do
     check(ns.getDiagnosticEntry(id) ~= nil, "catalogue covers " .. id)
+    equal(ns.getDiagnosticEntry(id).command, nil,
+        "catalogue entry " .. id .. " carries no command to type")
 end
 
 local unknown = ns.runDiagnosticById("no_such_diagnostic")
@@ -2195,7 +2239,7 @@ check(unknown.text ~= "" and unknown.text:find("no_such_diagnostic", 1, true) ~=
 -- A diagnostic that throws must still produce a line in the panel: swallowing
 -- it into the error handler is how a checklist step silently passes.
 local brokenEntry = { id = "broken", labelKey = "DIAG_SIM_INVITE",
-    command = "/sanc broken", run = function() error("boom") end }
+    run = function() error("boom") end }
 table.insert(ns.DIAGNOSTIC_CATALOG, brokenEntry)
 local broken = ns.runDiagnosticById("broken")
 check(broken.failed == true, "a diagnostic that throws is reported, not swallowed")
@@ -2343,30 +2387,47 @@ equal(groupBySource.bnet.total, 56, "a search reports how many entries it narrow
 equal(#ns.getAutoWhitelistGroups("nobodyhere")[1].entries, 0,
     "a search that matches nothing returns nothing rather than everything")
 
--- "Does this person get through?" -- the same decision, not a second one.
+-- "Test a name" -- the same decision, not a second one. Since 0.4.0 it answers
+-- in three tiers, and the eight answers of the validated board are exactly the
+-- eight cases below.
 local verdict = ns.describeAccessDecision("Officer-TestRealm")
-equal(verdict.blocked, false, "a guild member gets through")
-equal(verdict.source, "guild", "and the tab can say why")
+equal(verdict.verdict, "always_allowed", "a guild member is always allowed")
+equal(verdict.list, "guild", "and the tester can say which list")
 verdict = ns.describeAccessDecision("TypedName")
-equal(verdict.source, "manual", "a name typed in by hand is labelled as such")
+equal(verdict.list, "manual", "a name typed in by hand is labelled as such")
 verdict = ns.describeAccessDecision("Buddy")
-equal(verdict.source, "friend", "a friend is labelled as a friend")
+equal(verdict.list, "friend", "a friend is labelled as a friend")
 verdict = ns.describeAccessDecision("Nobody")
-equal(verdict.blocked, true, "a stranger is filtered")
-equal(verdict.reason, "not_whitelisted", "and the reason is the decision's own")
+equal(verdict.verdict, "unknown", "a stranger falls in no list")
+equal(verdict.blockedNow, true, "and is blocked while question 1 filters strangers")
 verdict = ns.describeAccessDecision("Spammerguy")
-equal(verdict.blocked, true, "a suspect pattern still overrides every trust source")
-equal(verdict.reason, "keyword", "a pattern match is reported as such")
-equal(verdict.keyword, "spammer", "the matching pattern is named")
+equal(verdict.verdict, "always_blocked", "a pattern still overrides every trust source")
+equal(verdict.list, "keyword", "a pattern match is reported as such")
+equal(verdict.detail, "spammer", "the matching pattern is named")
 equal(ns.describeAccessDecision("").valid, false, "an empty field asks nothing")
 equal(ns.describeAccessDecision("|cFFFFFFFF|r").valid, false, "a name made of formatting is refused")
 
--- A Battle.net friend whose current character is unknown is filtered on
--- character name and allowed on Battle.net whispers. Reporting only the first
--- half would read as a bug.
+-- A Battle.net friend is answered on the account, whichever half is typed.
 verdict = ns.describeAccessDecision("Friend07#1007")
-equal(verdict.blocked, true, "a Battle.net tag is not a character name")
-equal(verdict.bnetSource, "bnet", "but the account match is reported alongside")
+equal(verdict.verdict, "always_allowed", "a Battle.net tag is answered on the account")
+equal(verdict.list, "bnet", "and named as a Battle.net friend")
+
+-- Question 1 in the other mode: the same unknown name, the other answer.
+SanctuaryDB.filters.scope = "blockedOnly"
+verdict = ns.describeAccessDecision("Nobody")
+equal(verdict.verdict, "unknown", "an unknown name is still unknown")
+equal(verdict.blockedNow, false, "but nothing blocks it when only blocked names are filtered")
+equal(verdict.scope, "blockedOnly", "and the answer says which mode it was given in")
+SanctuaryDB.filters.scope = "strangers"
+
+-- The blocked list beats the allowed one, and the answer says so rather than
+-- silently dropping the entry the person typed.
+ns.addBlocked("Officer-TestRealm")
+verdict = ns.describeAccessDecision("Officer-TestRealm")
+equal(verdict.verdict, "always_blocked", "a blocked name beats a trust source")
+equal(verdict.list, "blocked_name", "named as an exact blocked name")
+equal(verdict.overriddenList, "guild", "and the answer still names the list it overrides")
+ns.removeBlocked(ns.normalizeBlockedKey("Officer-TestRealm"))
 
 wipe(SanctuaryDB.manualWhitelist)
 SanctuaryDB.keywords = {}
@@ -2634,6 +2695,769 @@ equal(ns.escapeExportText("a|Kb|kc"), "a||Kb||kc", "the summary escapes what the
 
 ns.resetDebugLog()
 
+
+-- ===========================================================================
+-- SECTION: the 0.4.0 decision model
+-- ===========================================================================
+
+-- One phrase: always blocked, else always allowed, else unknown -- and only the
+-- third tier depends on a setting. Everything below proves that phrase, on the
+-- paths that carry it.
+
+-- An earlier section clears these globals to exercise the escaping of a nil
+-- value, and the invite patterns were rebuilt without them. Put them back and
+-- rebuild, or the simulated system line matches no pattern at all.
+ERR_INVITED_TO_GROUP_SS = "[%s] vous a invit\195\169 \195\160 rejoindre un groupe."
+ERR_INVITED_ALREADY_IN_GROUP_SS = "[%s] vous a invit\195\169 \195\160 rejoindre un groupe, mais vous ne pouviez pas accepter car vous \195\170tes d\195\169j\195\160 dans un groupe."
+fire("ADDON_LOADED", "Sanctuary")
+
+local function resetModelState()
+    wipe(SanctuaryDB.manualWhitelist)
+    wipe(SanctuaryDB.blockedNames)
+    SanctuaryDB.keywords = {}
+    SanctuaryDB.filters.scope = "strangers"
+    SanctuaryDB.filters.preset = "custom"
+    SanctuaryDB.filters.groupInvite = true
+    SanctuaryDB.filters.whisper = true
+    SanctuaryDB.filters.duel = true
+    SanctuaryDB.filters.trade = true
+    SanctuaryDB.filters.guildInvite = true
+    SanctuaryDB.filters.say = false
+    SanctuaryDB.filters.yell = false
+    SanctuaryDB.filters.emote = false
+    SanctuaryDB.filters.channelMode = "none"
+    SanctuaryDB.filters.strictGroupInviteSystemMessages = false
+    SanctuaryDB.log = {}
+    guildMembers = {}
+    charFriends = {}
+    bnetFriends = {}
+    groupMembers = {}
+    inGuild = false
+    inGroup = false
+    inRaid = false
+    inInstance = false
+    currentInstanceType = "none"
+    npcName = nil
+    ns.invalidateWhitelist()
+    ns.resetDebugLog()
+end
+
+resetModelState()
+
+-- C1 -- a blocked name beats every trust source, and every unticked filter.
+guildMembers = { "Nuisance-TestRealm" }
+inGuild = true
+charFriends = { "Nuisance" }
+inGroup = true
+groupMembers = { "Nuisance-TestRealm" }
+ns.addAllowed("Nuisance-TestRealm")
+ns.addBlocked("Nuisance")
+ns.invalidateWhitelist()
+
+local blocked, why = ns.getCharacterDecision("Nuisance-TestRealm")
+equal(blocked, true, "a blocked name is blocked although guild, friend, group and allowed")
+equal(why, "blocked_name", "and the decision names the list that decided")
+
+-- Every filter unticked, and the chat filters still discard them.
+SanctuaryDB.filters.whisper = false
+SanctuaryDB.filters.say = false
+SanctuaryDB.filters.yell = false
+SanctuaryDB.filters.emote = false
+SanctuaryDB.filters.channelMode = "none"
+SanctuaryDB.filters.groupInvite = false
+for _, case in ipairs({
+    { "CHAT_MSG_WHISPER", "whisper" },
+    { "CHAT_MSG_SAY", "say" },
+    { "CHAT_MSG_YELL", "yell" },
+    { "CHAT_MSG_EMOTE", "emote" },
+    { "CHAT_MSG_CHANNEL", "public channel" },
+}) do
+    equal(dispatchChatFilter(case[1], "hello", "Nuisance-TestRealm"), true,
+        "a blocked name is discarded on " .. case[2] .. " with the filter unticked")
+end
+equal(dispatchChatFilter("CHAT_MSG_SYSTEM",
+    string.format(ERR_INVITED_TO_GROUP_SS, "Nuisance", "Nuisance")), true,
+    "and on the invite system line")
+
+-- ... and the four interaction handlers refuse them, filters unticked.
+local beforeDeclines = declinedGroups
+fire("PARTY_INVITE_REQUEST", "Nuisance-TestRealm")
+runTimers(3)
+equal(declinedGroups, beforeDeclines + 1, "a blocked name's group invite is declined, filter unticked")
+local inviteEntry = lastDebug("INVITE")
+equal(inviteEntry and inviteEntry.data.action, "BLOCK_BLOCKED_NAME",
+    "and the debug entry names the list rather than the whitelist")
+equal(inviteEntry and inviteEntry.data.armedBy, "blocked_list",
+    "and says which half armed the guard")
+
+SanctuaryDB.filters.duel = false
+local beforeDuels = cancelledDuels
+fire("DUEL_REQUESTED", "Nuisance-TestRealm")
+runTimers(3)
+equal(cancelledDuels, beforeDuels + 1, "a blocked name's duel is cancelled, filter unticked")
+
+SanctuaryDB.filters.guildInvite = false
+local beforeGuilds = declinedGuilds
+fire("GUILD_INVITE_REQUEST", "Nuisance-TestRealm", "Some Guild")
+runTimers(3)
+equal(declinedGuilds, beforeGuilds + 1, "a blocked name's guild invite is declined, filter unticked")
+
+SanctuaryDB.filters.trade = false
+npcName = "Nuisance-TestRealm"
+local beforeTrades = closedTrades
+fire("TRADE_SHOW")
+equal(closedTrades, beforeTrades + 1, "a blocked name's trade is closed, filter unticked")
+npcName = nil
+
+-- C2 -- the same, by pattern.
+resetModelState()
+guildMembers = { "Spammerguy-TestRealm" }
+inGuild = true
+SanctuaryDB.keywords = { "spammer" }
+SanctuaryDB.filters.whisper = false
+ns.invalidateWhitelist()
+blocked, why = ns.getCharacterDecision("Spammerguy-TestRealm")
+equal(blocked, true, "a pattern still beats every trust source")
+equal(why, "keyword", "and is still reported as a pattern")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Spammerguy-TestRealm"), true,
+    "a pattern discards a whisper with the filter unticked")
+
+-- C3 -- "everyone except the people I block".
+resetModelState()
+guildMembers = { "Mate-TestRealm" }
+inGuild = true
+ns.addBlocked("Pest")
+SanctuaryDB.filters.scope = "blockedOnly"
+ns.invalidateWhitelist()
+equal(select(1, ns.getCharacterDecision("Pest")), true, "a blocked name is blocked in the open mode")
+local openBlocked, openReason = ns.getCharacterDecision("Stranger")
+equal(openBlocked, false, "an unknown name is not blocked in the open mode")
+equal(openReason, "open_scope", "and the reason names the mode")
+local mateBlocked, mateReason = ns.getCharacterDecision("Mate-TestRealm")
+equal(mateBlocked, false, "a guild member is still allowed")
+equal(mateReason, "whitelist", "and still for being allowed, not for the mode")
+for _, key in ipairs({ "groupInvite", "whisper", "duel", "trade", "guildInvite",
+    "say", "yell", "emote", "strictGroupInviteSystemMessages" }) do
+    equal(ns.isFilterOn(key), false, "the open mode turns " .. key .. " off")
+end
+equal(ns.isFilterOn("channelMode"), "none", "and public channels with them")
+
+-- C4 -- the recommended preset ignores what is stored underneath.
+resetModelState()
+SanctuaryDB.filters.preset = "all"
+SanctuaryDB.filters.whisper = false
+SanctuaryDB.filters.say = true
+SanctuaryDB.filters.channelMode = "all"
+equal(ns.isFilterOn("whisper"), true, "the recommended preset filters whispers whatever is stored")
+equal(ns.isFilterOn("say"), false, "and leaves /say alone whatever is stored")
+equal(ns.isFilterOn("channelMode"), "none", "and public channels alone")
+SanctuaryDB.filters.preset = "custom"
+equal(ns.isFilterOn("whisper"), false, "\"I choose\" reads the stored value")
+equal(ns.isFilterOn("say"), true, "for each key")
+equal(ns.isFilterOn("channelMode"), "all", "including the channel mode")
+-- The stored values are never rewritten by the switch: that is what makes the
+-- round trip lossless.
+equal(SanctuaryDB.filters.whisper, false, "the stored value survives a trip through the preset")
+
+-- C5 -- enhanced instance filtering, in the three situations.
+resetModelState()
+SanctuaryDB.filters.strictGroupInviteSystemMessages = true
+SanctuaryDB.filters.preset = "all"
+equal(ns.isFilterOn("strictGroupInviteSystemMessages"), true,
+    "the enhanced box applies under the recommended preset")
+SanctuaryDB.filters.scope = "blockedOnly"
+equal(ns.isFilterOn("strictGroupInviteSystemMessages"), false,
+    "and never in the open mode")
+SanctuaryDB.filters.scope = "strangers"
+SanctuaryDB.filters.preset = "custom"
+SanctuaryDB.filters.groupInvite = false
+equal(ns.isFilterOn("strictGroupInviteSystemMessages"), false,
+    "nor with the group-invite filter unticked")
+SanctuaryDB.filters.groupInvite = true
+equal(ns.isFilterOn("strictGroupInviteSystemMessages"), true, "and again once it is back")
+
+-- C6 -- arming. One blocked name is enough; empty lists arm nothing.
+resetModelState()
+SanctuaryDB.filters.scope = "blockedOnly"
+equal(ns.isProtectionArmed("PARTY_INVITE"), false, "empty lists arm nothing at all")
+ns.refreshInviteSoundMuteState()
+equal(StaticPopupDialogs.PARTY_INVITE.sound, 880,
+    "so the native invite sound is left exactly as WoW plays it")
+ns.addBlocked("Pest")
+equal(ns.isProtectionArmed("PARTY_INVITE"), true, "one blocked name arms the invite guard")
+equal(ns.isProtectionArmed("DUEL_REQUESTED"), true, "and the duel guard")
+equal(ns.isProtectionArmed("guildInvite"), true, "and the guild one")
+equal(ns.isProtectionArmed("trade"), true, "and the trade one")
+ns.refreshInviteSoundMuteState()
+equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "and the sound guard goes back up")
+
+local beforeLog = #SanctuaryDB.log
+beforeDeclines = declinedGroups
+StaticPopup_Show("PARTY_INVITE", "Pest")
+fire("PARTY_INVITE_REQUEST", "Pest")
+runTimers(3)
+equal(declinedGroups, beforeDeclines + 1, "the invitation is declined although no filter is on")
+equal(#SanctuaryDB.log, beforeLog + 1, "and the journal records it")
+equal(StaticPopup1:IsShown(), false, "and no dialog is left on screen")
+
+-- C7 -- armed by the list, then an allowed invitation arrives.
+resetModelState()
+SanctuaryDB.filters.scope = "blockedOnly"
+ns.addBlocked("Pest")
+ns.addAllowed("Welcome")
+ns.refreshInviteSoundMuteState()
+playedSounds = {}
+StaticPopup_Show("PARTY_INVITE", "Welcome")
+fire("PARTY_INVITE_REQUEST", "Welcome")
+runTimers(3)
+local allowEntry = lastDebug("INVITE")
+equal(allowEntry and allowEntry.data.action, "ALLOW", "an allowed invitation is allowed")
+check((tonumber(allowEntry and allowEntry.data.releasedSoundGuards) or 0) > 0,
+    "the guard the list had armed is released for it")
+check(allowEntry and allowEntry.data.replayedSound == true,
+    "and the native sound is replayed exactly once")
+equal(StaticPopup1:GetAlpha(), 1, "with the dialog put back on screen")
+StaticPopup1.inviteAccepted = true
+StaticPopup1:Hide()
+StaticPopup1.inviteAccepted = nil
+runTimers(3)
+
+-- C8 -- the seven group, raid and instance channels.
+resetModelState()
+ns.addBlocked("Pest")
+ns.addAllowed("Welcome")
+for _, event in ipairs(ns.GROUP_CHAT_EVENTS) do
+    equal(dispatchChatFilter(event, "spam", "Pest"), true,
+        event .. " hides a blocked name")
+    equal(dispatchChatFilter(event, "hello", "Stranger"), false,
+        event .. " never hides a stranger")
+    equal(dispatchChatFilter(event, "hello", "Welcome"), false,
+        event .. " never hides an allowed name")
+    equal(dispatchChatFilter(event, "hello", "Victim-TestRealm"), false,
+        event .. " never hides the player")
+end
+SanctuaryCharDB.overrides.enabled = false
+equal(dispatchChatFilter("CHAT_MSG_PARTY", "spam", "Pest"), false,
+    "and nothing at all while the add-on is off")
+SanctuaryCharDB.overrides.enabled = nil
+
+-- One journal entry, one session counter, one verbose line -- like any other
+-- blocked interaction.
+SanctuaryDB.log = {}
+SanctuaryCharDB.sessionStats = { blockedCount = 0, blockedByType = {} }
+SanctuaryDB.notifications.mode = "verbose"
+chatMessages = {}
+now = now + 5
+fire("CHAT_MSG_PARTY", "spam", "Pest")
+equal(#SanctuaryDB.log, 1, "a hidden group message is journalled")
+equal(SanctuaryDB.log[1].type, "group", "under its own type")
+equal(SanctuaryCharDB.sessionStats.blockedCount, 1, "and counted in the session")
+equal(#chatMessages, 1, "and announced once in verbose mode")
+SanctuaryDB.notifications.mode = "silent"
+
+-- C9 -- Battle.net, resolved both ways.
+resetModelState()
+bnetFriends = {
+    { accountName = "Real Friend#1234", bnetAccountID = 91,
+      gameAccountInfo = { characterName = "Bnetchar" } },
+    { accountName = "Dash-Friend#5678", bnetAccountID = 92 },
+}
+SanctuaryDB.filters.whisper = false
+ns.addBlocked("Real Friend#1234")
+ns.invalidateWhitelist()
+equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(91)), true,
+    "a blocked Battle.net account is discarded with the whisper filter unticked")
+equal(select(1, ns.getCharacterDecision("Bnetchar")), true,
+    "and their known character is blocked on the WoW paths too")
+ns.removeBlocked(ns.normalizeBlockedKey("Real Friend#1234"))
+
+ns.addBlocked("Bnetchar")
+ns.invalidateWhitelist()
+equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(91)), true,
+    "blocking the character blocks the account's whispers as well")
+ns.removeBlocked(ns.normalizeBlockedKey("Bnetchar"))
+
+ns.addBlocked("Dash-Friend#5678")
+ns.invalidateWhitelist()
+equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(92)), true,
+    "an account name carrying a hyphen is found")
+-- The one gap, and it is stated in the release notes: an offline friend has no
+-- known character, so there is nothing to resolve from.
+local offline = ns.classifyName("SomeCharacterOf5678")
+equal(offline.verdict, "unknown", "an offline friend's unknown character resolves to nothing")
+
+-- C10 -- the eight answers of the board, through classifyName.
+resetModelState()
+guildMembers = { "Guildy-TestRealm" }
+inGuild = true
+charFriends = { "Palz" }
+bnetFriends = { { accountName = "Ioxe26", bnetAccountID = 93,
+    gameAccountInfo = { characterName = "Clarage" } } }
+inGroup = true
+groupMembers = { "Kadaj-TestRealm" }
+ns.addAllowed("Toto")
+ns.addBlocked("Xxxxxxx")
+SanctuaryDB.keywords = { "zzpattern" }
+ns.invalidateWhitelist()
+local function classificationOf(name)
+    local info = ns.classifyName(name)
+    return info.verdict .. "/" .. tostring(info.list)
+end
+equal(classificationOf("Toto"), "always_allowed/manual", "added by you")
+equal(classificationOf("Clarage"), "always_allowed/bnet", "Battle.net friend")
+equal(ns.classifyName("Clarage").detail, "Ioxe26", "named by the account")
+equal(classificationOf("Palz"), "always_allowed/friend", "realm friend")
+equal(classificationOf("Guildy-TestRealm"), "always_allowed/guild", "guild member")
+equal(classificationOf("Kadaj-TestRealm"), "always_allowed/group", "in the group right now")
+equal(classificationOf("Xxxxxxx"), "always_blocked/blocked_name", "in the blocked names")
+equal(classificationOf("Superzzpattern"), "always_blocked/keyword", "matched by a pattern")
+equal(classificationOf("Zorglub"), "unknown/nil", "and an unknown name is unknown")
+
+-- C11 -- the counts behind the two tiles.
+local listCounts = ns.getListCounts()
+equal(listCounts.allowed.manual, 1, "one name added by hand")
+equal(listCounts.allowed.bnet, 1, "one Battle.net account")
+equal(listCounts.allowed.friend, 1, "one realm friend")
+equal(listCounts.allowed.guild, 1, "one guild member")
+equal(listCounts.allowed.total,
+    listCounts.allowed.manual + listCounts.allowed.trust + listCounts.allowed.bnet
+    + listCounts.allowed.friend + listCounts.allowed.guild,
+    "and the total is their sum -- the current group is not counted")
+equal(listCounts.blocked.names, 1, "one blocked name")
+equal(listCounts.blocked.patterns, 1, "one pattern")
+equal(listCounts.blocked.total, 2, "and the blocked total is their sum")
+
+local protectionInfo = ns.describeProtection()
+equal(#protectionInfo.kinds, 5, "\"I choose\" with everything ticked lists five kinds")
+SanctuaryDB.filters.preset = "all"
+equal(#ns.describeProtection().kinds, 5, "the recommended preset lists the same five")
+SanctuaryDB.filters.scope = "blockedOnly"
+equal(#ns.describeProtection().kinds, 0, "and the open mode lists none")
+SanctuaryDB.filters.scope = "strangers"
+SanctuaryDB.filters.preset = "custom"
+
+-- C12 -- the writes.
+resetModelState()
+equal(select(1, ns.addAllowed("  Toto-Ysondre  ")), true, "a name is added once")
+equal(select(1, ns.addAllowed("toto")), false, "and a duplicate is a no-op")
+local removedOk, removedKey, removedData = ns.removeAllowed("toto")
+equal(removedOk, true, "removing gives the data back")
+check(type(removedData) == "table" and removedData.displayName == "Toto-Ysondre",
+    "with the name exactly as it was typed")
+ns.restoreAllowed(removedKey, removedData)
+equal(SanctuaryDB.manualWhitelist.toto.displayName, "Toto-Ysondre",
+    "and restoring puts back the same record, date included")
+equal(select(1, ns.addBlocked("Toto-Ysondre")), true, "the same name can also be blocked")
+check(SanctuaryDB.manualWhitelist.toto ~= nil,
+    "and blocking never deletes the allowed entry the person typed")
+equal(select(1, ns.getCharacterDecision("Toto-Ysondre")), true, "the decision blocks them")
+equal(select(1, ns.addPattern("  Te St ")), true, "a pattern is normalised")
+equal(SanctuaryDB.keywords[1], "test", "to lower case with no spaces")
+equal(select(1, ns.addPattern("TEST")), false, "and deduplicated")
+equal(select(1, ns.removePattern("test")), true, "and removable")
+equal(#SanctuaryDB.keywords, 0, "leaving the list empty")
+
+-- C13 -- the protection toggle, in the core.
+resetModelState()
+ns.addBlocked("Pest")
+ns.refreshInviteSoundMuteState()
+StaticPopup_Show("PARTY_INVITE", "Pest")
+fire("PARTY_INVITE_REQUEST", "Pest")
+equal(StaticPopup1:GetAlpha(), 0, "a blocked invitation is masked")
+chatMessages = {}
+ns.setEnabled(false)
+equal(ns.isEnabled(), false, "setEnabled writes the override")
+equal(StaticPopup1:GetAlpha(), 1, "and unmasks what was hidden")
+equal(#chatMessages, 1, "saying so once in chat")
+local toggleEntry = lastDebug("TOGGLE")
+equal(toggleEntry and toggleEntry.data.enabled, false, "and recording the flip")
+ns.setEnabled(true)
+equal(ns.isEnabled(), true, "and back on")
+StaticPopup1.inviteAccepted = true
+StaticPopup1:Hide()
+StaticPopup1.inviteAccepted = nil
+runTimers(3)
+
+-- C14 -- the summary only speaks when something new was blocked.
+resetModelState()
+SanctuaryDB.notifications.mode = "minimal"
+SanctuaryCharDB.sessionStats = { blockedCount = 3, blockedByType = {} }
+Sanctuary = nil
+chatMessages = {}
+now = now + 1000
+runTickers()
+equal(#chatMessages, 1, "three blocks and a tick produce one summary")
+chatMessages = {}
+now = now + 1000
+runTickers()
+equal(#chatMessages, 0, "a tick with nothing new produces none")
+SanctuaryCharDB.sessionStats.blockedCount = 4
+chatMessages = {}
+now = now + 1000
+runTickers()
+equal(#chatMessages, 1, "and one more block produces one again")
+SanctuaryDB.notifications.mode = "silent"
+
+-- C15 -- the schema reset.
+local carriedWhitelist = { oldfriend = { displayName = "Oldfriend", addedAt = 42 } }
+local carriedKeywords = { "oldpattern" }
+SanctuaryDB = {
+    schemaVersion = 1,
+    filters = { groupInvite = false, whisper = false, say = true, channelMode = "all",
+        autoTrust = true, strictGroupInviteSystemMessages = true },
+    notifications = { mode = "verbose", minimalIntervalMinutes = 5 },
+    logging = { enabled = false, maxEntries = 250, rotation = "deleteOldest" },
+    manualWhitelist = carriedWhitelist,
+    keywords = carriedKeywords,
+    log = { { type = "whisper", name = "Someone" } },
+    uiSize = { 620, 480 },
+    uiPosition = { point = "TOP", x = 5, y = 5 },
+    debugEnabled = true,
+    debugLog = { { seq = 1, cat = "OLD", data = {} } },
+}
+SanctuaryCharDB = { schemaVersion = 1, overrides = { enabled = false, filters = {} },
+    manualWhitelist = { charfriend = { displayName = "Charfriend" } },
+    groupTracker = {}, sessionStats = { blockedCount = 9, blockedByType = {} } }
+fire("ADDON_LOADED", "Sanctuary")
+equal(SanctuaryDB.schemaVersion, 2, "the reset stamps the new schema")
+equal(SanctuaryDB.filters.scope, "strangers", "question 1 goes back to its default")
+equal(SanctuaryDB.filters.preset, "all", "question 2 too")
+equal(SanctuaryDB.filters.groupInvite, true, "and every per-filter value")
+equal(SanctuaryDB.notifications.mode, "silent", "question 3 goes back to silence")
+equal(SanctuaryDB.uiSize, nil, "the window size is forgotten")
+equal(SanctuaryDB.uiPosition, nil, "and its position")
+equal(#SanctuaryDB.log, 0, "the journal is emptied")
+equal(SanctuaryDB.logging.maxEntries, 5000, "the retention limit goes back to its default")
+equal(SanctuaryDB.debugEnabled, false, "and debug mode is off again")
+equal(SanctuaryDB.manualWhitelist, carriedWhitelist, "the names added by hand are kept")
+equal(SanctuaryDB.manualWhitelist.oldfriend.addedAt, 42, "with their dates")
+equal(SanctuaryDB.keywords, carriedKeywords, "the patterns are kept")
+equal(SanctuaryCharDB.manualWhitelist.charfriend ~= nil, true,
+    "and the per-character list too")
+equal(next(SanctuaryDB.blockedNames), nil, "the blocked list starts empty")
+-- Idempotent: the rebuilt file already carries schema 2, so a second load falls
+-- straight through.
+SanctuaryDB.filters.scope = "blockedOnly"
+SanctuaryDB.logging.maxEntries = 1234
+fire("ADDON_LOADED", "Sanctuary")
+equal(SanctuaryDB.filters.scope, "blockedOnly", "a second load resets nothing")
+equal(SanctuaryDB.logging.maxEntries, 1234, "and keeps what was set since")
+SanctuaryDB.filters.scope = "strangers"
+SanctuaryDB.logging.maxEntries = 5000
+SanctuaryCharDB.overrides.enabled = nil
+
+-- C16 -- the snapshot and the report publish what the core applies.
+resetModelState()
+SanctuaryDB.filters.preset = "all"
+SanctuaryDB.filters.whisper = false
+local publishedState = ns.getEffectiveFilterState()
+equal(publishedState.whisper, true, "the published state is the resolved one")
+equal(publishedState.scope, "strangers", "and carries the scope")
+equal(publishedState.preset, "all", "and the preset")
+SanctuaryDB.debugEnabled = true
+ns.resetDebugLog()
+ns.captureDebugSnapshot("test")
+local snapshotEntry = lastDebug("SNAPSHOT")
+equal(snapshotEntry and snapshotEntry.data.filters.whisper, true,
+    "the snapshot publishes the resolved state, never the stored checkbox")
+equal(snapshotEntry and snapshotEntry.data.filters.scope, "strangers",
+    "with the scope alongside")
+check(ns.buildDebugReportText():find("preset=all", 1, true) ~= nil,
+    "and the report prints the preset")
+SanctuaryDB.filters.preset = "custom"
+SanctuaryDB.debugEnabled = false
+ns.resetDebugLog()
+
+-- C17 -- one line at load, and only one.
+resetModelState()
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 1, "loading prints exactly one line")
+check(chatMessages[1]:find(ns.L["ADDON_LOADED_ACTIVE"], 1, true) ~= nil,
+    "and it says the protection is active")
+SanctuaryCharDB.overrides.enabled = false
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 1, "still exactly one when the protection is off")
+check(chatMessages[1]:find(ns.L["ADDON_LOADED_INACTIVE"], 1, true) ~= nil,
+    "and it says so")
+SanctuaryCharDB.overrides.enabled = nil
+
+-- ===========================================================================
+-- SECTION: hiding secret system lines during a chat lockdown
+-- ===========================================================================
+
+-- The registry cannot help here: a secret payload skips every add-on filter, so
+-- the AddMessage envelope is the only place the line can be stopped.
+
+resetModelState()
+-- An earlier section replaced ChatFrame1 with a whisper-tab stub. The envelope
+-- is what this whole section measures, so the real frame goes back and the
+-- wrapper is reinstalled on it.
+ChatFrame1 = DEFAULT_CHAT_FRAME
+ChatFrame2 = nil
+ChatFrame3 = nil
+ChatFrame4 = nil
+ns.hookChatOutputDiagnostics()
+SanctuaryDB.debugEnabled = true
+ns.resetDebugLog()
+local lockdownPayload = makeSecretValue("lockdown-line")
+
+local function sendSecretLine(messageTypeID)
+    local beforeMessages = #chatMessages
+    local beforeJournal = #SanctuaryDB.log
+    local ok = pcall(function()
+        ChatFrame1:AddMessage(lockdownPayload, 1, 1, 0, messageTypeID)
+    end)
+    return ok, #chatMessages - beforeMessages, #SanctuaryDB.log - beforeJournal
+end
+
+local function armStrictInInstance()
+    SanctuaryDB.filters.scope = "strangers"
+    SanctuaryDB.filters.preset = "custom"
+    SanctuaryDB.filters.groupInvite = true
+    SanctuaryDB.filters.strictGroupInviteSystemMessages = true
+    SanctuaryCharDB.overrides.enabled = nil
+    inGroup = true
+    inInstance = true
+    currentInstanceType = "party"
+end
+
+-- H1 -- the seven refusals, one by one. Each lets the line through and says why.
+armStrictInInstance()
+local REFUSALS = {
+    { label = "a readable line", reason = "readable", prepare = function() end,
+      readable = true },
+    { label = "an unknown category", reason = "type_unknown",
+      prepare = function() end },
+    { label = "a category that is not system", reason = "type_not_system",
+      prepare = function() end, messageTypeID = 99 },
+    { label = "the add-on switched off", reason = "addon_disabled",
+      prepare = function() SanctuaryCharDB.overrides.enabled = false end,
+      messageTypeID = ChatTypeInfo.SYSTEM.id },
+    { label = "the group-invite filter unticked", reason = "filter_off",
+      prepare = function() SanctuaryDB.filters.groupInvite = false end,
+      messageTypeID = ChatTypeInfo.SYSTEM.id },
+    { label = "the enhanced box unticked", reason = "strict_off",
+      prepare = function() SanctuaryDB.filters.strictGroupInviteSystemMessages = false end,
+      messageTypeID = ChatTypeInfo.SYSTEM.id },
+    { label = "no group and no instance", reason = "no_context",
+      prepare = function() inGroup = false; inInstance = false end,
+      messageTypeID = ChatTypeInfo.SYSTEM.id },
+}
+for _, refusal in ipairs(REFUSALS) do
+    armStrictInInstance()
+    refusal.prepare()
+    ns.resetDebugLog()
+    now = now + 5
+    if refusal.readable then
+        local before = #chatMessages
+        ChatFrame1:AddMessage("a plain system line", 1, 1, 0, ChatTypeInfo.SYSTEM.id)
+        equal(#chatMessages, before + 1, refusal.label .. " reaches the frame")
+    else
+        local ok, shown, journalled = sendSecretLine(refusal.messageTypeID)
+        check(ok, refusal.label .. " does not break the guard")
+        equal(shown, 1, refusal.label .. " lets the line reach the frame")
+        equal(journalled, 0, refusal.label .. " writes nothing to the journal")
+        local entry = lastDebug("CHAT_OUTPUT")
+        equal(entry and entry.data.action, "SECRET_VALUE", refusal.label .. " is recorded as seen")
+        equal(entry and entry.data.reason, refusal.reason,
+            refusal.label .. " records the refusal it hit")
+    end
+end
+
+-- H2 -- the nominal case: five-person group in a dungeon, enhanced ticked.
+armStrictInInstance()
+groupMembers = { "A-TestRealm", "B-TestRealm", "C-TestRealm", "D-TestRealm" }
+ns.resetDebugLog()
+now = now + 5
+local ok, shown, journalled = sendSecretLine(ChatTypeInfo.SYSTEM.id)
+check(ok, "the nominal case does not break the guard")
+equal(shown, 0, "the line never reaches the frame")
+equal(journalled, 0, "and nothing is written to the journal -- there is nothing to record")
+local maskEntry = lastDebug("CHAT_OUTPUT")
+equal(maskEntry and maskEntry.data.action, "SUPPRESS_SECRET_SYSTEM", "the masking is recorded")
+equal(maskEntry and maskEntry.data.reason, "suppressed", "with the reason it went through")
+equal(maskEntry and maskEntry.data.frames, "1", "and the frame it was destined for")
+equal(maskEntry and maskEntry.data.journaled, nil,
+    "and no journalled field: the product journal is not involved at all")
+
+-- H3 -- one message, three frames: one debug entry, three destinations.
+ChatFrame2 = { AddMessage = function(self, message) end }
+ChatFrame3 = { AddMessage = function(self, message) end }
+ns.hookChatOutputDiagnostics()
+ns.resetDebugLog()
+now = now + 5
+for _, frame in ipairs({ ChatFrame1, ChatFrame2, ChatFrame3 }) do
+    pcall(function() frame:AddMessage(lockdownPayload, 1, 1, 0, ChatTypeInfo.SYSTEM.id) end)
+end
+equal(#SanctuaryDB.debugLog, 1, "one message on three frames is one debug entry")
+equal(SanctuaryDB.debugLog[1].data.frameCount, 3, "carrying the three destinations")
+
+-- H4 -- three messages on two frames, clock frozen: three entries.
+ns.resetDebugLog()
+for _ = 1, 3 do
+    for _, frame in ipairs({ ChatFrame1, ChatFrame2 }) do
+        pcall(function() frame:AddMessage(lockdownPayload, 1, 1, 0, ChatTypeInfo.SYSTEM.id) end)
+    end
+end
+equal(#SanctuaryDB.debugLog, 3, "three messages are three entries even inside one burst window")
+for _, entry in ipairs(SanctuaryDB.debugLog) do
+    equal(entry.data.frameCount, 2, "each carrying its two destinations")
+end
+
+-- H5 -- with debug mode off the masking still happens, silently.
+SanctuaryDB.debugEnabled = false
+ns.resetDebugLog()
+now = now + 5
+ok, shown, journalled = sendSecretLine(ChatTypeInfo.SYSTEM.id)
+equal(shown, 0, "the line is still masked with debug mode off")
+equal(#SanctuaryDB.debugLog, 0, "and nothing at all is recorded")
+SanctuaryDB.debugEnabled = true
+
+-- H6 -- the journal option changes nothing either way.
+for _, enabled in ipairs({ true, false }) do
+    SanctuaryDB.logging.enabled = enabled
+    ns.resetDebugLog()
+    now = now + 5
+    ok, shown, journalled = sendSecretLine(ChatTypeInfo.SYSTEM.id)
+    equal(shown, 0, "masked whatever the journal option says")
+    equal(journalled, 0, "and the journal is untouched either way")
+end
+SanctuaryDB.logging.enabled = true
+
+-- H7 -- the lockdown reading is observed, never blocking.
+local savedLockdownApi = C_ChatInfo.InChatMessagingLockdown
+local LOCKDOWN_CASES = {
+    { label = "API absent", api = nil, known = false, value = false },
+    { label = "API answering false", api = function() return false end, known = true, value = false },
+    { label = "API answering true", api = function() return true end, known = true, value = true },
+    { label = "API returning a secret", api = function() return makeSecretValue("l") end,
+      known = false, value = false },
+    { label = "API raising", api = function() error("nope") end, known = false, value = false },
+}
+for _, case in ipairs(LOCKDOWN_CASES) do
+    C_ChatInfo.InChatMessagingLockdown = case.api
+    ns.resetDebugLog()
+    now = now + 5
+    ok, shown = sendSecretLine(ChatTypeInfo.SYSTEM.id)
+    equal(shown, 0, "masked with " .. case.label)
+    local entry = lastDebug("CHAT_OUTPUT")
+    equal(entry and entry.data.chatLockdownKnown, case.known,
+        case.label .. " is reported as known or not")
+    equal(entry and entry.data.chatLockdown, case.value, case.label .. " reports its value")
+end
+C_ChatInfo.InChatMessagingLockdown = savedLockdownApi
+
+-- H8 -- reversible without a /reload, through either store.
+ns.resetDebugLog()
+SanctuaryDB.filters.strictGroupInviteSystemMessages = false
+now = now + 5
+ok, shown = sendSecretLine(ChatTypeInfo.SYSTEM.id)
+equal(shown, 1, "unticking the box shows the very next line")
+SanctuaryDB.filters.strictGroupInviteSystemMessages = true
+now = now + 5
+ok, shown = sendSecretLine(ChatTypeInfo.SYSTEM.id)
+equal(shown, 0, "and ticking it hides the one after")
+SanctuaryCharDB.overrides.filters.strictGroupInviteSystemMessages = false
+now = now + 5
+ok, shown = sendSecretLine(ChatTypeInfo.SYSTEM.id)
+equal(shown, 1, "a per-character override works the same way")
+SanctuaryCharDB.overrides.filters.strictGroupInviteSystemMessages = nil
+
+-- H9 -- complete silence: no chat line, no counter, no summary.
+SanctuaryDB.notifications.mode = "verbose"
+SanctuaryCharDB.sessionStats = { blockedCount = 0, blockedByType = {} }
+chatMessages = {}
+now = now + 5
+sendSecretLine(ChatTypeInfo.SYSTEM.id)
+equal(#chatMessages, 0, "a masked system line prints nothing, even in verbose mode")
+equal(SanctuaryCharDB.sessionStats.blockedCount, 0, "and counts nothing")
+SanctuaryDB.notifications.mode = "minimal"
+now = now + 1000
+chatMessages = {}
+runTickers()
+equal(#chatMessages, 0, "and produces no summary either")
+SanctuaryDB.notifications.mode = "silent"
+
+-- H11 -- the other contexts.
+local CONTEXTS = {
+    { label = "raid", setup = function() inGroup = true; inRaid = true; inInstance = true
+        currentInstanceType = "raid" end, masked = true },
+    { label = "a PvP match", setup = function() inGroup = true; inRaid = false; inInstance = true
+        currentInstanceType = "pvp" end, masked = true },
+    { label = "death in a raid", setup = function() inGroup = true; inRaid = true
+        inInstance = true; playerDeadOrGhost = true end, masked = true },
+    { label = "solo outside any instance", setup = function() inGroup = false; inRaid = false
+        inInstance = false; currentInstanceType = "none"; playerDeadOrGhost = false end,
+      masked = false },
+}
+for _, context in ipairs(CONTEXTS) do
+    armStrictInInstance()
+    context.setup()
+    ns.resetDebugLog()
+    now = now + 5
+    ok, shown = sendSecretLine(ChatTypeInfo.SYSTEM.id)
+    equal(shown, context.masked and 0 or 1, "in " .. context.label ..
+        (context.masked and " the line is masked" or " the line is shown"))
+end
+playerDeadOrGhost = false
+
+-- H13 -- a readable line during a lockdown keeps the existing path.
+armStrictInInstance()
+ns.addBlocked("Nuisance")
+ns.invalidateWhitelist()
+equal(dispatchChatFilter("CHAT_MSG_SYSTEM",
+    string.format(ERR_INVITED_TO_GROUP_SS, "Nuisance", "Nuisance")), true,
+    "a readable blocked invite line is still discarded by the registry")
+equal(dispatchChatFilter("CHAT_MSG_SYSTEM", "an ordinary system line"), false,
+    "and an ordinary readable line still gets through")
+wipe(SanctuaryDB.blockedNames)
+ns.invalidateWhitelist()
+
+-- H14 -- the markers a recording is graded on.
+armStrictInInstance()
+ns.resetDebugLog()
+now = now + 5
+sendSecretLine(ChatTypeInfo.SYSTEM.id)
+now = now + 5
+sendSecretLine(99)
+ns.captureDebugSnapshot("test")
+local instanceMarkers = ns.getReportMarkers()
+equal(instanceMarkers.secretSystemSuppressed, 1, "one masked line is counted")
+equal(instanceMarkers.secretSystemVisible, 0, "and no system line got through")
+equal(instanceMarkers.strictModeOn, true, "the snapshot says the enhanced box was ticked")
+
+-- H19 -- the two switches reach the predicate.
+armStrictInInstance()
+SanctuaryDB.filters.scope = "blockedOnly"
+ns.resetDebugLog()
+now = now + 5
+ok, shown = sendSecretLine(ChatTypeInfo.SYSTEM.id)
+equal(shown, 1, "the open mode never masks a system line")
+equal(lastDebug("CHAT_OUTPUT").data.reason, "filter_off", "and says the filter is off")
+SanctuaryDB.filters.scope = "strangers"
+SanctuaryDB.filters.preset = "all"
+SanctuaryDB.filters.groupInvite = false
+ns.resetDebugLog()
+now = now + 5
+ok, shown = sendSecretLine(ChatTypeInfo.SYSTEM.id)
+equal(shown, 0, "the recommended preset masks it although groupInvite is stored false")
+
+-- H17 -- the lockdown diagnostic, in an instance.
+armStrictInInstance()
+ns.resetDebugLog()
+local armedLine = ns.formatChatDiagnosticResult(ns.runChatDiagnostic("lockdown"))
+check(armedLine:find("armed=yes", 1, true) ~= nil, "in a dungeon the diagnostic reports it armed")
+check(armedLine:find("context=instance", 1, true) ~= nil, "and names the context")
+equal(ns.getReportMarkers().lockdownArmedInInstance, true,
+    "and the recording carries the marker the session step claims")
+
+ChatFrame2 = nil
+ChatFrame3 = nil
+resetModelState()
+SanctuaryDB.filters.preset = "custom"
+
 -- ===========================================================================
 -- SECTION UI: the interface file, under a widget mock
 -- ===========================================================================
@@ -2841,7 +3665,13 @@ local KNOWN_IDENTICAL = {
     ABOUT_VERSION = true, GROUP_COMMUNICATION = true, GROUP_INTERACTIONS = true,
     GROUP_NOTIFICATIONS = true, LOG_TYPE_DUEL = true, LOG_TYPE_EMOTE = true,
     LOG_TYPE_INVITE = true, LOG_TYPE_WHISPER = true, NOTIF_MINIMAL = true,
-    OFF = true, ON = true, SETTINGS_TITLE = true, SUSPECTS_COUNT = true,
+    -- 0.4.0: proper nouns and format strings that read the same in both
+    -- languages. Listed rather than filtered out so adding one is deliberate.
+    ADV_DIAG_TITLE = true, ADV_JOURNAL_TITLE = true, EXPORT_COLUMNS = true,
+    PANEL_BLOCKED_PATTERNS = true, WL_BNET_ROW = true, TAB_PROTECTION = true,
+    TAB_JOURNAL = true, TAB_DIAGNOSTICS = true, KIND_DUEL = true,
+    Q3_MINIMAL_TITLE = true, LOG_TYPE_DUEL = true, ABOUT_VERSION = true,
+    LOGS_GROUP_HEADER = true, DATE_FORMAT = true, DIAG_ARG_FILTER = true,
 }
 local unexpected = {}
 for _, key in ipairs(untranslated) do
@@ -2851,7 +3681,32 @@ equal(#unexpected, 0,
     "every used key is translated in frFR (" .. table.concat(unexpected, ", ") .. ")")
 
 -- ---------------------------------------------------------------------------
--- The five tabs open, and the sixth only in debug mode
+-- No visible value carries the words the interface got rid of
+-- ---------------------------------------------------------------------------
+
+-- "Whitelist" and "blacklist" are gone from the screen: the person protecting
+-- themselves should not have to learn a vocabulary. And "passer" was banned for
+-- being untrue -- a name is never "let through", it is simply not blocked.
+local BANNED_WORDS = { "whitelist", "blacklist", " passe" }
+local offenders = {}
+for _, locale in ipairs({ defaultLocale, frenchLocale }) do
+    for key, value in pairs(locale) do
+        if type(value) == "string" then
+            local lowered = value:lower()
+            for _, word in ipairs(BANNED_WORDS) do
+                if lowered:find(word, 1, true) then
+                    offenders[#offenders + 1] = key .. " (" .. word .. ")"
+                end
+            end
+        end
+    end
+end
+table.sort(offenders)
+equal(#offenders, 0,
+    "no visible string carries a banned word (" .. table.concat(offenders, ", ") .. ")")
+
+-- ---------------------------------------------------------------------------
+-- The four tabs open, and the fifth only in debug mode
 -- ---------------------------------------------------------------------------
 
 SanctuaryDB.debugEnabled = false
@@ -2860,13 +3715,7 @@ local mainFrame = _G.SanctuaryMainFrame
 check(mainFrame ~= nil, "the main window is built")
 check(mainFrame:IsShown(), "the main window opens on the first toggle")
 
-equal(_G.SanctuaryStatusBar ~= nil, true, "the status bar is built")
-local statusText = _G.SanctuaryStatusBar and _G.SanctuaryStatusBar.text
-    and _G.SanctuaryStatusBar.text:GetText() or ""
-check(statusText:find("/" .. tostring(SanctuaryDB.logging.maxEntries), 1, true) ~= nil,
-    "the status bar reports the retention limit in force")
-
-for _, key in ipairs({ "filters", "keywords", "whitelist", "logs", "about" }) do
+for _, key in ipairs({ "protection", "journal", "advanced", "about" }) do
     local tab = _G["SanctuaryTab_" .. key]
     check(tab ~= nil and tab:IsShown(), "the " .. key .. " tab is offered")
     tab:Click()
@@ -2875,8 +3724,7 @@ for _, key in ipairs({ "filters", "keywords", "whitelist", "logs", "about" }) do
 end
 
 -- The debug panel is not a user surface: with debug mode off its button is not
--- even laid out, and clicking a stale reference to it does nothing. Two locks,
--- because one of them is the answer to "no diagnostic fired by accident".
+-- even laid out, and clicking a stale reference to it does nothing.
 local diagTab = _G["SanctuaryTab_diagnostics"]
 local diagContent = _G["SanctuaryTabContent_diagnostics"]
 check(diagTab ~= nil, "the diagnostics tab button exists")
@@ -2891,21 +3739,462 @@ equal(diagTab:IsShown(), true, "ticking debug mode reveals the diagnostics tab")
 diagTab:Click()
 equal(diagContent:IsShown(), true, "the diagnostics tab opens once debug mode is on")
 
--- And it goes away again with the checkbox, without leaving its panel on screen.
 SanctuaryDB.debugEnabled = false
 mainFrame:Hide()
 mainFrame:Show()
 equal(diagTab:IsShown(), false, "unticking debug mode hides the diagnostics tab again")
 equal(diagContent:IsShown(), false, "unticking debug mode closes the panel it was showing")
-equal(_G["SanctuaryTabContent_filters"]:IsShown(), true,
+equal(_G["SanctuaryTabContent_protection"]:IsShown(), true,
     "closing the debug panel falls back to a tab that still exists")
+
+-- ---------------------------------------------------------------------------
+-- Question 1: the mode switch, and what it greys out
+-- ---------------------------------------------------------------------------
+
+_G["SanctuaryTab_protection"]:Click()
+_G.SanctuaryQ1_blockedOnly:Click()
+equal(SanctuaryDB.filters.scope, "blockedOnly", "clicking the second card writes the scope")
+equal(_G.SanctuaryQ2_all.enabled, false, "question 2 is greyed out with it")
+equal(_G.SanctuaryQ2_custom.enabled, false, "both of its cards")
+equal(_G.SanctuaryStrictCheck.enabled, false, "and so is the enhanced-instance box")
+-- Greyed out, not removed: the answers are still there and come back untouched.
+check(_G.SanctuaryQ2_all:IsShown(), "question 2 is greyed out, never removed")
+_G.SanctuaryQ1_strangers:Click()
+equal(SanctuaryDB.filters.scope, "strangers", "and the first card writes it back")
+equal(_G.SanctuaryQ2_all.enabled, true, "question 2 comes back")
+equal(_G.SanctuaryStrictCheck.enabled, true, "and so does the enhanced-instance box")
+
+-- ---------------------------------------------------------------------------
+-- Question 2: the preset, the boxes, and the box that lives in both modes
+-- ---------------------------------------------------------------------------
+
+_G.SanctuaryQ2_custom:Click()
+equal(SanctuaryDB.filters.preset, "custom", "\"I choose\" writes the preset")
+equal(_G.SanctuaryChoose:IsShown(), true, "and unfolds the detailed boxes")
+local storedWhisper = SanctuaryDB.filters.whisper
+_G.SanctuaryFilter_whisper:Click()
+equal(SanctuaryDB.filters.whisper, not storedWhisper, "a box writes its own key")
+_G.SanctuaryFilter_whisper:Click()
+equal(SanctuaryDB.filters.whisper, storedWhisper, "and writes it back")
+_G.SanctuaryChannel_all:Click()
+equal(SanctuaryDB.filters.channelMode, "all", "a channel radio writes the channel mode")
+_G.SanctuaryChannel_none:Click()
+equal(SanctuaryDB.filters.channelMode, "none", "and the first one writes it back")
+check(_G.SanctuaryStrictCheck:IsShown(), "the enhanced-instance box is visible in \"I choose\"")
+
+_G.SanctuaryQ2_all:Click()
+equal(SanctuaryDB.filters.preset, "all", "\"Everything\" writes the preset")
+equal(_G.SanctuaryChoose:IsShown(), false, "and folds the detailed boxes away")
+check(_G.SanctuaryStrictCheck:IsShown(), "the enhanced-instance box stays visible in \"Everything\"")
+_G.SanctuaryStrictCheck:Click()
+equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, true,
+    "it is tickable in the recommended preset too")
+equal(ns.isFilterOn("strictGroupInviteSystemMessages"), true, "and the core applies it")
+_G.SanctuaryStrictCheck:Click()
+equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false, "and untickable again")
+
+-- ---------------------------------------------------------------------------
+-- Question 3
+-- ---------------------------------------------------------------------------
+
+_G.SanctuaryQ3_verbose:Click()
+equal(SanctuaryDB.notifications.mode, "verbose", "the third card writes the notification mode")
+_G.SanctuaryQ3_minimal:Click()
+equal(SanctuaryDB.notifications.mode, "minimal", "the second card too")
+_G.SanctuaryQ3_silent:Click()
+equal(SanctuaryDB.notifications.mode, "silent", "and the first one puts it back to silence")
+
+-- ---------------------------------------------------------------------------
+-- Question 4: the tiles, and the name tester
+-- ---------------------------------------------------------------------------
+
+guildMembers = { "Guildmate-TestRealm", "Officer-TestRealm" }
+inGuild = true
+bnetFriends = {
+    { accountName = "RealFriend#1234", bnetAccountID = 77,
+      gameAccountInfo = { characterName = "Bnetchar" } },
+    { accountName = "OfflineFriend#5678", bnetAccountID = 78 },
+}
+charFriends = {}
+ns.addAllowed("Toto")
+ns.addBlocked("Xxxxxxx-Ysondre")
+-- Not "test": the harness realm is TestRealm, and a pattern is a substring.
+ns.addPattern("spam")
+fire("GUILD_ROSTER_UPDATE")
+ns.refreshUI()
+
+local counts = ns.getListCounts()
+equal(counts.allowed.bnet, 2, "both Battle.net accounts are counted once each")
+equal(counts.blocked.names, 1, "the blocked names are counted")
+equal(counts.blocked.patterns, 1, "and the patterns separately")
+equal(_G.SanctuaryTileAllowed.count:GetText(), tostring(counts.allowed.total),
+    "the allowed tile shows the count the decision uses")
+equal(_G.SanctuaryTileBlocked.count:GetText(), tostring(counts.blocked.total),
+    "and so does the blocked tile")
+check(_G.SanctuaryTileAllowed.detail:GetText():find("2", 1, true) ~= nil,
+    "the allowed tile details its Battle.net half")
+
+-- The eight answers of the validated board, driven the way the field is: one
+-- OnTextChanged per keystroke.
+local function testAnswerFor(name)
+    _G.SanctuaryTestInput:SetText(name)
+    _G.SanctuaryTestInput:GetScript("OnTextChanged")(_G.SanctuaryTestInput)
+    return _G.SanctuaryTestAnswer:GetText() or ""
+end
+
+check(testAnswerFor("Toto"):find(ns.L["LIST_MANUAL"], 1, true) ~= nil,
+    "a name added by hand is answered as such")
+check(testAnswerFor("Bnetchar"):find("RealFriend#1234", 1, true) ~= nil,
+    "a Battle.net friend's character names the account")
+check(testAnswerFor("Officer-TestRealm"):find(ns.L["LIST_GUILD"], 1, true) ~= nil,
+    "a guild member is answered as a guild member")
+check(testAnswerFor("Xxxxxxx-Ysondre"):find(ns.L["LIST_BLOCKED"], 1, true) ~= nil,
+    "a blocked name is answered as blocked")
+check(testAnswerFor("Superspam"):find("spam", 1, true) ~= nil,
+    "a pattern match names the pattern")
+check(testAnswerFor("Zorglub"):find(string.format(ns.L["TEST_UNKNOWN_BLOCKED"], "Zorglub"), 1, true) ~= nil,
+    "an unknown name is blocked while question 1 filters strangers")
+SanctuaryDB.filters.scope = "blockedOnly"
+check(testAnswerFor("Zorglub"):find(string.format(ns.L["TEST_UNKNOWN_ALLOWED"], "Zorglub"), 1, true) ~= nil,
+    "and allowed in the other mode")
+SanctuaryDB.filters.scope = "strangers"
+-- The last line of the board: blocked wins over allowed, and the answer names
+-- the list it overrides rather than silently dropping it.
+ns.addBlocked("Bnetchar")
+local overriddenAnswer = testAnswerFor("Bnetchar")
+check(overriddenAnswer:find(string.format(ns.L["TEST_ALWAYS_BLOCKED"], "Bnetchar", ""):sub(1, 24), 1, true) ~= nil,
+    "a blocked Battle.net friend is answered as blocked even so")
+check(overriddenAnswer:find("RealFriend#1234", 1, true) ~= nil,
+    "and the answer still names the Battle.net account it overrides")
+ns.removeBlocked(ns.normalizeBlockedKey("Bnetchar"))
+equal(ns.describeAccessDecision("").valid, false, "an empty field asks nothing")
+
+-- ---------------------------------------------------------------------------
+-- The allowed panel
+-- ---------------------------------------------------------------------------
+
+local function panelRowTexts(panel)
+    local texts = {}
+    local function walk(widget)
+        for _, childWidget in ipairs(widget.__children or {}) do
+            if childWidget.__shown ~= false then
+                if childWidget.label then
+                    texts[#texts + 1] = tostring(childWidget.label.__text or "")
+                end
+                if childWidget.__kind == "FontString" then
+                    texts[#texts + 1] = tostring(childWidget.__text or "")
+                end
+                -- Hidden widgets are not walked into: a pooled chip that was put
+                -- away still owns a visible FontString, and counting it would
+                -- make a removed name look like it is still on screen.
+                walk(childWidget)
+            end
+        end
+    end
+    walk(panel)
+    return table.concat(texts, "\n")
+end
+
+ns.OpenPanel("allowed")
+local allowedPanel = _G.SanctuaryPanelAllowed
+check(allowedPanel ~= nil and allowedPanel:IsShown(), "the allowed panel opens")
+local rendered = panelRowTexts(allowedPanel)
+check(rendered:find(ns.L["WL_SOURCE_BNET"], 1, true) ~= nil, "it groups the Battle.net friends")
+check(rendered:find("Toto", 1, true) ~= nil, "and shows the names added by hand")
+check(rendered:find("RealFriend#1234", 1, true) == nil,
+    "the automatic groups stay folded, so the panel does not spill a friends list")
+check(rendered:find(ns.L["WL_GROUP_NOTE"], 1, true) ~= nil,
+    "and the current group is a line, not a list")
+
+-- Unfolding shows "Character . Account" for a connected friend, and the account
+-- alone for one who is offline.
+local bnetHeader
+local function findRow(panel, needle)
+    local found
+    local function walk(widget)
+        for _, childWidget in ipairs(widget.__children or {}) do
+            if childWidget.label and tostring(childWidget.label.__text or ""):find(needle, 1, true) then
+                found = found or childWidget
+            end
+            walk(childWidget)
+        end
+    end
+    walk(panel)
+    return found
+end
+bnetHeader = findRow(allowedPanel, ns.L["WL_SOURCE_BNET"])
+check(bnetHeader ~= nil, "the Battle.net group header is clickable")
+bnetHeader:Click()
+rendered = panelRowTexts(allowedPanel)
+check(rendered:find("Bnetchar", 1, true) ~= nil, "unfolding lists the connected friend's character")
+check(rendered:find("RealFriend#1234", 1, true) ~= nil, "next to the account")
+check(rendered:find(string.format(ns.L["WL_BNET_OFFLINE"], "OfflineFriend#5678"), 1, true) ~= nil,
+    "and an offline friend by account alone")
+
+-- Adding through the field, removing through the cross, and Undo.
+_G.SanctuaryAllowedAddInput:SetText("Titi")
+findRow(allowedPanel, ns.L["PANEL_ADD_BTN"]):Click()
+check(SanctuaryDB.manualWhitelist.titi ~= nil, "the field adds a name")
+ns.refreshUI()
+local titiChip = findRow(allowedPanel, "Titi")
+check(titiChip ~= nil, "the added name gets a chip")
+titiChip.remove:Click()
+equal(SanctuaryDB.manualWhitelist.titi, nil, "the cross removes it without asking")
+check(_G.SanctuaryUndoLine:IsShown(), "and offers to undo")
+_G.SanctuaryUndoLine.button:Click()
+check(SanctuaryDB.manualWhitelist.titi ~= nil, "undo puts it back")
+equal(_G.SanctuaryUndoLine:IsShown(), false, "and the offer goes away")
+
+-- A removal that is not undone expires instead of coming back.
+titiChip = findRow(allowedPanel, "Titi")
+titiChip.remove:Click()
+equal(SanctuaryDB.manualWhitelist.titi, nil, "removed again")
+runTimers(2)
+equal(SanctuaryDB.manualWhitelist.titi, nil, "an expired undo offer restores nothing")
+
+-- ---------------------------------------------------------------------------
+-- The ten-second refresh
+-- ---------------------------------------------------------------------------
+
+-- Created when the panel opens, cancelled when it closes: a ticker that outlives
+-- its panel rebuilds a list nobody is looking at, for the whole session.
+local tickersBefore = #tickers
+ns.ClosePanel()
+ns.OpenPanel("allowed")
+equal(#tickers, tickersBefore + 1, "opening the panel creates its refresh ticker")
+
+_G.SanctuaryAllowedAddInput:SetText("Halftyped")
+guildMembers = { "Guildmate-TestRealm", "Officer-TestRealm", "Newcomer-TestRealm" }
+fire("GUILD_ROSTER_UPDATE")
+local guildHeader = findRow(allowedPanel, ns.L["WL_SOURCE_GUILD"])
+guildHeader:Click()
+runTickers()
+check(panelRowTexts(allowedPanel):find("Newcomer-TestRealm", 1, true) ~= nil,
+    "a guild member added mid-session shows up on the tick")
+equal(_G.SanctuaryAllowedAddInput:GetText(), "Halftyped",
+    "and the text being typed is never touched")
+
+-- A redraw only happens when the model changed: the signature is what the tick
+-- compares, so a quiet tick does not repaint under the cursor.
+local repaints = 0
+local watched = findRow(allowedPanel, "Toto")
+local savedSetText = watched.label.SetText
+watched.label.SetText = function(self, value)
+    repaints = repaints + 1
+    return savedSetText(self, value)
+end
+runTickers()
+equal(repaints, 0, "a tick with nothing new repaints nothing")
+watched.label.SetText = savedSetText
+
+-- An entry removed by hand is not resurrected by the next tick.
+ns.removeAllowed("toto")
+runTickers()
+check(panelRowTexts(allowedPanel):find("Toto", 1, true) == nil,
+    "an entry removed by hand is not put back by the ticker")
+ns.addAllowed("Toto")
+clearUndoForTests = nil
+
+ns.ClosePanel()
+equal(#tickers, tickersBefore + 1, "closing the panel does not create another one")
+
+-- ---------------------------------------------------------------------------
+-- The blocked panel
+-- ---------------------------------------------------------------------------
+
+ns.OpenPanel("blocked")
+local blockedPanel = _G.SanctuaryPanelBlocked
+check(blockedPanel ~= nil and blockedPanel:IsShown(), "the blocked panel opens")
+check(panelRowTexts(blockedPanel):find("Xxxxxxx-Ysondre", 1, true) ~= nil,
+    "it lists the blocked names")
+check(panelRowTexts(blockedPanel):find("test", 1, true) ~= nil, "and the patterns")
+
+_G.SanctuaryBlockedAddInput:SetText("Toto")
+check(ns.addBlocked("Toto"), "a name already in the allowed list can be blocked")
+check(SanctuaryDB.manualWhitelist.toto ~= nil,
+    "and blocking it does not silently delete the entry the person typed")
+local blockedNow, blockedReason = ns.getCharacterDecision("Toto")
+equal(blockedNow, true, "the decision changes immediately")
+equal(blockedReason, "blocked_name", "and names the list that decided")
+ns.removeBlocked("toto")
+equal(select(1, ns.getCharacterDecision("Toto")), false, "removing it changes the decision back")
+
+_G.SanctuaryPatternAddInput:SetText("  Sp Spam ")
+check(ns.addPattern("  Sp Spam "), "a pattern is normalised on the way in")
+local normalisedPattern = false
+for _, value in ipairs(SanctuaryDB.keywords) do
+    if value == "spspam" then normalisedPattern = true end
+end
+check(normalisedPattern, "spaces and case are stripped")
+equal(ns.addPattern("SPSPAM"), false, "and a duplicate is a no-op")
+ns.ClosePanel()
+
+-- ---------------------------------------------------------------------------
+-- The header control
+-- ---------------------------------------------------------------------------
+
+local stateButton = _G.SanctuaryStateButton
+check(stateButton ~= nil, "the header carries the single state control")
+stateButton:Click()
+equal(SanctuaryCharDB.overrides.enabled, false, "clicking it turns protection off")
+equal(stateButton.label:GetText(), ns.L["HEADER_STATE_OFF"], "and the label says so")
+stateButton:Click()
+equal(ns.isEnabled(), true, "clicking again turns it back on")
+equal(stateButton.label:GetText(), ns.L["HEADER_STATE_ON"], "and the label follows")
+
+-- ---------------------------------------------------------------------------
+-- The journal
+-- ---------------------------------------------------------------------------
+
+_G["SanctuaryTab_journal"]:Click()
+wipe(SanctuaryDB.log)
+ns.refreshUI()
+local journalContent = _G["SanctuaryTabContent_journal"]
+check(panelRowTexts(journalContent):find(ns.L["LOGS_EMPTY"], 1, true) ~= nil,
+    "an empty journal says so instead of showing nothing")
+
+SanctuaryDB.log = {
+    { t = 100, d = "2026-08-21 20:14:02", type = "groupInvite", name = "Xxxxxxx", realm = "Royaume" },
+    { t = 90, d = "2026-08-21 20:13:41", type = "whisper", name = "Xxxxxxx", realm = "Royaume", msg = "slt" },
+    { t = 50, d = "2026-08-21 19:02:00", type = "group", name = "Yyyyy", realm = "Royaume" },
+}
+ns.refreshUI()
+rendered = panelRowTexts(journalContent)
+check(rendered:find("Xxxxxxx-Royaume", 1, true) ~= nil, "the journal groups by name")
+check(rendered:find("(2)", 1, true) ~= nil, "and counts each group")
+local groupRow = findRow(journalContent, "Xxxxxxx-Royaume")
+groupRow:Click()
+rendered = panelRowTexts(journalContent)
+check(rendered:find(ns.L["LOG_TYPE_INVITE"], 1, true) ~= nil,
+    "unfolding shows the localized type of each entry")
+check(rendered:find("slt", 1, true) ~= nil, "and the message text while the option is ticked")
+equal(ns.getLogEntryDisplayType({ type = "group" }), ns.L["LOG_TYPE_GROUP"],
+    "the group-chat type has a label of its own")
+_G.SanctuaryJournalShowMessages:Click()
+rendered = panelRowTexts(journalContent)
+check(rendered:find("slt", 1, true) == nil, "unticking the option hides the message text")
+_G.SanctuaryJournalShowMessages:Click()
+
+-- Copying opens the window with the journal in it, types localized.
+findRow(journalContent, ns.L["LOGS_COPY_BTN"]):Click()
+local exportFrame = _G.SanctuaryExportFrame
+check(exportFrame ~= nil and exportFrame:IsShown(), "copying the journal opens the copy window")
+check(exportFrame.box:GetText():find(ns.L["LOG_TYPE_INVITE"], 1, true) ~= nil,
+    "and the copied text carries the same type labels as the tab")
+exportFrame:Hide()
+wipe(SanctuaryDB.log)
+
+-- ---------------------------------------------------------------------------
+-- Advanced
+-- ---------------------------------------------------------------------------
+
 SanctuaryDB.debugEnabled = true
 mainFrame:Hide()
 mainFrame:Show()
+_G["SanctuaryTab_advanced"]:Click()
+local advancedContent = _G["SanctuaryTabContent_advanced"]
+
+local trustBefore = SanctuaryDB.filters.autoTrust and true or false
+_G.SanctuaryAutoTrust:Click()
+equal(SanctuaryDB.filters.autoTrust, not trustBefore, "the auto-trust box writes its key")
+_G.SanctuaryAutoTrust:Click()
+equal(SanctuaryDB.filters.autoTrust, trustBefore, "and writes it back")
+
+-- The report: the summary first, then the recording.
+findRow(advancedContent, ns.L["DEBUG_EXPORT_BTN"]):Click()
+exportFrame = _G.SanctuaryExportFrame
+check(exportFrame:IsShown(), "exporting the report opens the copy window")
+local reportText = exportFrame.box:GetText()
+local summaryAt = reportText:find("RESUME DE RELEVE", 1, true)
+local eventLogAt = reportText:find("EVENT LOG", 1, true)
+check(summaryAt ~= nil, "the report opens on the summary")
+check(eventLogAt ~= nil, "and carries the event log")
+check(summaryAt and eventLogAt and summaryAt < eventLogAt, "in that order")
+check(reportText:find(ns.L["DEBUG_SUMMARY_FILE"], 1, true) == nil,
+    "and drops the go-and-find-the-file note, since this window IS the transport")
+exportFrame:Hide()
+
+-- The journal size is clamped on write, so nobody leaves thinking they set 50.
+_G.SanctuaryMaxEntriesInput:SetText("50")
+_G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesInput)
+equal(SanctuaryDB.logging.maxEntries, 100, "a journal size below the floor is clamped up")
+_G.SanctuaryMaxEntriesInput:SetText("999999")
+_G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesInput)
+equal(SanctuaryDB.logging.maxEntries, 20000, "and one above the ceiling clamped down")
+_G.SanctuaryMaxEntriesInput:SetText("5000")
+_G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesInput)
+equal(SanctuaryDB.logging.maxEntries, 5000, "a value in range is taken as typed")
 
 -- ---------------------------------------------------------------------------
--- One button per catalogued diagnostic
+-- The minimap button
 -- ---------------------------------------------------------------------------
+
+Minimap = { GetCenter = function() return 100, 100 end }
+UIParent.GetEffectiveScale = function() return 1 end
+GetCursorPosition = function() return 180, 100 end
+ns.InitializeUI()
+local minimapButton = _G.SanctuaryMinimapButton
+check(minimapButton ~= nil, "the minimap button is created at login")
+equal(minimapButton:IsShown(), true, "and shown while the setting allows it")
+
+-- The position-to-angle conversion is pure, so it is proved without a mouse.
+equal(math.floor(ns.minimapAngleFromPosition(0, 0, 10, 0) + 0.5), 0, "due east is 0 degrees")
+equal(math.floor(ns.minimapAngleFromPosition(0, 0, 0, 10) + 0.5), 90, "due north is 90")
+equal(math.floor(ns.minimapAngleFromPosition(0, 0, -10, 0) + 0.5), 180, "due west is 180")
+minimapButton:GetScript("OnDragStop")(minimapButton)
+equal(math.floor(SanctuaryDB.minimap.angle + 0.5), 0, "dragging writes the angle it computes")
+
+local togglesBefore = ns.isEnabled()
+minimapButton:GetScript("OnClick")(minimapButton, "RightButton")
+equal(ns.isEnabled(), not togglesBefore, "a right click flips the protection")
+minimapButton:GetScript("OnClick")(minimapButton, "RightButton")
+equal(ns.isEnabled(), togglesBefore, "and flips it back")
+
+SanctuaryDB.minimap.hide = true
+_G.SanctuaryMinimapCheck:Click()
+equal(SanctuaryDB.minimap.hide, false, "the Advanced box shows the button again")
+_G.SanctuaryMinimapCheck:Click()
+equal(SanctuaryDB.minimap.hide, true, "and hides it")
+equal(minimapButton:IsShown(), false, "the button follows the setting")
+_G.SanctuaryMinimapCheck:Click()
+
+-- ---------------------------------------------------------------------------
+-- The right-click menu
+-- ---------------------------------------------------------------------------
+
+local menuEntries = ns.buildPlayerMenuEntries({ name = "Toto", server = "Ysondre" })
+equal(#menuEntries, 2, "a resolved player gets two entries")
+check(menuEntries[2].text:find(ns.L["MENU_BLOCK"], 1, true) ~= nil, "one of which blocks")
+menuEntries[2].action()
+check(SanctuaryDB.blockedNames["toto-ysondre"] ~= nil, "and blocking writes the list")
+menuEntries = ns.buildPlayerMenuEntries({ name = "Toto", server = "Ysondre" })
+check(menuEntries[2].text:find(ns.L["MENU_UNBLOCK"], 1, true) ~= nil,
+    "opened again, the entry offers to stop blocking")
+menuEntries[2].action()
+equal(SanctuaryDB.blockedNames["toto-ysondre"], nil, "and does")
+
+equal(#ns.buildPlayerMenuEntries({ name = "Victim" }), 0, "the player themselves gets nothing")
+equal(#ns.buildPlayerMenuEntries({}), 0, "an unresolved identity gets nothing")
+equal(#ns.buildPlayerMenuEntries({ name = makeSecretValue("secret") }), 0,
+    "and a secret name gets nothing")
+local savedCombat = InCombatLockdown
+InCombatLockdown = function() return true end
+equal(#ns.buildPlayerMenuEntries({ name = "Toto", server = "Ysondre" }), 0, "nothing is added in combat")
+InCombatLockdown = savedCombat
+local savedLockdown = C_ChatInfo.InChatMessagingLockdown
+C_ChatInfo.InChatMessagingLockdown = function() return true end
+equal(#ns.buildPlayerMenuEntries({ name = "Toto", server = "Ysondre" }), 0,
+    "nor during a chat lockdown")
+C_ChatInfo.InChatMessagingLockdown = savedLockdown
+
+-- ---------------------------------------------------------------------------
+-- The diagnostics panel
+-- ---------------------------------------------------------------------------
+
+SanctuaryDB.debugEnabled = true
+mainFrame:Hide()
+mainFrame:Show()
+_G["SanctuaryTab_diagnostics"]:Click()
 
 local listScroll = _G.SanctuaryDiagListScroll
 check(listScroll ~= nil, "the diagnostics panel builds its button list")
@@ -2919,14 +4208,6 @@ end
 equal(rowCount, #ns.DIAGNOSTIC_CATALOG,
     "the panel renders exactly one row per catalogued diagnostic")
 
--- ---------------------------------------------------------------------------
--- The panel, driven by its own buttons
--- ---------------------------------------------------------------------------
-
--- This is the step the whole lot exists for: one click instead of twelve
--- commands typed by hand. Clicking it here is what proves the wiring between
--- the catalogue and the buttons, which is the only part the catalogue tests
--- above cannot reach.
 local function findButtonByLabel(root, wanted)
     for _, childWidget in ipairs(root.__children or {}) do
         if childWidget.label and childWidget.label.__text == wanted then
@@ -2944,36 +4225,32 @@ check(resultText ~= nil, "the panel has somewhere to show a result")
 equal(resultText and resultText:GetText(), ns.L["DIAG_RESULT_EMPTY"],
     "an untouched panel says so instead of showing a blank box")
 
--- The invariant is anchored on fixed values, never on the catalogue's own
--- `sensitive` flag: a test that branches on the data it is testing cannot
--- notice that data disappearing -- it just takes the other branch and asserts
--- the opposite, which is true as well. Removing the flag would then let a real
--- Battle.net account name reach the log on a bulk run, silently.
+-- Anchored on fixed values, never on the catalogue's own flags: a test that
+-- branches on the data it is testing cannot notice that data disappearing.
 local SENSITIVE_DIAGNOSTIC_ID = "sim_bnetfriend"
-local BULK_DIAGNOSTIC_IDS = { "sim_invite", "sim_bnet", "diag_chat", "diag_sound",
+local MANUAL_DIAGNOSTIC_IDS = { "diag_sound_open", "diag_sound_invite" }
+local BULK_DIAGNOSTIC_IDS = { "sim_invite", "sim_bnet", "diag_chat", "diag_chat_lockdown",
     "diag_popup_invite", "diag_popup_duel", "diag_popup_guild", "diag_popup_list" }
 
-local sensitiveCount = 0
+local sensitiveCount, manualCount = 0, 0
 for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG) do
     if entry.sensitive then sensitiveCount = sensitiveCount + 1 end
+    if entry.manual then manualCount = manualCount + 1 end
 end
 equal(sensitiveCount, 1, "exactly one diagnostic is marked as naming a real contact")
 equal(ns.getDiagnosticEntry(SENSITIVE_DIAGNOSTIC_ID).sensitive, true,
     "and it is " .. SENSITIVE_DIAGNOSTIC_ID)
-equal(#ns.DIAGNOSTIC_CATALOG, #BULK_DIAGNOSTIC_IDS + 1,
-    "the catalogue is the bulk set plus that one")
+equal(manualCount, #MANUAL_DIAGNOSTIC_IDS, "exactly two are marked as run-them-by-hand")
+for _, id in ipairs(MANUAL_DIAGNOSTIC_IDS) do
+    equal(ns.getDiagnosticEntry(id).manual, true, id .. " is one of them")
+end
+equal(#ns.DIAGNOSTIC_CATALOG, #BULK_DIAGNOSTIC_IDS + #MANUAL_DIAGNOSTIC_IDS + 1,
+    "the catalogue is the bulk set plus those three")
 
 local runAllBtn = findButtonByLabel(diagContent, ns.L["DIAG_RUN_ALL"])
 check(runAllBtn ~= nil, "the panel offers a single button that runs them all")
--- A bulk run starts from an empty box, so the first of the eight blocks the
--- checklist asks for is the first one on screen.
-ns.runDiagnosticById("diag_chat")
-findButtonByLabel(diagContent, ns.L["DIAG_CHAT_INVITE"]):Click()
 runAllBtn:Click()
 local shown = resultText:GetText()
-
--- Each result block is prefixed with the same colour code, so counting them is
--- how the test notices a bulk run that silently stopped covering things.
 local blockCount = select(2, shown:gsub("|cFF88CCFF", ""))
 equal(blockCount, #BULK_DIAGNOSTIC_IDS,
     "running them all produces one block per bulk diagnostic")
@@ -2984,13 +4261,33 @@ for _, id in ipairs(BULK_DIAGNOSTIC_IDS) do
 end
 equal(shown:find(ns.L[ns.getDiagnosticEntry(SENSITIVE_DIAGNOSTIC_ID).labelKey], 1, true), nil,
     "and never " .. SENSITIVE_DIAGNOSTIC_ID .. ", which names a real contact")
+for _, id in ipairs(MANUAL_DIAGNOSTIC_IDS) do
+    equal(shown:find(ns.L[ns.getDiagnosticEntry(id).labelKey], 1, true), nil,
+        "nor " .. id .. ", which has to be heard on its own")
+end
+
+-- The two sound buttons, one after the other: two distinct sounds.
+playedSounds = {}
+findButtonByLabel(diagContent, ns.L["DIAG_SOUND_OPEN"]):Click()
+equal(#playedSounds, 1, "the window-open button plays one sound")
+local firstSound = playedSounds[1]
+playedSounds = {}
+findButtonByLabel(diagContent, ns.L["DIAG_SOUND_INVITE"]):Click()
+equal(#playedSounds, 1, "the invite button plays one sound")
+check(playedSounds[1] ~= firstSound, "and it is a different one")
+
+-- A name typed into the Battle.net friend field reaches the same answer as the
+-- index does.
+local byIndex = ns.runDiagnosticById("sim_bnetfriend", "1").text
+local byName = ns.runDiagnosticById("sim_bnetfriend", "RealFriend#1234").text
+equal(byName, byIndex, "the friend simulation answers the same for a name and for its index")
 
 local restoreBtn = findButtonByLabel(diagContent, ns.L["DIAG_RESTORE_BTN"])
 check(restoreBtn ~= nil, "the way back exists")
 equal(restoreBtn:IsShown(), false,
     "and stays hidden while every diagnostic put the screen back")
 
--- A popup left on screen is invisible and clickable. The panel says so and
+-- A window left on screen is invisible and clickable. The panel says so and
 -- offers the way back, instead of leaving that rule to a note in a checklist.
 local panelSavedHide = StaticPopup1.Hide
 StaticPopup1.Hide = nil
@@ -3000,9 +4297,8 @@ check(resultText:GetText():find(ns.L["DIAG_LEFT_ON_SCREEN"], 1, true) ~= nil,
     "a stranded popup is reported in the panel")
 equal(restoreBtn:IsShown(), true, "and the way back appears")
 
--- Clearing the results must not clear the screen. It used to: the button that
--- was the only way back disappeared while the dialog was still up, invisible
--- and clickable -- at the exact moment it was needed.
+-- Clearing the results must not clear the screen: the button that is the only
+-- way back would disappear while the dialog is still up.
 local clearBtn = findButtonByLabel(diagContent, ns.L["DIAG_CLEAR"])
 clearBtn:Click()
 equal(StaticPopup1:IsShown(), true, "the dialog is still there")
@@ -3010,192 +4306,25 @@ check(resultText:GetText():find(ns.L["DIAG_LEFT_ON_SCREEN"], 1, true) ~= nil,
     "so the warning survives clearing the results")
 equal(restoreBtn:IsShown(), true, "and so does the way back")
 
--- Once the dialog is actually gone, both go with it.
 StaticPopup1:Hide()
+runTimers(4)
 clearBtn:Click()
 equal(resultText:GetText(), ns.L["DIAG_RESULT_EMPTY"], "clearing empties the result box")
 equal(restoreBtn:IsShown(), false, "and the way back goes when the dialog does")
 
--- The guild frame is the twin of the StaticPopup path, and the only one where
--- a bulk run can be observed without the single-slot popup mock confusing the
--- scenario. Same defect, same shape: a Hide that exists and does nothing.
-local guildSavedHide = GuildInviteFrame.Hide
-GuildInviteFrame.Hide = function() end
-findButtonByLabel(diagContent, ns.L["DIAG_POPUP_GUILD"]):Click()
-GuildInviteFrame.Hide = guildSavedHide
-equal(GuildInviteFrame:IsShown(), true, "the guild frame is still on screen")
-check(resultText:GetText():find(ns.L["DIAG_LEFT_ON_SCREEN"], 1, true) ~= nil,
-    "a guild frame left on screen is reported, like a stranded popup")
-equal(restoreBtn:IsShown(), true, "and the way back appears for it too")
-
--- ... and a bulk run does not take them away either: the stranded kind answers
--- popup_busy and arms nothing, so nothing would put the banner back.
-runAllBtn:Click()
-equal(GuildInviteFrame:IsShown(), true, "the guild frame survives a bulk run")
-check(resultText:GetText():find(ns.L["DIAG_LEFT_ON_SCREEN"], 1, true) ~= nil,
-    "so the warning survives it")
-equal(restoreBtn:IsShown(), true, "and so does the way back")
-
--- Closing the window drops what was read, never what is on screen. A dialog a
--- diagnostic could not close still has to raise its warning and its way back at
--- the next opening -- otherwise clearing the box would have become a way to
--- lose the only signal that the screen is dirty.
-mainFrame:Hide()
-mainFrame:Show()
-_G["SanctuaryTab_diagnostics"]:Click()
-equal(GuildInviteFrame:IsShown(), true, "the guild frame outlives the window")
-check(resultText:GetText():find(ns.L["DIAG_LEFT_ON_SCREEN"], 1, true) ~= nil,
-    "so reopening the panel still warns about it")
-equal(restoreBtn:IsShown(), true, "and still offers the way back")
-
-GuildInviteFrame.accepted = true
-GuildInviteFrame:Hide()
-GuildInviteFrame.accepted = nil
-runTimers(6)
-findButtonByLabel(diagContent, ns.L["DIAG_CLEAR"]):Click()
-equal(restoreBtn:IsShown(), false, "and both go once the guild frame is really gone")
-
 -- ---------------------------------------------------------------------------
--- The Whitelist tab, driven by its own fields
+-- Closing the window drops what was read
 -- ---------------------------------------------------------------------------
 
--- The maintainer's own report: this tab was empty while two people were getting
--- through the filter. What follows is that it no longer can be.
-guildMembers = { "Guildmate-TestRealm", "Officer-TestRealm" }
-inGuild = true
-bnetFriends = {
-    { accountName = "RealFriend#1234", bnetAccountID = 77,
-      gameAccountInfo = { characterName = "Bnetchar" } },
-}
-fire("GUILD_ROSTER_UPDATE")
-
-local whitelistContent = _G["SanctuaryTabContent_whitelist"]
-_G["SanctuaryTab_whitelist"]:Click()
-local whitelistChild = _G.SanctuaryWhitelistScrollChild
-check(whitelistChild ~= nil, "the whitelist tab builds its list")
-check((whitelistChild:GetHeight() or 0) > 1,
-    "an empty manual list no longer means an empty tab")
-
-local function whitelistRowTexts()
-    local texts = {}
-    for _, row in ipairs(whitelistChild.__children or {}) do
-        if row.label and row.__shown ~= false then
-            texts[#texts + 1] = tostring(row.label.__text or "")
-        end
-    end
-    return table.concat(texts, "\n")
-end
-
-local rendered = whitelistRowTexts()
-check(rendered:find(ns.L["WL_AUTO_HEADER"], 1, true) ~= nil,
-    "the automatic section is shown")
-check(rendered:find(ns.L["WL_SOURCE_GUILD"], 1, true) ~= nil,
-    "guild members get their own group")
-check(rendered:find("Officer-TestRealm", 1, true) == nil,
-    "and stay folded until asked for, so the tab does not spill a roster")
-
--- Expanding is one click, and the search forces the groups it matches open.
-local guildRow
-for _, row in ipairs(whitelistChild.__children or {}) do
-    if row.label and tostring(row.label.__text or ""):find(ns.L["WL_SOURCE_GUILD"], 1, true) then
-        guildRow = row
-    end
-end
-check(guildRow ~= nil, "the group header is clickable")
-guildRow:Click()
-check(whitelistRowTexts():find("Officer-TestRealm", 1, true) ~= nil,
-    "expanding a group lists its members")
-
--- Folding back is the default on every opening, not just the first of the
--- session: the window can be opened in public, and an expansion made once must
--- not spill a roster on every later /sanc.
+_G["SanctuaryTab_protection"]:Click()
+_G.SanctuaryTestInput:SetText("Halftypedname")
+ns.OpenPanel("blocked")
+_G.SanctuaryBlockedAddInput:SetText("Someonesname")
 mainFrame:Hide()
-mainFrame:Show()
-_G["SanctuaryTab_whitelist"]:Click()
-check(whitelistRowTexts():find("Officer-TestRealm", 1, true) == nil,
-    "closing the window folds the automatic groups again")
-
-_G.SanctuaryWhitelistSearchInput:SetText("officer")
-_G.SanctuaryWhitelistSearchInput:GetScript("OnTextChanged")(_G.SanctuaryWhitelistSearchInput)
-rendered = whitelistRowTexts()
-check(rendered:find("Officer-TestRealm", 1, true) ~= nil,
-    "a search opens the groups it matches")
-check(rendered:find("Guildmate-TestRealm", 1, true) == nil,
-    "and shows only what it matched")
--- Closing the window clears the search too. A non-empty search forces its
--- groups open, so leaving the text behind put the filtered names straight back
--- on screen at the next opening -- in a window that can be opened in public.
-mainFrame:Hide()
-mainFrame:Show()
-_G["SanctuaryTab_whitelist"]:Click()
-equal(_G.SanctuaryWhitelistSearchInput:GetText(), "",
-    "closing the window clears the whitelist search")
-check(whitelistRowTexts():find("Officer-TestRealm", 1, true) == nil,
-    "so a search does not survive as an expanded group at the next opening")
-
--- "Does this person get through?" answered in the tab.
-local checkBtn = findButtonByLabel(whitelistContent, ns.L["WL_CHECK_BTN"])
-check(checkBtn ~= nil, "the check field has a button")
-
-local function checkAnswerFor(name)
-    _G.SanctuaryWhitelistCheckInput:SetText(name)
-    checkBtn:Click()
-    for _, childWidget in ipairs(whitelistContent.__children or {}) do
-        local text = tostring(childWidget.__text or "")
-        if childWidget.__kind == "FontString" and text:find(name, 1, true) then
-            return text
-        end
-    end
-    return nil
-end
-
-local answer = checkAnswerFor("Officer-TestRealm")
-check(answer ~= nil and answer:find(ns.L["WL_REASON_GUILD"], 1, true) ~= nil,
-    "a guild member is answered with the reason they get through")
-answer = checkAnswerFor("Nobodyatall")
-check(answer ~= nil and answer:find(ns.L["WL_REASON_NOT_WHITELISTED"], 1, true) ~= nil,
-    "a stranger is answered as filtered, with the reason")
-
--- The check field is the twin of the search box, and closes with it. It holds a
--- name the maintainer typed and the answer spells that name out again in full;
--- both used to reappear at the next opening, in the same window and for the
--- same reason the search is cleared.
-check(checkAnswerFor("Officer-TestRealm") ~= nil, "a name has been checked")
-mainFrame:Hide()
-mainFrame:Show()
-_G["SanctuaryTab_whitelist"]:Click()
-equal(_G.SanctuaryWhitelistCheckInput:GetText(), "",
-    "closing the window clears the name that was checked")
-local leftoverAnswer = nil
-for _, childWidget in ipairs(whitelistContent.__children or {}) do
-    local text = tostring(childWidget.__text or "")
-    if childWidget.__kind == "FontString" and text:find("Officer-TestRealm", 1, true) then
-        leftoverAnswer = text
-    end
-end
-equal(leftoverAnswer, nil, "and the answer that named them in full")
-
--- Third field of the tab, same rule. Not reported by either pass: found by
--- sweeping this lot's fixes for a twin path.
-_G.SanctuaryWhitelistAddInput:SetText("Halftypedname")
-mainFrame:Hide()
-mainFrame:Show()
-equal(_G.SanctuaryWhitelistAddInput:GetText(), "",
-    "closing the window clears the name half-typed into the add field too")
-
--- Two tabs further, and this one is on the plain user surface: a suspect
--- pattern is very often somebody's name, and no debug mode is needed either to
--- leave it there or to read it back.
-_G.SanctuaryKeywordAddInput:SetText("Someonesname")
-mainFrame:Hide()
-mainFrame:Show()
-equal(_G.SanctuaryKeywordAddInput:GetText(), "",
-    "closing the window clears the keyword field as well")
-
--- And the diagnostics result box, which spells names and verdicts out in full
--- and survived both the window closing and a tab change.
-SanctuaryDB.debugEnabled = true
-mainFrame:Hide()
+equal(_G.SanctuaryTestInput:GetText(), "", "closing the window clears the tested name")
+equal(_G.SanctuaryTestAnswer:GetText(), "", "and the answer that named them in full")
+equal(_G.SanctuaryBlockedAddInput:GetText(), "", "and the half-typed blocked name")
+equal(_G.SanctuaryPanelBlocked:IsShown(), false, "and closes the panel that was open")
 mainFrame:Show()
 _G["SanctuaryTab_diagnostics"]:Click()
 findButtonByLabel(diagContent, ns.L["DIAG_SIM_INVITE"]):Click()
@@ -3206,9 +4335,34 @@ mainFrame:Show()
 equal(resultText:GetText(), ns.L["DIAG_RESULT_EMPTY"],
     "closing the window clears the diagnostics result box too")
 
+-- ---------------------------------------------------------------------------
+-- The window sizes itself to the screen it shows
+-- ---------------------------------------------------------------------------
+
+_G["SanctuaryTab_about"]:Click()
+local aboutHeight = mainFrame:GetHeight()
+_G["SanctuaryTab_protection"]:Click()
+local protectionHeight = mainFrame:GetHeight()
+check(protectionHeight >= aboutHeight, "the tallest screen is at least as tall as the shortest")
+check(protectionHeight <= 700 + 40, "and the fitted height stays within its bounds")
+equal(mainFrame:GetWidth(), 780, "the width is fixed")
+
+-- Dragging the grip switches to a remembered size; double-clicking goes back.
+SanctuaryDB.uiSize = { 780, 520 }
+mainFrame:Hide()
+mainFrame:Show()
+equal(mainFrame:GetHeight(), 520, "a remembered size is applied on opening")
+SanctuaryDB.uiSize = nil
+mainFrame:Hide()
+mainFrame:Show()
+
 guildMembers = {}
 bnetFriends = {}
+charFriends = {}
 inGuild = false
+wipe(SanctuaryDB.manualWhitelist)
+wipe(SanctuaryDB.blockedNames)
+SanctuaryDB.keywords = {}
 ns.invalidateWhitelist()
 
 -- ---------------------------------------------------------------------------
@@ -3482,7 +4636,10 @@ ns.debugLog("KEEPME", {})
 equal(#SanctuaryDB.log, 1, "showing the clear dialog erases nothing on its own")
 equal(#SanctuaryDB.debugLog, 1, "showing the debug clear dialog erases nothing on its own")
 StaticPopupDialogs.SANCTUARY_CLEAR_DEBUG_LOG.OnAccept()
-equal(#SanctuaryDB.debugLog, 0, "accepting is what erases the debug log")
+-- Read as "the entry that was there is gone", not as "the log is empty": the
+-- refresh that follows the clear can itself record a cache rebuild, which is a
+-- new entry, not a survivor.
+equal(lastDebug("KEEPME"), nil, "accepting is what erases the debug log")
 equal(#SanctuaryDB.log, 1, "and it leaves the block log alone")
 StaticPopupDialogs.SANCTUARY_CLEAR_LOG.OnAccept()
 equal(#SanctuaryDB.log, 0, "accepting is what erases the block log")
@@ -3525,10 +4682,12 @@ check(unknownChat:find("ERROR (unknown_chat_diagnostic)", 1, true) ~= nil,
 local unknownPopup = ns.formatPopupDiagnosticResult(ns.runPopupDiagnostic("blabla"))
 check(unknownPopup:find("ERROR (unknown_popup_diagnostic)", 1, true) ~= nil,
     "an unknown popup diagnostic says so")
-chatMessages = {}
-SlashCmdList["SANCTUARY"]("diag sound blabla")
-check(#chatMessages > 0 and chatMessages[#chatMessages]:find("/sanc diag sound invite", 1, true) ~= nil,
-    "an unknown sound diagnostic names the one that exists")
+-- An unknown sound kind falls back to the invite sound rather than inventing
+-- one: the two kinds are the only two that exist, and a diagnostic that stays
+-- silent would be read as a defect in the addon.
+local unknownSound = ns.formatSoundDiagnosticResult(ns.runSoundDiagnostic("blabla"))
+check(unknownSound:find("Diagnostic sound invite", 1, true) ~= nil,
+    "an unknown sound kind answers with the invite sound rather than nothing")
 chatMessages = {}
 SlashCmdList["SANCTUARY"]("blabla")
 equal(#chatMessages, 0, "an unknown command prints nothing and just opens the window")
