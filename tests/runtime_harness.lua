@@ -4374,7 +4374,18 @@ local aboutHeight = mainFrame:GetHeight()
 _G["SanctuaryTab_protection"]:Click()
 local protectionHeight = mainFrame:GetHeight()
 check(protectionHeight >= aboutHeight, "the tallest screen is at least as tall as the shortest")
-check(protectionHeight <= 700 + 40, "and the fitted height stays within its bounds")
+check(protectionHeight <= 700 + 40 + 30, "and the fitted height stays within its bounds")
+
+-- "I choose" unfolded is taller than the fitted bound. The screen must stay
+-- reachable: the content area scrolls instead of being cut off.
+SanctuaryDB.filters.preset = "custom"
+ns.refreshUI()
+local chooseScroll = _G.SanctuaryContentScroll
+check(chooseScroll ~= nil, "the content area is a scroll")
+check((chooseScroll:GetScrollChild():GetHeight() or 0) > (chooseScroll:GetHeight() or 0),
+    "and it is taller than the window when the detailed boxes are unfolded")
+SanctuaryDB.filters.preset = "all"
+ns.refreshUI()
 equal(mainFrame:GetWidth(), 780, "the width is fixed")
 
 -- Dragging the grip switches to a remembered size; double-clicking goes back.

@@ -566,17 +566,6 @@ local function isEnabled()
     return true -- enabled by default
 end
 
-local function parseBool(str)
-    if not str then return nil end
-    str = str:lower()
-    if str == "on" or str == "true" or str == "yes" or str == "1" then
-        return true
-    elseif str == "off" or str == "false" or str == "no" or str == "0" then
-        return false
-    end
-    return nil
-end
-
 local FILTER_STATE_KEYS = {
     "scope",
     "preset",
@@ -676,7 +665,6 @@ ns.normalizeName = normalizeName
 ns.normalizeBNetName = normalizeBNetName
 ns.getEffective = getEffective
 ns.isEnabled = isEnabled
-ns.parseBool = parseBool
 ns.deepCopy = deepCopy
 ns.fillMissingDefaults = fillMissingDefaults
 ns.getEffectiveFilterState = getEffectiveFilterState
@@ -1051,16 +1039,6 @@ local function rebuildWhitelist()
     end
 end
 
-local function isWhitelisted(name)
-    if not name then return false end
-    if Sanctuary.whitelistDirty then
-        rebuildWhitelist()
-    end
-    local normalized = normalizeName(name)
-    if not normalized then return false end
-    return Sanctuary.whitelistCache[normalized] == true
-end
-
 local function isBNetWhitelisted(name)
     if not name then return false end
     if Sanctuary.whitelistDirty then
@@ -1172,7 +1150,6 @@ end
 ns.classifyName = classifyName
 
 -- Export whitelist functions to namespace
-ns.isWhitelisted = isWhitelisted
 ns.isBNetWhitelisted = isBNetWhitelisted
 ns.invalidateWhitelist = invalidateWhitelist
 ns.getCharacterDecision = getCharacterDecision

@@ -51,6 +51,9 @@ local HEADER_HEIGHT = 40
 local TAB_HEIGHT = 22
 local PAD = 18
 local PANEL_WIDTH = 540
+-- Room kept under the content for the tabs' own strip and the undo line, which
+-- are anchored to the bottom of the frame.
+local CONTENT_BOTTOM = 30
 local UNDO_SECONDS = 6
 local LIST_REFRESH_SECONDS = 10
 
@@ -353,7 +356,7 @@ end
 -- SECTION 3: State shared by the screens
 -- ============================================================================
 
-local mainFrame, contentFrame, stateButton, resizeGrip
+local mainFrame, contentFrame, contentScroll, stateButton, resizeGrip
 local tabFrames, tabButtons = {}, {}
 local activeTab = "protection"
 local manualSize = nil
@@ -426,6 +429,7 @@ end
 local protection = {}
 
 local function buildProtectionTab(parent)
+    protection.frame = parent
     local width = FRAME_WIDTH - PAD * 2
     local y = 0
 
@@ -476,7 +480,7 @@ local function buildProtectionTab(parent)
 
     -- The detailed boxes, folded away until "I choose" is picked.
     local choose = CreateFrame("Frame", "SanctuaryChoose", parent)
-    choose:SetSize(width, 236)
+    choose:SetSize(width, 1)
     protection.choose = choose
     protection.checks = {}
 
@@ -527,6 +531,10 @@ local function buildProtectionTab(parent)
         protection.channelRadios[mode] = radio
         rowY = rowY - 22
     end
+    -- Measured, never guessed: a wrong constant here is a screen that fits in
+    -- the window on the developer's layout and is cut off on the real one.
+    protection.chooseHeight = -rowY
+    choose:SetHeight(protection.chooseHeight)
 
     -- Question 3 ------------------------------------------------------------
     protection.q3Anchor = CreateFrame("Frame", nil, parent)
@@ -672,19 +680,22 @@ refreshTab.protection = function()
     protection.channelsLabel:SetTextColor(unpack(blockedOnly and C.disabled or C.soft))
     protection.q2Title:SetTextColor(unpack(blockedOnly and C.disabled or C.accent))
 
-    local y = -(90 + 24 + 84)
+    -- Question 1 title, its two cards, question 2 title, its two cards. Written
+    -- as the sum of what is above rather than as one number, so a change to any
+    -- of the four is visible here.
+    local y = -(24 + 90 + 24 + 84)
     if custom then
         protection.choose:Show()
         protection.choose:ClearAllPoints()
-        protection.choose:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", PAD, y)
+        protection.choose:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
         protection.strict:ClearAllPoints()
         protection.strict:SetPoint("TOPLEFT", protection.choose, "TOPLEFT", 16, protection.strictSlot)
         protection.strictNote:Hide()
-        y = y - 236
+        y = y - protection.chooseHeight
     else
         protection.choose:Hide()
         protection.strict:ClearAllPoints()
-        protection.strict:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", PAD, y)
+        protection.strict:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
         protection.strictNote:ClearAllPoints()
         protection.strictNote:SetPoint("LEFT", protection.strict.label, "RIGHT", 8, 0)
         protection.strictNote:Show()
@@ -693,24 +704,24 @@ refreshTab.protection = function()
     protection.strict:Refresh()
 
     protection.q3Title:ClearAllPoints()
-    protection.q3Title:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", PAD, y)
+    protection.q3Title:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
     y = y - 24
     local thirdWidth = (width - 32) / 3
     local index = 0
     for _, key in ipairs({ "silent", "minimal", "verbose" }) do
         local card = protection.q3[key]
         card:ClearAllPoints()
-        card:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", PAD + index * (thirdWidth + 16), y)
+        card:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD + index * (thirdWidth + 16), y)
         card:Refresh()
         index = index + 1
     end
     y = y - 90
 
     protection.q4Title:ClearAllPoints()
-    protection.q4Title:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", PAD, y)
+    protection.q4Title:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
     y = y - 24
     protection.tileAllowed:ClearAllPoints()
-    protection.tileAllowed:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", PAD, y)
+    protection.tileAllowed:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
     protection.tileBlocked:ClearAllPoints()
     protection.tileBlocked:SetPoint("TOPLEFT", protection.tileAllowed, "TOPRIGHT", 16, 0)
 
@@ -725,11 +736,11 @@ refreshTab.protection = function()
     y = y - 100
 
     protection.testLabel:ClearAllPoints()
-    protection.testLabel:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", PAD, y)
+    protection.testLabel:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
     protection.testInput:ClearAllPoints()
-    protection.testInput:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", PAD + 130, y + 4)
+    protection.testInput:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD + 130, y + 4)
     protection.testAnswer:ClearAllPoints()
-    protection.testAnswer:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", PAD + 360, y)
+    protection.testAnswer:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD + 360, y)
     protection.testAnswer:SetWidth(width - 360)
     y = y - 40
 
@@ -789,6 +800,7 @@ local function buildJournalText()
 end
 
 local function buildJournalTab(parent)
+    journal.frame = parent
     local width = FRAME_WIDTH - PAD * 2
     journal.header = newLabel(parent, L["LOGS_HEADER"], FONT_SECTION, C.ink)
     journal.header:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, 0)
@@ -903,7 +915,7 @@ refreshTab.journal = function()
     journal.scroll:RefreshBar()
 
     journal.clearBtn:ClearAllPoints()
-    journal.clearBtn:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", PAD, -370)
+    journal.clearBtn:SetPoint("TOPLEFT", journal.frame, "TOPLEFT", PAD, -370)
     journal.copyBtn:ClearAllPoints()
     journal.copyBtn:SetPoint("LEFT", journal.clearBtn, "RIGHT", 10, 0)
     journal.expandBtn:ClearAllPoints()
@@ -1776,18 +1788,34 @@ local function layoutTabs()
     end
 end
 
+-- Fitted by default: the window is as tall as the screen it shows, within its
+-- bounds. Beyond them -- "I choose" unfolded is taller than 700 -- the content
+-- scrolls rather than being cut off, which is also what the manual mode needs
+-- when the person makes the window smaller than its content.
 local function applyHeight(height)
     if not mainFrame then return end
     -- SavedVariables is the source of truth for the manual size, not a copy made
     -- at build time: the schema reset clears it, and a stale copy would keep
     -- applying a size the settings no longer hold.
     manualSize = SanctuaryDB and SanctuaryDB.uiSize or nil
+    local needed = math.max(MIN_HEIGHT, height or MIN_HEIGHT)
+    local frameHeight
     if manualSize then
-        mainFrame:SetSize(manualSize[1] or FRAME_WIDTH, manualSize[2] or MIN_HEIGHT)
-        return
+        frameHeight = manualSize[2] or (MIN_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM)
+        mainFrame:SetSize(manualSize[1] or FRAME_WIDTH, frameHeight)
+    else
+        local bounded = math.min(MAX_HEIGHT, needed)
+        frameHeight = bounded + HEADER_HEIGHT + CONTENT_BOTTOM
+        mainFrame:SetSize(FRAME_WIDTH, frameHeight)
     end
-    local bounded = math.max(MIN_HEIGHT, math.min(MAX_HEIGHT, height or MIN_HEIGHT))
-    mainFrame:SetSize(FRAME_WIDTH, bounded + HEADER_HEIGHT)
+
+    local viewport = math.max(120, frameHeight - HEADER_HEIGHT - CONTENT_BOTTOM)
+    contentScroll:SetSize(FRAME_WIDTH, viewport)
+    local contentHeight = math.max(needed, viewport)
+    contentFrame:SetHeight(contentHeight)
+    local active = tabFrames[activeTab]
+    if active then active:SetHeight(contentHeight) end
+    contentScroll:RefreshBar()
 end
 
 local function selectTab(key)
@@ -1916,14 +1944,14 @@ local function createMainFrame()
         mainFrame:Hide()
     end)
 
-    contentFrame = CreateFrame("Frame", nil, mainFrame)
-    contentFrame:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -HEADER_HEIGHT)
-    contentFrame:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 0)
+    contentScroll = newScroll(mainFrame, "SanctuaryContentScroll", FRAME_WIDTH, MIN_HEIGHT)
+    contentScroll:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -HEADER_HEIGHT)
+    contentFrame = contentScroll.child
 
     for _, def in ipairs(TAB_DEFS) do
         local frame = CreateFrame("Frame", "SanctuaryTabContent_" .. def.key, contentFrame)
+        frame:SetSize(FRAME_WIDTH, MIN_HEIGHT)
         frame:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", 0, 0)
-        frame:SetPoint("BOTTOMRIGHT", contentFrame, "BOTTOMRIGHT", 0, 0)
         frame:Hide()
         tabFrames[def.key] = frame
 
