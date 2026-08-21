@@ -4604,15 +4604,15 @@ local function simulateInvite(name)
     local normalMessage = buildInviteSystemMessage(target, false)
     local alreadyGroupMessage = buildInviteSystemMessage(target, true)
     local groupInviteFilterEnabled = isEnabled() and isFilterOn("groupInvite") == true
+    -- Armed, not ticked: with a name in the always-blocked list the window is
+    -- masked even when the group-invite filter is off, and a simulation that
+    -- answered "pass" there would describe a screen nobody will see.
     local popupProtectionActive = isPopupProtectionActive("PARTY_INVITE")
+    local wouldBlock = isAlwaysBlocked(target)
+        or (groupInviteFilterEnabled and shouldBlock) or false
     local popupAction = "pass"
-
-    if groupInviteFilterEnabled then
-        if shouldBlock then
-            popupAction = popupProtectionActive and "mask" or "unprotected"
-        else
-            popupAction = "show"
-        end
+    if popupProtectionActive then
+        popupAction = wouldBlock and "mask" or "show"
     end
 
     local result = {
@@ -4628,7 +4628,7 @@ local function simulateInvite(name)
         alreadyGroupMessage = alreadyGroupMessage,
         systemSuppressed = systemMessageFilter(nil, "CHAT_MSG_SYSTEM", normalMessage) and true or false,
         alreadyGroupSuppressed = systemMessageFilter(nil, "CHAT_MSG_SYSTEM", alreadyGroupMessage) and true or false,
-        wouldDecline = groupInviteFilterEnabled and shouldBlock and true or false,
+        wouldDecline = (popupProtectionActive and wouldBlock) and true or false,
         declined = false,
         partyInviteSoundGuardActive = isStaticPopupSoundSuppressed("PARTY_INVITE"),
     }

@@ -2891,6 +2891,13 @@ equal(ns.isProtectionArmed("trade"), true, "and the trade one")
 ns.refreshInviteSoundMuteState()
 equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "and the sound guard goes back up")
 
+-- And the simulation says so too: answering "pass" here would describe a screen
+-- nobody is going to see.
+local armedSimulation = ns.simulateInvite("Pest")
+equal(armedSimulation.popupAction, "mask",
+    "the simulation reports the mask the list armed, filters off")
+equal(armedSimulation.wouldDecline, true, "and that the invitation would be declined")
+
 local beforeLog = #SanctuaryDB.log
 beforeDeclines = declinedGroups
 StaticPopup_Show("PARTY_INVITE", "Pest")
@@ -4429,7 +4436,8 @@ SanctuaryDB = {
     ["reportManifest"] = { ["trigger"] = "logout", ["savedAt"] = "%s",
         ["version"] = "0.3.2", ["addonMetaVersion"] = "0.3.2",
         ["build"] = "20260820-8", ["addonMetaBuild"] = "20260820-8",
-        ["addonMetaInterface"] = "120100", ["clientVersion"] = "12.1.0",%s
+        ["addonMetaInterface"] = "120100", ["addonInterface"] = %s,
+        ["clientVersion"] = "12.1.0",%s
         ["clientBuild"] = "61234", ["clientInterface"] = 120100,%s%s ["verdict"] = "ok" },
     ["debugLog"] = {
 %s
@@ -4437,6 +4445,7 @@ SanctuaryDB = {
     },
 }
 ]]):format(opts.savedAt or "2026-08-20 18:12:00",
+        tostring(opts.addonInterface or 120100),
         opts.metaBuild and (' ["addonMetaBuild"] = "' .. opts.metaBuild .. '",') or "",
         health, opts.neverCleared and "" or ' ["debugLogClearedAt"] = "2026-08-20 17:50:00",',
         scenarios, snapshot))
@@ -4444,10 +4453,16 @@ SanctuaryDB = {
     return fixturePath
 end
 
-local function runChecker(fixturePath)
+local function runChecker(fixturePath, since)
     local interpreter = (arg and arg[-1]) or "lua"
-    local command = string.format('%q %q %q 2>&1', interpreter,
-        repoRoot .. "/tests/check_qa_run.lua", fixturePath)
+    local command
+    if since then
+        command = string.format('%q %q --since %q %q 2>&1', interpreter,
+            repoRoot .. "/tests/check_qa_run.lua", since, fixturePath)
+    else
+        command = string.format('%q %q %q 2>&1', interpreter,
+            repoRoot .. "/tests/check_qa_run.lua", fixturePath)
+    end
     local pipe = io.popen(command)
     local output = pipe:read("a")
     local _, _, code = pipe:close()
@@ -4456,7 +4471,7 @@ end
 
 local function checkFixture(opts)
     local fixturePath = writeFixture(opts)
-    local output, code = runChecker(fixturePath)
+    local output, code = runChecker(fixturePath, opts.since)
     os.remove(fixturePath)
     return output, code
 end
@@ -4613,6 +4628,104 @@ local blindOutput, blindCode = checkFixture({ scenarios = false })
 equal(blindCode, 1, "a recording with neither manifest health nor snapshot is blocking")
 check(blindOutput:find("[ warn ] Frames de chat observees", 1, true) ~= nil,
     "and an unknown value is never presented as conforming")
+
+-- ---------------------------------------------------------------------------
+-- The freshness rule, the interface comparison and the settings block
+-- ---------------------------------------------------------------------------
+
+-- "Cleared today" passed a log cleared at 08:00 for a session played at 18:00,
+-- and the markers then come from the morning. With --since the whole timestamp
+-- is compared against the moment the session actually started.
+local freshOutput, freshCode = checkFixture({ chatFilterApi = "legacy",
+    since = "2026-08-20 17:00:00" })
+equal(freshCode, 0, "a log cleared after the session started is accepted")
+check(freshOutput:find("%[  ok  %] Journal vide le") ~= nil,
+    "and the line says so")
+
+local staleSinceOutput, staleSinceCode = checkFixture({ chatFilterApi = "legacy",
+    since = "2026-08-20 18:00:00" })
+equal(staleSinceCode, 3, "a log cleared before the session started is a reserve")
+check(staleSinceOutput:find("session ouverte le 2026%-08%-20 18:00:00") ~= nil,
+    "and the report puts both moments on the line")
+
+-- The AddOns manager grades "Out of date" on this comparison; the check does it
+-- so the person does not have to know the numbers.
+local staleInterfaceOutput, staleInterfaceCode = checkFixture({
+    chatFilterApi = "legacy", addonInterface = 110000 })
+equal(staleInterfaceCode, 3, "an addon interface below the client's is a reserve")
+check(staleInterfaceOutput:find("obsolete", 1, true) ~= nil,
+    "and is named for what the game calls it")
+
+-- The settings the session ran under, resolved by the addon's own rule.
+check(goodOutput:find("question 1 = strangers", 1, true) ~= nil,
+    "the check reports which mode the session ran in")
+check(goodOutput:find("question 2 = all", 1, true) ~= nil, "and which preset")
+check(goodOutput:find("invitations=true", 1, true) ~= nil,
+    "and the resolved filters, not the stored checkboxes")
+
+-- ---------------------------------------------------------------------------
+-- The session protocol and the check agree on the markers
+-- ---------------------------------------------------------------------------
+
+-- A session that measures something other than what it claims to is worse than
+-- no session at all: a disagreement here stops the harness rather than costing
+-- Vincent forty-five minutes of the wrong test.
+local function readLines(command)
+    local pipe = io.popen(command)
+    if not pipe then return nil end
+    local output = pipe:read("a")
+    pipe:close()
+    local lines = {}
+    for line in tostring(output or ""):gmatch("[^\n]+") do
+        local trimmed = line:match("^%s*(.-)%s*$")
+        if trimmed ~= "" then lines[#lines + 1] = trimmed end
+    end
+    return lines
+end
+
+local interpreter = (arg and arg[-1]) or "lua"
+local checkerMarkers = readLines(string.format('%q %q --markers 2>&1', interpreter,
+    repoRoot .. "/tests/check_qa_run.lua"))
+check(checkerMarkers ~= nil and #checkerMarkers > 0,
+    "the offline check lists the markers it reads")
+
+local protocolMarkers = readLines(string.format('python3 %q --markers 2>&1',
+    repoRoot .. "/tests/qa_protocol.py"))
+check(protocolMarkers ~= nil and #protocolMarkers > 0,
+    "the session protocol lists the markers its steps claim")
+
+if checkerMarkers and protocolMarkers then
+    local known = ns.getReportMarkers({})
+    local claimed, displayed = {}, {}
+    for _, name in ipairs(protocolMarkers) do claimed[name] = true end
+    for _, name in ipairs(checkerMarkers) do displayed[name] = true end
+
+    local missingFromCore, missingFromCheck = {}, {}
+    for _, name in ipairs(protocolMarkers) do
+        if known[name] == nil then missingFromCore[#missingFromCore + 1] = name end
+        if not displayed[name] then missingFromCheck[#missingFromCheck + 1] = name end
+    end
+    equal(#missingFromCore, 0,
+        "every marker a step names exists in the addon (" ..
+        table.concat(missingFromCore, ", ") .. ")")
+    equal(#missingFromCheck, 0,
+        "every marker a step names is displayed by the check (" ..
+        table.concat(missingFromCheck, ", ") .. ")")
+
+    local unclaimed = {}
+    for _, name in ipairs(checkerMarkers) do
+        if not claimed[name] then unclaimed[#unclaimed + 1] = name end
+    end
+    equal(#unclaimed, 0,
+        "every marker the check displays is claimed by a step (" ..
+        table.concat(unclaimed, ", ") .. ")")
+end
+
+check(os.execute(string.format('python3 %q --check >/dev/null 2>&1',
+    repoRoot .. "/tests/qa_protocol.py")) == true
+    or os.execute(string.format('python3 %q --check >/dev/null 2>&1',
+    repoRoot .. "/tests/qa_protocol.py")) == 0,
+    "the session protocol passes its own structural check")
 
 -- ---------------------------------------------------------------------------
 -- Two more checklist steps the machine can make

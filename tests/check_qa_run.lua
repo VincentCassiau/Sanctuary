@@ -1,8 +1,14 @@
 -- Offline check of a QA recording.
 --
--- Usage: lua tests/check_qa_run.lua <SavedVariables/Sanctuary.lua>
+-- Usage: lua tests/check_qa_run.lua [--since "AAAA-MM-JJ HH:MM:SS"] <SavedVariables/Sanctuary.lua>
+--        lua tests/check_qa_run.lua --markers
 --
 -- Exit codes: 0 complete, 1 blocking failure, 2 unusable input, 3 reserves.
+--
+-- --markers prints, one per line, the machine markers this check reads. The
+-- session protocol names the same ones, and the harness refuses to start if the
+-- two lists disagree: a session that measures something other than what it
+-- claims to is worse than no session.
 --
 -- The settings file the game writes on exit is the record. This reads it and
 -- applies the closing checks that used to be done by scrolling an exported text
@@ -14,9 +20,40 @@
 -- getInstrumentationVerdict the addon runs in game are applied to the file --
 -- so this check and the in-game summary can never disagree.
 
-local path = arg and arg[1]
+-- The markers this check reads, declared once. `step` is the protocol step that
+-- is supposed to produce it, so a missing marker names the step to replay.
+local MARKERS = {
+    { key = "popupMaskAwaitingEvent", label = "C.1 fenetre d'invitation masquee", panel = true },
+    { key = "chatOutputNoMatch", label = "F.1 ligne chat non filtree" },
+    { key = "worldInInstance", label = "F.2 entree en instance" },
+    { key = "lockdownArmedInInstance", label = "F.2 verrouillage arme en instance", info = true },
+    { key = "playerState", label = "F.3 mort / resurrection", death = true },
+    { key = "secretSystemSuppressed", label = "F.2 lignes systeme masquees", info = true, count = true },
+    { key = "secretSystemVisible", label = "F.2 lignes systeme visibles", info = true, count = true },
+    { key = "secretSystemEligible", label = "F.2 lignes systeme eligibles", info = true, count = true },
+    { key = "strictModeOn", label = "F.2 filtrage renforce coche", info = true },
+}
+
+local path, since
+do
+    local index = 1
+    while arg and arg[index] do
+        local value = arg[index]
+        if value == "--markers" then
+            for _, marker in ipairs(MARKERS) do print(marker.key) end
+            os.exit(0)
+        elseif value == "--since" then
+            index = index + 1
+            since = arg[index]
+        else
+            path = value
+        end
+        index = index + 1
+    end
+end
+
 if not path then
-    io.stderr:write("usage: lua tests/check_qa_run.lua <SavedVariables/Sanctuary.lua>\n")
+    io.stderr:write("usage: lua tests/check_qa_run.lua [--since \"AAAA-MM-JJ HH:MM:SS\"] <SavedVariables/Sanctuary.lua>\n")
     os.exit(2)
 end
 
@@ -74,6 +111,10 @@ assert(loadfile(repoRoot .. "/Locales.lua"))("Sanctuary", ns)
 assert(loadfile(repoRoot .. "/Sanctuary.lua"))("Sanctuary", ns)
 
 local db = saved.SanctuaryDB
+-- Read by the addon's own rule: SanctuaryDB is the global Sanctuary.lua looks
+-- at, so pointing it at the recording lets getEffectiveFilterState answer for
+-- this file. No second implementation of the preset or of the mode.
+SanctuaryDB = db
 local log = db.debugLog or {}
 local manifest = db.reportManifest
 local markers = ns.getReportMarkers(log)
@@ -127,7 +168,8 @@ if manifest then
     -- hidden by preferring one of the two here.
     line(string.format("Build     : %s | version %s | interface %s",
         tostring(manifest.build or manifest.addonMetaBuild),
-        tostring(manifest.version), tostring(manifest.addonMetaInterface)))
+        tostring(manifest.version),
+        tostring(manifest.addonInterface or manifest.addonMetaInterface)))
     line(string.format("Client    : %s build %s interface %s",
         tostring(manifest.clientVersion), tostring(manifest.clientBuild),
         tostring(manifest.clientInterface)))
@@ -210,11 +252,22 @@ state("Build du code et du .toc", metaLabel, metaLevel)
 -- that legitimately crosses midnight lands in reserves rather than being
 -- refused outright, and the line prints both dates so that case is one glance
 -- to arbitrate.
+-- With --since, the runner hands over the exact moment the session started and
+-- the whole timestamp is compared. Same-day was the rule a human applied, and it
+-- passed a log cleared at 08:00 for a session played at 18:00 -- the markers
+-- then come from the morning and credit steps nobody played this evening.
 local clearedAt = manifest and manifest.debugLogClearedAt
 local savedAt = manifest and manifest.savedAt
 local clearedLabel, clearedLevel
 if clearedAt == nil then
     clearedLabel, clearedLevel = "jamais", "warn"
+elseif since then
+    if tostring(clearedAt) < tostring(since) then
+        clearedLabel = clearedAt .. " -- session ouverte le " .. tostring(since)
+        clearedLevel = "warn"
+    else
+        clearedLabel, clearedLevel = clearedAt, nil
+    end
 elseif savedAt == nil then
     clearedLabel, clearedLevel = clearedAt .. " (releve non date)", "warn"
 elseif tostring(clearedAt):sub(1, 10) ~= tostring(savedAt):sub(1, 10) then
@@ -224,35 +277,63 @@ else
     clearedLabel, clearedLevel = clearedAt, nil
 end
 state("Journal vide le", clearedLabel, clearedLevel)
-line("")
 
--- Produced by the diagnostic panel itself, not by a scenario: clicking "run
--- them all" writes this entry. Kept apart from the scenario block so its
--- presence is never read as proof that something was played.
-state("C.1 fenetre d'invitation masquee", markers.popupMaskAwaitingEvent and "presente" or "absente",
-    not markers.popupMaskAwaitingEvent and "warn" or nil)
-line("")
-
--- Scenario markers, numbered as the checklist numbers them. One line each,
--- instead of four searches through the export.
-state("F.1 ligne chat non filtree", markers.chatOutputNoMatch and "presente" or "absente",
-    not markers.chatOutputNoMatch and "warn" or nil)
-state("F.2 entree en instance", markers.worldInInstance and "presente" or "absente",
-    not markers.worldInInstance and "warn" or nil)
--- Both halves, named separately: "died but never came back" is a session that
--- ended on a corpse, not the scenario the step asks for, and reporting it as a
--- plain "absente" hides which half is missing.
-local deathLabel
-if markers.playerState then
-    deathLabel = "presente"
-elseif markers.playerDied then
-    deathLabel = "mort sans retour a la vie"
-elseif markers.playerRevived then
-    deathLabel = "retour a la vie sans mort"
+-- The AddOns manager grades "Out of date" on this comparison. Doing it here
+-- takes one more thing off the human, who has no reason to know the numbers.
+local addonInterface = tonumber(manifest and manifest.addonInterface)
+local clientInterface = tonumber(manifest and manifest.clientInterface)
+local interfaceLabel, interfaceLevel
+if not addonInterface or not clientInterface then
+    interfaceLabel, interfaceLevel = "inconnue", "warn"
+elseif addonInterface < clientInterface then
+    interfaceLabel = addonInterface .. " < client " .. clientInterface .. " (obsolete)"
+    interfaceLevel = "warn"
 else
-    deathLabel = "absente"
+    interfaceLabel, interfaceLevel = tostring(addonInterface), nil
 end
-state("F.3 mort / resurrection", deathLabel, not markers.playerState and "warn" or nil)
+state("Interface de l'addon", interfaceLabel, interfaceLevel)
+
+-- The settings the session was played under, resolved by the addon itself.
+local filters = ns.getEffectiveFilterState()
+line(string.format("Reglages  : question 1 = %s | question 2 = %s | renforce = %s",
+    tostring(filters.scope), tostring(filters.preset),
+    tostring(filters.strictGroupInviteSystemMessages)))
+line(string.format("Filtres   : invitations=%s prives=%s duels=%s echanges=%s guilde=%s canaux=%s",
+    tostring(filters.groupInvite), tostring(filters.whisper), tostring(filters.duel),
+    tostring(filters.trade), tostring(filters.guildInvite), tostring(filters.channelMode)))
+line("")
+
+-- One line per marker, from the table declared at the top. The panel marker is
+-- printed first and kept apart: clicking "run them all" writes it, so its
+-- presence must never be read as proof that a scenario was played.
+--
+-- The instance markers are informational: a trial account cannot produce a
+-- dungeon run, so their absence is a fact about the session, not a fault.
+for _, marker in ipairs(MARKERS) do
+    local value = markers[marker.key]
+    local label, level
+    if marker.count then
+        label = tostring(tonumber(value) or 0)
+    elseif marker.death then
+        -- Both halves, named separately: "died but never came back" is a session
+        -- that ended on a corpse, not the scenario the step asks for.
+        if markers.playerState then
+            label = "presente"
+        elseif markers.playerDied then
+            label = "mort sans retour a la vie"
+        elseif markers.playerRevived then
+            label = "retour a la vie sans mort"
+        else
+            label = "absente"
+        end
+    else
+        label = value and "presente" or "absente"
+    end
+    if not marker.info and not marker.count and not value then
+        level = "warn"
+    end
+    state(marker.label, label, level)
+end
 line("")
 
 -- Retention: a report that looks complete while the incident fell off the front
