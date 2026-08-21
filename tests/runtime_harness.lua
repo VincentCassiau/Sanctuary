@@ -2739,6 +2739,12 @@ local function resetModelState()
     currentInstanceType = "none"
     npcName = nil
     ns.invalidateWhitelist()
+    -- This helper wipes the saved tables in place, which is not a path the
+    -- add-on itself ever takes: nothing tells the sound guards the lists just
+    -- emptied. One refresh here puts every section on the same footing -- and
+    -- makes the calls that used to sit in the test bodies unnecessary, which is
+    -- what let a missing refresh in `ns.addBlocked` go unnoticed.
+    ns.refreshInviteSoundMuteState()
     ns.resetDebugLog()
 end
 
@@ -2879,8 +2885,12 @@ equal(ns.isFilterOn("strictGroupInviteSystemMessages"), true, "and again once it
 -- C6 -- arming. One blocked name is enough; empty lists arm nothing.
 resetModelState()
 SanctuaryDB.filters.scope = "blockedOnly"
-equal(ns.isProtectionArmed("PARTY_INVITE"), false, "empty lists arm nothing at all")
+-- The only manual refresh left in this section, and it is about a *setting*: in
+-- game question 1 goes through `setFilter`, which refreshes the guards. Written
+-- straight into the table here, so the harness does it once. Nothing below this
+-- line refreshes anything -- the list writers have to post the guard themselves.
 ns.refreshInviteSoundMuteState()
+equal(ns.isProtectionArmed("PARTY_INVITE"), false, "empty lists arm nothing at all")
 equal(StaticPopupDialogs.PARTY_INVITE.sound, 880,
     "so the native invite sound is left exactly as WoW plays it")
 ns.addBlocked("Pest")
@@ -2888,7 +2898,8 @@ equal(ns.isProtectionArmed("PARTY_INVITE"), true, "one blocked name arms the inv
 equal(ns.isProtectionArmed("DUEL_REQUESTED"), true, "and the duel guard")
 equal(ns.isProtectionArmed("guildInvite"), true, "and the guild one")
 equal(ns.isProtectionArmed("trade"), true, "and the trade one")
-ns.refreshInviteSoundMuteState()
+-- No manual refresh: `ns.addBlocked` has to post the guard by itself, or the
+-- very first blocked invitation plays its sound before being hidden.
 equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "and the sound guard goes back up")
 
 -- And the simulation says so too: answering "pass" here would describe a screen
@@ -2907,12 +2918,94 @@ equal(declinedGroups, beforeDeclines + 1, "the invitation is declined although n
 equal(#SanctuaryDB.log, beforeLog + 1, "and the journal records it")
 equal(StaticPopup1:IsShown(), false, "and no dialog is left on screen")
 
+do
+
+-- C6b -- the guard follows the list on its own. Not one line of this section
+-- calls refreshInviteSoundMuteState: writing a name (or a pattern) into the
+-- always-blocked list is what has to put the guard up, and removing the last one
+-- is what has to take it down. Both product rules ride on it -- a blocked
+-- invitation that leaves no trace, an allowed one that sounds exactly as WoW
+-- plays it -- and the manual calls this section used to make hid the fact that
+-- neither happened.
+local function blockedInviteIsSilent(name, eventFirst, label)
+    playedSounds = {}
+    local before = declinedGroups
+    if eventFirst then
+        fire("PARTY_INVITE_REQUEST", name)
+        StaticPopup_Show("PARTY_INVITE", name)
+    else
+        StaticPopup_Show("PARTY_INVITE", name)
+        fire("PARTY_INVITE_REQUEST", name)
+    end
+    runTimers(3)
+    equal(declinedGroups, before + 1, label .. ": the invitation is declined")
+    equal(#playedSounds, 0, label .. ": and not one sound is played")
+    equal(StaticPopup1:IsShown(), false, label .. ": and no dialog is left on screen")
+end
+
+resetModelState()
+SanctuaryDB.filters.scope = "blockedOnly"
+ns.refreshInviteSoundMuteState()
+equal(StaticPopupDialogs.PARTY_INVITE.sound, 880, "an empty list arms nothing")
+
+local addedOk, pestKey = ns.addBlocked("Pest3")
+equal(addedOk, true, "a name is blocked")
+equal(StaticPopupDialogs.PARTY_INVITE.sound, nil,
+    "and that alone puts the invite sound guard up -- no refresh, no event")
+blockedInviteIsSilent("Pest3", false, "blocked name, window first")
+blockedInviteIsSilent("Pest3", true, "blocked name, event first")
+
+-- A pattern arms exactly the same way: the two lists feed one predicate.
+equal(select(1, ns.removeBlocked(pestKey)), true, "the name is taken back out")
+equal(StaticPopupDialogs.PARTY_INVITE.sound, 880, "which lowers the guard again")
+equal(select(1, ns.addPattern("gold")), true, "a pattern is added instead")
+equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "and puts the guard back up on its own")
+blockedInviteIsSilent("Goldseller", false, "matched pattern, window first")
+blockedInviteIsSilent("Goldseller", true, "matched pattern, event first")
+
+-- The duel dialog is the second guarded popup and has its own sound field.
+equal(StaticPopupDialogs.DUEL_REQUESTED.sound, nil, "the duel guard went up with it")
+playedSounds = {}
+local beforeDuels = cancelledDuels
+StaticPopup_Show("DUEL_REQUESTED", "Goldseller")
+fire("DUEL_REQUESTED", "Goldseller")
+runTimers(3)
+equal(cancelledDuels, beforeDuels + 1, "a blocked duel is cancelled")
+equal(#playedSounds, 0, "and plays nothing at all")
+
+-- And the way back: with the last entry gone, an unknown name is native again.
+-- This is the half that breaks the other product rule -- an allowed player must
+-- keep WoW's own sounds -- and it stayed broken for as long as the guard did.
+-- The guard is posted by hand here on purpose: the removal must be the only
+-- thing that lowers it, and that cannot be shown against a guard that was never
+-- up in the first place.
+ns.refreshInviteSoundMuteState()
+equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "with the guard genuinely up")
+equal(select(1, ns.removePattern("gold")), true, "the last blocked entry is removed")
+equal(ns.isProtectionArmed("PARTY_INVITE"), false, "nothing is armed any more")
+equal(StaticPopupDialogs.PARTY_INVITE.sound, 880, "and the invite sound is WoW's own again")
+equal(StaticPopupDialogs.DUEL_REQUESTED.sound, 880, "as is the duel one")
+playedSounds = {}
+local beforeStrangerDeclines = declinedGroups
+StaticPopup_Show("PARTY_INVITE", "Stranger3")
+fire("PARTY_INVITE_REQUEST", "Stranger3")
+runTimers(3)
+equal(declinedGroups, beforeStrangerDeclines, "a stranger is not declined in the open mode")
+equal(#playedSounds, 2, "and their invitation sounds exactly as WoW plays it")
+equal(playedSounds[1], SOUNDKIT.IG_MAINMENU_OPEN, "the panel sound first")
+equal(playedSounds[2], 880, "then Blizzard's own invite sound")
+StaticPopup1.inviteAccepted = true
+StaticPopup1:Hide()
+StaticPopup1.inviteAccepted = nil
+runTimers(3)
+
+end
+
 -- C7 -- armed by the list, then an allowed invitation arrives.
 resetModelState()
 SanctuaryDB.filters.scope = "blockedOnly"
 ns.addBlocked("Pest")
 ns.addAllowed("Welcome")
-ns.refreshInviteSoundMuteState()
 playedSounds = {}
 StaticPopup_Show("PARTY_INVITE", "Welcome")
 fire("PARTY_INVITE_REQUEST", "Welcome")
@@ -3067,7 +3160,6 @@ equal(#SanctuaryDB.keywords, 0, "leaving the list empty")
 -- C13 -- the protection toggle, in the core.
 resetModelState()
 ns.addBlocked("Pest")
-ns.refreshInviteSoundMuteState()
 StaticPopup_Show("PARTY_INVITE", "Pest")
 fire("PARTY_INVITE_REQUEST", "Pest")
 equal(StaticPopup1:GetAlpha(), 0, "a blocked invitation is masked")

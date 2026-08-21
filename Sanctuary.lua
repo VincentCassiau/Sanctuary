@@ -818,6 +818,9 @@ local chatOutputWrapped
 local pendingPopupDecisions
 local unmaskVisiblePopup
 local capturePartyInviteOriginalSound
+-- Declared here rather than with the rest of the sound machinery: the always-
+-- blocked writers, far above that section, have to re-post the guards.
+local refreshInviteSoundMuteState
 local partyInviteSoundGuardDepth = 0
 
 -- ============================================================================
@@ -1424,6 +1427,20 @@ function ns.restoreAllowed(key, data)
     return true, key, data
 end
 
+-- Every write to the always-blocked lists goes through this, never through
+-- `invalidateWhitelist` alone. `isProtectionArmed` reads those lists, so adding
+-- the first name -- or removing the last one -- flips the guards on its own,
+-- with no filter touched and no event fired. And the sound guard is posted
+-- state, not state derived on read: `StaticPopupDialogs[...].sound` stays at
+-- whatever the last refresh left there. Skip this and the two product rules
+-- break at once: the first blocked name still plays its invite sound before the
+-- popup is masked, and after the last one is removed a stranger's invitation
+-- stays mute in the mode where it must sound exactly as WoW plays it.
+local function invalidateBlockedLists()
+    invalidateWhitelist()
+    refreshInviteSoundMuteState()
+end
+
 function ns.addBlocked(name, source)
     if not SanctuaryDB then return false end
     local clean = stripWoWFormatting(name)
@@ -1443,7 +1460,7 @@ function ns.addBlocked(name, source)
         source = source == "menu" and "menu" or "manual",
     }
     SanctuaryDB.blockedNames[key] = data
-    invalidateWhitelist()
+    invalidateBlockedLists()
     return true, key, data
 end
 
@@ -1452,7 +1469,7 @@ function ns.removeBlocked(key)
     local data = SanctuaryDB.blockedNames and SanctuaryDB.blockedNames[key]
     if not data then return false end
     SanctuaryDB.blockedNames[key] = nil
-    invalidateWhitelist()
+    invalidateBlockedLists()
     return true, key, data
 end
 
@@ -1460,7 +1477,7 @@ function ns.restoreBlocked(key, data)
     if not SanctuaryDB or not key or type(data) ~= "table" then return false end
     SanctuaryDB.blockedNames = SanctuaryDB.blockedNames or {}
     SanctuaryDB.blockedNames[key] = data
-    invalidateWhitelist()
+    invalidateBlockedLists()
     return true, key, data
 end
 
@@ -1485,7 +1502,7 @@ function ns.addPattern(text)
         if existing == clean then return false, clean, clean end
     end
     SanctuaryDB.keywords[#SanctuaryDB.keywords + 1] = clean
-    invalidateWhitelist()
+    invalidateBlockedLists()
     return true, clean, clean
 end
 
@@ -1496,7 +1513,7 @@ function ns.removePattern(text)
     for index, existing in ipairs(SanctuaryDB.keywords) do
         if existing == clean then
             table.remove(SanctuaryDB.keywords, index)
-            invalidateWhitelist()
+            invalidateBlockedLists()
             return true, clean, clean
         end
     end
@@ -2861,7 +2878,7 @@ ns.hookChatOutputDiagnostics = hookChatOutputDiagnostics
 -- a Lua chunk may only hold 200 live locals. What the rest of the file needs is
 -- declared here.
 local acquireProtectedPopupSoundGuard, guildInviteFrameSoundGuardToken, playAllowedProtectedPopupSounds, protectedPopupSoundGuardDialogs
-local refreshInviteSoundMuteState, releaseGuildInviteFrameSoundGuard, releaseProtectedPopupSoundGuard, releaseProtectedPopupSoundGuards
+local releaseGuildInviteFrameSoundGuard, releaseProtectedPopupSoundGuard, releaseProtectedPopupSoundGuards
 local releaseStaleProtectedPopupSoundMute, restoreStaticPopupSoundAfterShow
 
 do
