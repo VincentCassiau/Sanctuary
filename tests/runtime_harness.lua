@@ -4520,6 +4520,22 @@ for _, id in ipairs(MANUAL_DIAGNOSTIC_IDS) do
         "nor " .. id .. ", which has to be heard on its own")
 end
 
+-- Eight blocks stacked into a 300 px column. The child of that scroll used to be
+-- sized once, at build time, so RefreshBar measured a range of zero: the wheel
+-- scrolled nothing, the bar never appeared, and everything past the first screen
+-- was unreachable -- while step C.1 of the session asks the tester to read every
+-- block.
+local resultScroll = _G.SanctuaryDiagResultScroll
+check((resultScroll.child:GetHeight() or 0) > (resultScroll:GetHeight() or 0),
+    "after running them all the content is taller than the column")
+equal(resultScroll.bar:IsShown(), true, "so the bar is there to say the column scrolls")
+findButtonByLabel(diagContent, ns.L["DIAG_CLEAR"]):Click()
+check((resultScroll.child:GetHeight() or 0) <= (resultScroll:GetHeight() or 0),
+    "and once cleared it does not pretend to scroll")
+equal(resultScroll.bar:IsShown(), false, "with no bar left over")
+-- Put the panel back the way the rest of this section found it.
+runAllBtn:Click()
+
 -- The two sound buttons, one after the other: two distinct sounds.
 playedSounds = {}
 findButtonByLabel(diagContent, ns.L["DIAG_SOUND_OPEN"]):Click()

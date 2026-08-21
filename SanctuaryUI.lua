@@ -1083,11 +1083,38 @@ end
 
 local diagnostics = {}
 
+local DIAG_RESULT_LINE_HEIGHT = 14
+
+-- The result column is a single FontString that grows with every run. Its scroll
+-- child was sized once at build time, so `RefreshBar` measured a range of zero,
+-- the wheel scrolled nothing and the bar stayed hidden: everything past the
+-- first screen of "Run everything" -- eight blocks -- was unreachable. The three
+-- other scroll areas in this file resize their child after each write; this one
+-- has to as well.
+local function resizeDiagnosticResults()
+    local scroll = diagnostics.resultScroll
+    local text = diagnostics.resultText
+    if not scroll or not scroll.child or not text then return end
+
+    -- Two measures, the larger wins. Counting the lines needs no layout pass and
+    -- is exact for the short lines a diagnostic emits; GetStringHeight adds
+    -- whatever the wrapping of a long one actually produced.
+    local content = text:GetText() or ""
+    local lines = 1
+    for _ in content:gmatch("\n") do lines = lines + 1 end
+    local measured = (text.GetStringHeight and text:GetStringHeight()) or 0
+    local height = math.max(lines * DIAG_RESULT_LINE_HEIGHT, measured)
+
+    scroll.child:SetHeight(math.max(1, height))
+    scroll:RefreshBar()
+end
+
 local function clearDiagnosticsPanel()
     diagnosticResults = {}
     if diagnostics.resultText then
         diagnostics.resultText:SetText(L["DIAG_RESULT_EMPTY"])
     end
+    resizeDiagnosticResults()
     if ns.RefreshStranded then ns.RefreshStranded() end
 end
 
@@ -1110,6 +1137,7 @@ function ns.RefreshStranded()
         local text = diagnostics.resultText:GetText() or ""
         if text:find(L["DIAG_LEFT_ON_SCREEN"], 1, true) == nil then
             diagnostics.resultText:SetText(text .. "\n" .. L["DIAG_LEFT_ON_SCREEN"])
+            resizeDiagnosticResults()
         end
     end
 end
@@ -1123,6 +1151,7 @@ local function appendDiagnosticResult(result)
     end
     if diagnostics.resultText then
         diagnostics.resultText:SetText(table.concat(diagnosticResults, "\n\n"))
+        resizeDiagnosticResults()
     end
     ns.RefreshStranded()
 end
@@ -1183,9 +1212,11 @@ local function buildDiagnosticsTab(parent)
 
     local resultScroll = newScroll(parent, "SanctuaryDiagResultScroll", width - 340, 300)
     resultScroll:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + 330, -60)
+    diagnostics.resultScroll = resultScroll
     diagnostics.resultText = newLabel(resultScroll.child, L["DIAG_RESULT_EMPTY"], FONT_BODY, C.soft)
     diagnostics.resultText:SetPoint("TOPLEFT", resultScroll.child, "TOPLEFT", 0, 0)
     diagnostics.resultText:SetWidth(width - 350)
+    resizeDiagnosticResults()
 end
 
 refreshTab.diagnostics = function()
