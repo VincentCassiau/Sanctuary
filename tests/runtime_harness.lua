@@ -4260,6 +4260,13 @@ equal(countsAfter.allowed.trust, countsBefore.allowed.trust + 1,
     "and one more contact the group rule trusted")
 equal(addedCount(), addedBefore + 1,
     "so 'Added by you' gains exactly one label, not two")
+
+-- The home screen tile carries the same sentence as that section -- "%s added
+-- by you" -- and was left counting the trusted contacts in with the typed ones,
+-- so the two surfaces contradicted each other on the more visible of the two.
+local tileDetail = tostring(_G.SanctuaryTileAllowed.detail.__text or "")
+equal(tonumber(tileDetail:match("^(%d+)")), addedCount(),
+    "and the tile on the home screen says the same number as that section")
 rendered = panelRowTexts(allowedPanel)
 check(rendered:find("Handy", 1, true) ~= nil, "the name typed by hand has its chip")
 check(rendered:find("Trusty", 1, true) == nil,

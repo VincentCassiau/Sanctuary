@@ -734,8 +734,12 @@ refreshTab.protection = function()
     local counts = ns.getListCounts and ns.getListCounts()
         or { allowed = { total = 0, manual = 0, trust = 0, bnet = 0 }, blocked = { total = 0, names = 0, patterns = 0 } }
     protection.tileAllowed.count:SetText(tostring(counts.allowed.total))
+    -- "Added by you" means typed by hand. Automatic trust entries live in the
+    -- same table but nobody typed them, and the panel section under the same
+    -- wording already counts only the manual ones: adding trust back in here
+    -- made the home screen contradict the panel, on the more visible of the two.
     protection.tileAllowed.detail:SetText(string.format(L["TILE_ALLOWED_DETAIL"],
-        tostring(counts.allowed.manual + counts.allowed.trust), tostring(counts.allowed.bnet)))
+        tostring(counts.allowed.manual), tostring(counts.allowed.bnet)))
     protection.tileBlocked.count:SetText(tostring(counts.blocked.total))
     protection.tileBlocked.detail:SetText(string.format(L["TILE_BLOCKED_DETAIL"],
         tostring(counts.blocked.names), tostring(counts.blocked.patterns)))
