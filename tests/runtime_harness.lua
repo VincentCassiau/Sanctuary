@@ -3992,6 +3992,27 @@ equal(#offenders, 0,
     "no visible string carries a banned word (" .. table.concat(offenders, ", ") .. ")")
 
 -- ---------------------------------------------------------------------------
+-- Every locale value is valid UTF-8
+-- ---------------------------------------------------------------------------
+
+-- Accented characters are written as decimal escapes ("\194\176" for a degree
+-- sign), and a mistyped second byte produces a broken sequence that the parity
+-- check cannot see: the key exists on both sides, only its bytes are wrong. WoW
+-- renders such a string with a replacement glyph or truncates it at the bad
+-- byte, so the check is on the bytes themselves.
+local invalidUtf8 = {}
+for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) do
+    for key, value in pairs(entry[2]) do
+        if type(value) == "string" and not utf8.len(value) then
+            invalidUtf8[#invalidUtf8 + 1] = entry[1] .. "." .. key
+        end
+    end
+end
+table.sort(invalidUtf8)
+equal(#invalidUtf8, 0,
+    "every locale value is valid UTF-8 (" .. table.concat(invalidUtf8, ", ") .. ")")
+
+-- ---------------------------------------------------------------------------
 -- The four tabs open, and the fifth only in debug mode
 -- ---------------------------------------------------------------------------
 
