@@ -4690,7 +4690,11 @@ _G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesIn
 -- The minimap button
 -- ---------------------------------------------------------------------------
 
-Minimap = { GetCenter = function() return 100, 100 end }
+-- A scale of its own, declared rather than left out: the mock used to have no
+-- GetEffectiveScale at all, so whichever frame the drag divided by, the division
+-- was a no-op and the test proved nothing about it.
+Minimap = { GetCenter = function() return 100, 100 end,
+    GetEffectiveScale = function() return 1 end }
 UIParent.GetEffectiveScale = function() return 1 end
 GetCursorPosition = function() return 180, 100 end
 ns.InitializeUI()
@@ -4727,6 +4731,35 @@ do
     equal(minimapButton:GetScript("OnUpdate"), nil, "and the release takes the follow back off")
     equal(math.floor(SanctuaryDB.minimap.angle + 0.5), 180,
         "leaving it where the cursor let go")
+    GetCursorPosition = function() return 180, 100 end
+end
+
+-- Step D.5 of the session protocol is "the button follows the cursor around the
+-- minimap", and it is not optional. The cursor comes back in screen pixels, the
+-- minimap's centre in the minimap's own coordinates: the two only meet through
+-- the MINIMAP's effective scale. UIParent's gave the same answer for as long as
+-- both were left alone -- resize the minimap in Edit Mode and the button drifted
+-- away from the cursor mid-drag, which the tester would have read as a fault of
+-- the add-on, at the price of a session he cannot replay.
+do
+    local restoreUIParentScale = UIParent.GetEffectiveScale
+    Minimap.GetEffectiveScale = function() return 2 end
+    UIParent.GetEffectiveScale = function() return 4 end
+
+    -- (360, 200) pixels is (180, 100) on a minimap drawn at scale 2: due east of
+    -- a centre at (100, 100). Read through UIParent it lands at (90, 50), south
+    -- west of the centre, nowhere near the cursor.
+    GetCursorPosition = function() return 360, 200 end
+    minimapButton:GetScript("OnDragStop")(minimapButton)
+    equal(math.floor(SanctuaryDB.minimap.angle + 0.5), 0,
+        "an enlarged minimap still puts the button under the cursor, due east")
+    GetCursorPosition = function() return 200, 360 end
+    minimapButton:GetScript("OnDragStop")(minimapButton)
+    equal(math.floor(SanctuaryDB.minimap.angle + 0.5), 90,
+        "and a quarter turn round, with the two scales still disagreeing")
+
+    Minimap.GetEffectiveScale = function() return 1 end
+    UIParent.GetEffectiveScale = restoreUIParentScale
     GetCursorPosition = function() return 180, 100 end
 end
 

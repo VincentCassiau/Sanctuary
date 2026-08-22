@@ -2309,7 +2309,12 @@ local function dragMinimapButton()
     if not minimapButton or not SanctuaryDB or not Minimap then return end
     local cx, cy = Minimap:GetCenter()
     local px, py = GetCursorPosition()
-    local scale = UIParent:GetEffectiveScale() or 1
+    -- The minimap's scale, not UIParent's. `GetCenter` answers in the minimap's
+    -- own coordinates and `GetCursorPosition` answers in screen pixels, so the
+    -- cursor has to come back through the scale of the frame it is compared to.
+    -- The two are equal until the minimap is resized in Edit Mode, which is
+    -- exactly when the button starts drifting away from the cursor mid-drag.
+    local scale = Minimap:GetEffectiveScale() or 1
     if not (cx and cy and px and py) or scale == 0 then return end
     SanctuaryDB.minimap.angle = ns.minimapAngleFromPosition(cx, cy, px / scale, py / scale)
     positionMinimapButton()
