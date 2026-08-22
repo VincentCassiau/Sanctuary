@@ -1519,7 +1519,8 @@ local function refreshAllowedPanel(force)
                     if source == "bnet" then
                         if entry.character then
                             row.label:SetText(string.format(L["WL_BNET_ROW"],
-                                entry.character, entry.account or entry.label))
+                                entry.characterDisplay or entry.character,
+                                entry.account or entry.label))
                         else
                             row.label:SetText(string.format(L["WL_BNET_OFFLINE"],
                                 entry.account or entry.label))

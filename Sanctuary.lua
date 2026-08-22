@@ -857,6 +857,9 @@ Sanctuary.bnetWhitelistLabels = {}
 -- name tester resolve an account from a character and back.
 Sanctuary.bnetCharacterByAccount = {}
 Sanctuary.bnetAccountByCharacter = {}
+-- The same character, spelled for a reader instead of for a lookup: the realm
+-- is what tells two namesakes apart in a key, and noise on a panel line.
+Sanctuary.bnetCharacterDisplayByAccount = {}
 Sanctuary.whitelistDirty = true
 
 local function getBNetFriendInfo(index)
@@ -902,6 +905,7 @@ local function rebuildWhitelist()
     local bnetSources = {}
     local bnetSourceLabels = {}
     local characterByAccount = {}
+    local characterDisplayByAccount = {}
     local accountByCharacter = {}
 
     -- A character name answers with one account, or with nobody. Two Battle.net
@@ -1033,6 +1037,10 @@ local function rebuildWhitelist()
                     local bareKey = normalizeName(characterName)
                     if accountKey then
                         characterByAccount[accountKey] = characterName
+                        -- What the panel prints. The realm earns its place in
+                        -- the key, not on the line: "Bnetchar-Ysondre · Real
+                        -- Friend#1234" is the same contact said twice.
+                        characterDisplayByAccount[accountKey] = gameInfo.characterName
                         noteAccountForCharacter(fullKey, info.accountName, accountKey)
                         if bareKey ~= fullKey then
                             noteAccountForCharacter(bareKey, info.accountName, accountKey)
@@ -1077,6 +1085,7 @@ local function rebuildWhitelist()
     Sanctuary.bnetWhitelistSources = bnetSources
     Sanctuary.bnetWhitelistLabels = bnetSourceLabels
     Sanctuary.bnetCharacterByAccount = characterByAccount
+    Sanctuary.bnetCharacterDisplayByAccount = characterDisplayByAccount
     Sanctuary.bnetAccountByCharacter = accountByCharacter
     Sanctuary.whitelistDirty = false
 
@@ -1287,6 +1296,11 @@ function ns.getAutoWhitelistGroups(filterText)
                         entry.account = label
                         entry.character = Sanctuary.bnetCharacterByAccount
                             and Sanctuary.bnetCharacterByAccount[key] or nil
+                        -- `character` carries the realm because the always-
+                        -- blocked list resolves on it; the panel prints
+                        -- `characterDisplay`, the bare name the friend shows.
+                        entry.characterDisplay = (Sanctuary.bnetCharacterDisplayByAccount
+                            and Sanctuary.bnetCharacterDisplayByAccount[key]) or entry.character
                     end
                     group.entries[#group.entries + 1] = entry
                 end

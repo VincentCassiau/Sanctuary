@@ -4120,8 +4120,11 @@ equal(SanctuaryDB.notifications.mode, "silent", "and the first one puts it back 
 guildMembers = { "Guildmate-TestRealm", "Officer-TestRealm" }
 inGuild = true
 bnetFriends = {
+    -- With a realm, because that is the ordinary case and the one that used to
+    -- leak: the realm belongs in the key that tells two namesakes apart, never
+    -- on the line the panel prints.
     { accountName = "RealFriend#1234", bnetAccountID = 77,
-      gameAccountInfo = { characterName = "Bnetchar" } },
+      gameAccountInfo = { characterName = "Bnetchar", realmName = "Ysondre" } },
     { accountName = "OfflineFriend#5678", bnetAccountID = 78 },
 }
 charFriends = {}
@@ -4237,6 +4240,10 @@ bnetHeader:Click()
 rendered = panelRowTexts(allowedPanel)
 check(rendered:find("Bnetchar", 1, true) ~= nil, "unfolding lists the connected friend's character")
 check(rendered:find("RealFriend#1234", 1, true) ~= nil, "next to the account")
+check(rendered:find(string.format(ns.L["WL_BNET_ROW"], "Bnetchar", "RealFriend#1234"), 1, true) ~= nil,
+    "the line reads 'Character . Account', the way the mock-up draws it")
+check(rendered:find("Bnetchar-Ysondre", 1, true) == nil,
+    "the realm stays in the lookup key and off the line")
 check(rendered:find(string.format(ns.L["WL_BNET_OFFLINE"], "OfflineFriend#5678"), 1, true) ~= nil,
     "and an offline friend by account alone")
 
