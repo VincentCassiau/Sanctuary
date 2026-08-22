@@ -125,7 +125,7 @@ end
 function C_FriendList.ShowFriends() end
 C_GuildInfo = { GuildRoster = function() end }
 local addonMetadata = {
-    Version = "0.3.2",
+    Version = "0.4.0",
     ["X-Sanctuary-Build"] = "20260820-8",
     Interface = "120007",
 }
@@ -508,7 +508,7 @@ fire("ADDON_LOADED", "Sanctuary")
 -- gets its own section further down.
 SanctuaryDB.filters.preset = "custom"
 fire("PLAYER_ENTERING_WORLD")
-equal(ns.VERSION, "0.3.2", "version exported")
+equal(ns.VERSION, "0.4.0", "version exported")
 equal(#muted, 0, "no global sound files muted at rest")
 equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "party invite dialog sound suppressed while group filter active")
 equal(StaticPopupDialogs.DUEL_REQUESTED.sound, nil, "duel dialog sound suppressed while duel filter active")
@@ -702,12 +702,12 @@ SanctuaryDB.debugLog = {}
 ns.captureDebugSnapshot()
 equal(#SanctuaryDB.debugLog, 1, "debug snapshot captured")
 equal(SanctuaryDB.debugLog[1].cat, "SNAPSHOT", "debug snapshot category")
-equal(SanctuaryDB.debugLog[1].data.version, "0.3.2", "debug snapshot version")
+equal(SanctuaryDB.debugLog[1].data.version, "0.4.0", "debug snapshot version")
 equal(SanctuaryDB.debugLog[1].data.build, "20260820-8", "debug snapshot reports the diagnostic build id")
 equal(SanctuaryDB.debugLog[1].data.clientVersion, "12.0.7", "debug snapshot reports the client version")
 equal(SanctuaryDB.debugLog[1].data.clientBuild, "62119", "debug snapshot reports the client build")
 equal(SanctuaryDB.debugLog[1].data.clientInterface, 120007, "debug snapshot reports the client interface number")
-equal(SanctuaryDB.debugLog[1].data.addonMetaVersion, "0.3.2", "debug snapshot reports the loaded addon version metadata")
+equal(SanctuaryDB.debugLog[1].data.addonMetaVersion, "0.4.0", "debug snapshot reports the loaded addon version metadata")
 equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, "20260820-8", "debug snapshot reports the loaded addon build metadata")
 equal(SanctuaryDB.debugLog[1].data.addonMetaInterface, "120007", "debug snapshot reports the loaded addon interface metadata")
 check(SanctuaryDB.debugLog[1].data.chatLockdownKnown, "debug snapshot reports a readable chat messaging lockdown state")
@@ -4371,8 +4371,8 @@ do
 -- "Added by you" and "Automatically trusted" read the same table: a contact the
 -- five-minute group rule added carries source = "trust". Listed in both, the
 -- tester sees one name in two places and a counter that credits her with a name
--- she never typed. The 0.3.2 lists the schema reset carries forward are full of
--- them, so this shows on the very first opening.
+-- she never typed. Automatic trust fills that table on its own, in group after
+-- group, so the miscount appears without anybody typing anything.
 local function addedCount()
     return tonumber(tostring(allowedPanel.addedSection.count:GetText()):match("%d+"))
 end

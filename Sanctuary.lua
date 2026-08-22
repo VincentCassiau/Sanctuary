@@ -1,6 +1,6 @@
 -- ============================================================================
 -- Sanctuary — WoW Anti-Harassment Addon (Whitelist-based protection)
--- Version: 0.3.2 | Interface: 120007 (Midnight)
+-- Version: 0.4.0 | Interface: 120007 (Midnight)
 -- ============================================================================
 
 -- ============================================================================
@@ -9,7 +9,7 @@
 
 local ADDON_NAME, ns = ...
 local L = ns.L
-local VERSION = "0.3.2"
+local VERSION = "0.4.0"
 
 -- Build identity. This is NOT a release version and must never be presented as
 -- one: it only makes a user-provided debug report attributable to the exact
