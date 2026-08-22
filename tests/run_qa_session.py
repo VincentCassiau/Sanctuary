@@ -237,6 +237,40 @@ def wait_until_stable(path, stable_seconds=STABLE_SECONDS, timeout=STABLE_TIMEOU
     return False
 
 
+STABILITY_OK = "fichier stable a la premiere attente"
+STABILITY_RETRY = "fichier stable apres une seconde attente"
+STABILITY_FAILED = "fichier toujours en cours d'ecriture -- rien n'a ete archive"
+
+
+def confirm_recording_stable(path, ask=None, wait=None, printer=print):
+    """Confirms the game really is closed, before anything is archived.
+
+    A warning on stderr was not enough: the run carried on, archived, called the
+    checker and printed a verdict, so the report the maintainer pastes could
+    announce an answer with nothing saying the file was still moving underneath
+    it. A session costs him 30 to 45 minutes and one recording has already been
+    lost, so a first failure asks him to close the game and waits again, and a
+    second one is a hard stop.
+
+    Returns (ok, note); the note travels into the report either way.
+    """
+    # Resolved here rather than as default arguments: `ask` is defined further
+    # down the file, where the interactive helpers live.
+    if ask is None:
+        ask = globals()["ask"]
+    if wait is None:
+        wait = wait_until_stable
+
+    if wait(path):
+        return True, STABILITY_OK
+    printer("Le fichier de reglages continue de changer : le jeu est-il "
+            "completement ferme ?")
+    ask("Fermez le jeu, puis Entree :", allow_empty=True)
+    if wait(path):
+        return True, STABILITY_RETRY
+    return False, STABILITY_FAILED
+
+
 # ---------------------------------------------------------------------------
 # The offline check
 # ---------------------------------------------------------------------------
@@ -343,6 +377,10 @@ def build_report(context, answers, remark, checker):
     lines.append("")
     lines.append("- Nom : `%s`" % context["archive_name"])
     lines.append("- Etat : %s" % context["archive_state"])
+    # Said out loud rather than left on stderr: a verdict read off a recording
+    # that was still being written is not a verdict.
+    lines.append("- Stabilite du fichier : %s"
+                 % context.get("stability", "non renseignee"))
     lines.append("- Taille : %s octets" % context["archive_size"])
     lines.append("- Empreinte SHA-256 : `%s`" % context["archive_sha"])
     lines.append("")
@@ -550,9 +588,12 @@ def main(argv=None):
     print("Quittez completement le jeu maintenant : le fichier de reglages est "
           "ecrit a la fermeture.")
     ask("Entree une fois le jeu ferme :", allow_empty=True)
-    if not wait_until_stable(account["path"]):
-        print("le fichier de reglages continue de changer : le jeu est-il ferme ?",
-              file=sys.stderr)
+    stable, stability = confirm_recording_stable(account["path"])
+    if not stable:
+        print("le fichier de reglages bouge encore : rien n'a ete archive et "
+              "aucun verdict n'est rendu. Fermez le jeu, puis relancez -- les "
+              "reponses deja donnees sont conservees.", file=sys.stderr)
+        return 1
 
     build, saved_at = read_manifest_fields(account["path"])
     destination = os.path.join(runs_dir,
@@ -579,6 +620,7 @@ def main(argv=None):
         "finished_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "completed": completed,
         "operator_verdict": operator_verdict,
+        "stability": stability,
         "archive_name": os.path.basename(destination),
         "archive_state": archive_state,
         "archive_size": os.path.getsize(destination),

@@ -8,6 +8,8 @@ place for either. Everything below builds its own tree in a temporary folder.
 Usage: python3 tests/test_qa_session.py
 """
 
+import contextlib
+import io
 import os
 import shutil
 import sys
@@ -394,6 +396,7 @@ class ReportTests(unittest.TestCase):
             "archive_name": "sanctuary-0.4.0_build-20260821-1_2026-08-21_2030.lua",
             "archive_state": "archive", "archive_size": 12345,
             "archive_sha": "deadbeef", "verdict": "CONFORME",
+            "stability": runner.STABILITY_OK,
         }
         base.update(overrides)
         return base
@@ -457,6 +460,84 @@ class ReportTests(unittest.TestCase):
         self.assertIn("Empreinte SHA-256", report)
         self.assertIn("12345 octets", report)
         self.assertNotIn("SanctuaryDB =", report)
+
+    def test_the_report_says_whether_the_file_had_settled(self):
+        self.assertIn("Stabilite du fichier : %s" % runner.STABILITY_OK,
+                      self.report())
+
+
+class StabilityGateTests(unittest.TestCase):
+    """A recording that is still being written is not archived at all.
+
+    The runner used to print a warning on stderr and carry on: it archived, ran
+    the checker and printed a verdict, so a report could announce an answer read
+    off a moving file with nothing saying so.
+    """
+
+    def confirm(self, results):
+        asked = []
+        outcomes = list(results)
+        ok, note = runner.confirm_recording_stable(
+            "/nowhere/Sanctuary.lua",
+            ask=lambda prompt, **kwargs: asked.append(prompt) or "",
+            wait=lambda path: outcomes.pop(0),
+            printer=lambda *args, **kwargs: None)
+        return ok, note, asked
+
+    def test_a_file_that_has_settled_asks_nothing(self):
+        ok, note, asked = self.confirm([True])
+        self.assertTrue(ok)
+        self.assertEqual(note, runner.STABILITY_OK)
+        self.assertEqual(asked, [])
+
+    def test_a_first_failure_asks_the_operator_and_waits_again(self):
+        ok, note, asked = self.confirm([False, True])
+        self.assertTrue(ok)
+        self.assertEqual(note, runner.STABILITY_RETRY)
+        self.assertEqual(len(asked), 1)
+
+    def test_a_second_failure_is_a_refusal(self):
+        ok, note, asked = self.confirm([False, False])
+        self.assertFalse(ok)
+        self.assertEqual(note, runner.STABILITY_FAILED)
+        self.assertEqual(len(asked), 1)
+
+    def test_the_runner_stops_before_archiving(self):
+        """main() returns non-zero and archive_exclusive is never reached."""
+        temp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, temp, True)
+        account = os.path.join(temp, "Sanctuary.lua")
+        with open(account, "w") as handle:
+            handle.write("SanctuaryDB = {}\n")
+
+        def refuse_archive(*args, **kwargs):
+            self.fail("the recording was archived despite an unstable file")
+
+        saved = {name: getattr(runner, name) for name in
+                 ("REPO", "read_repo_identity", "identity_problems",
+                  "deployment_problems", "find_accounts", "play", "ask",
+                  "confirm_recording_stable", "archive_exclusive",
+                  "read_manifest_fields", "run_checker")}
+        try:
+            runner.REPO = temp
+            runner.read_repo_identity = lambda: {"code_build": "b", "code_version": "v"}
+            runner.identity_problems = lambda identity: []
+            runner.deployment_problems = lambda repo, addon: []
+            runner.find_accounts = lambda root: [
+                {"name": "ACCOUNT", "path": account, "mtime": 0}]
+            runner.play = lambda *args, **kwargs: ({}, "", True)
+            runner.ask = lambda prompt, **kwargs: ""
+            runner.confirm_recording_stable = lambda path: (False, runner.STABILITY_FAILED)
+            runner.archive_exclusive = refuse_archive
+            runner.read_manifest_fields = refuse_archive
+            runner.run_checker = refuse_archive
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = runner.main(["--wow", temp])
+        finally:
+            for name, value in saved.items():
+                setattr(runner, name, value)
+        self.assertNotEqual(code, 0)
 
 
 if __name__ == "__main__":
