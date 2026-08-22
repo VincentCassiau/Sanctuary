@@ -4529,6 +4529,22 @@ check(menuEntries[2].text:find(ns.L["MENU_UNBLOCK"], 1, true) ~= nil,
 menuEntries[2].action()
 equal(SanctuaryDB.blockedNames["toto-ysondre"], nil, "and does")
 
+-- A bare name blocks every realm. The menu searched for the full key alone, so
+-- on a character of an already-blocked bare name it offered to block again, and
+-- the click wrote a second key: from then on "stop blocking" removed one of the
+-- two and left the other blocking.
+ns.addBlocked("Bareprobe")
+menuEntries = ns.buildPlayerMenuEntries({ name = "Bareprobe", server = "Ysondre" })
+check(menuEntries[2].text:find(ns.L["MENU_UNBLOCK"], 1, true) ~= nil,
+    "the menu on a character of a bare blocked name offers to stop blocking")
+equal(ns.classifyName("Bareprobe-Ysondre").verdict, "always_blocked",
+    "which is the truth, since the core already holds him blocked")
+menuEntries[2].action()
+equal(SanctuaryDB.blockedNames["bareprobe"], nil, "and it removes the key that was found")
+equal(SanctuaryDB.blockedNames["bareprobe-ysondre"], nil, "having written no second key")
+check(ns.classifyName("Bareprobe-Ysondre").verdict ~= "always_blocked",
+    "so one click really does stop blocking him")
+
 equal(#ns.buildPlayerMenuEntries({ name = "Victim" }), 0, "the player themselves gets nothing")
 equal(#ns.buildPlayerMenuEntries({}), 0, "an unresolved identity gets nothing")
 equal(#ns.buildPlayerMenuEntries({ name = makeSecretValue("secret") }), 0,

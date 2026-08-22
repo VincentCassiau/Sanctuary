@@ -800,7 +800,10 @@ end
 end
 
 ns.normalizeBlockedKey = normalizeBlockedKey
-ns.isBlockedName = function(name) return isBlockedName(name) ~= nil end
+-- The KEY that answers, not just whether one does: a caller that wants to undo
+-- the block has to remove the entry the lookup actually found, which for a bare
+-- name blocking every realm is not the key it asked about.
+ns.findBlockedKey = isBlockedName
 ns.hasAlwaysBlockedEntries = hasAlwaysBlockedEntries
 ns.isAlwaysBlocked = isAlwaysBlocked
 
