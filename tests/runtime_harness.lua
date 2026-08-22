@@ -4566,8 +4566,17 @@ do
             "the panel runs from under the header to the bottom of the frame, " .. band)
         equal(veil:GetHeight(), frameHeight - 40, "and the veil covers the same band, " .. band)
         equal(veil:IsShown(), true, "the veil is up as long as the panel is, " .. band)
-        equal(allowedPanelFrame.scroll:GetHeight(), frameHeight - 40 - 44 - 12,
+        -- 40 header, 44 for the panel's own title row, and the bottom margin
+        -- that keeps the list clear of the undo strip: the strip is an overlay
+        -- pinned 6 above the frame's bottom edge and 22 tall, so a list running
+        -- to within 12 of the edge had its last row half covered for the six
+        -- seconds the strip was up -- exactly when someone is looking at it to
+        -- decide whether to undo.
+        local undoTop = 6 + 22
+        equal(allowedPanelFrame.scroll:GetHeight(), frameHeight - 40 - 44 - (undoTop + 6),
             "and the list inside is given the room the panel gained, " .. band)
+        check(frameHeight - 40 - 44 - allowedPanelFrame.scroll:GetHeight() > undoTop,
+            "with its bottom edge clear of the undo strip, " .. band)
     end
     check(measured[1] ~= measured[2],
         "and the two heights measured really were two different windows")
@@ -4605,6 +4614,22 @@ equal(stateButton.label:GetText(), ns.L["HEADER_STATE_OFF"], "and the label says
 stateButton:Click()
 equal(ns.isEnabled(), true, "clicking again turns it back on")
 equal(stateButton.label:GetText(), ns.L["HEADER_STATE_ON"], "and the label follows")
+
+-- The veil stops under the header so the close cross stays reachable, which left
+-- this control reachable too -- and it is the one that turns the whole
+-- protection off, from behind a panel that goes on listing names as if nothing
+-- had happened. Refused while a panel is open, and dimmed so the refusal is
+-- visible before the click rather than after it.
+ns.OpenPanel("allowed")
+equal(stateButton:GetAlpha(), 0.35, "an open panel dims the header control")
+stateButton:Click()
+equal(ns.isEnabled(), true, "and the click behind the panel does nothing")
+ns.ClosePanel()
+equal(stateButton:GetAlpha(), 1, "closing the panel gives the control back")
+stateButton:Click()
+equal(ns.isEnabled(), false, "and it works again")
+stateButton:Click()
+equal(ns.isEnabled(), true, "left as it was found")
 
 -- ---------------------------------------------------------------------------
 -- The journal

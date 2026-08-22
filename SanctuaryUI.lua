@@ -65,6 +65,10 @@ local LEVEL_VEIL, LEVEL_PANEL, LEVEL_OVER_PANEL = 180, 200, 220
 -- Room kept under the content for the tabs' own strip and the undo line, which
 -- are anchored to the bottom of the frame.
 local CONTENT_BOTTOM = 30
+-- The undo strip, stated once because two layouts have to keep clear of it: it
+-- is an overlay pinned this far above the bottom edge of the frame, and it sits
+-- OVER the panels rather than inside them.
+local UNDO_HEIGHT, UNDO_MARGIN = 22, 6
 -- What the whole window may measure, header and bottom strip included. Only the
 -- height is negotiable: the scroll area and every tab frame are built at
 -- FRAME_WIDTH and nothing in the window scrolls sideways, so any other width
@@ -391,6 +395,9 @@ local mainFrame, contentFrame, contentScroll, stateButton, resizeGrip
 -- from the bottom of the header down and eats every click, so the screen behind
 -- an open panel can be read but not touched.
 local panelVeil
+-- Declared here because the panels have to refresh it when they open and close,
+-- and they are written further up the file than the header is.
+local refreshStateButton
 local tabFrames, tabButtons = {}, {}
 local activeTab = "protection"
 local manualSize = nil
@@ -1322,7 +1329,14 @@ local function describeChipSource(data)
 end
 
 -- What the panel keeps for its own heading, above and below the list.
-local PANEL_SCROLL_TOP, PANEL_SCROLL_BOTTOM = 44, 12
+-- The list inside a panel stops clear of the undo strip instead of running under
+-- it. The strip only shows for six seconds after a removal, so reclaiming those
+-- pixels the rest of the time would mean re-laying out the list every time a
+-- name is taken out -- and a list that jumps under the cursor is a worse trade
+-- than a list one row shorter. Derived from the strip rather than copied, so
+-- moving the strip cannot leave the panel quietly overlapping it again.
+local PANEL_SCROLL_TOP = 44
+local PANEL_SCROLL_BOTTOM = UNDO_HEIGHT + UNDO_MARGIN + 6
 
 -- The panels and their veil are as tall as the frame under its header, whatever
 -- the window currently measures. The anchors say so to the client, which follows
@@ -1775,6 +1789,7 @@ function ns.OpenPanel(which)
     if panelVeil then panelVeil:Show() end
     panel:Show()
     panel.signature = nil
+    if refreshStateButton then refreshStateButton() end
     refreshOpenPanel(true)
     -- Created on opening, cancelled on closing. A ticker that outlives its panel
     -- keeps rebuilding a list nobody is looking at, for the whole session.
@@ -1793,6 +1808,7 @@ function ns.ClosePanel()
     end
     if panelVeil then panelVeil:Hide() end
     openPanel = nil
+    if refreshStateButton then refreshStateButton() end
     releaseChips()
 end
 
@@ -1925,12 +1941,18 @@ StaticPopupDialogs["SANCTUARY_CLEAR_DEBUG_LOG"] = {
 -- SECTION 13: Frame, header, tabs
 -- ============================================================================
 
-local function refreshStateButton()
+function refreshStateButton()
     if not stateButton then return end
     local on = ns.isEnabled()
     stateButton.label:SetText(on and L["HEADER_STATE_ON"] or L["HEADER_STATE_OFF"])
     stateButton.label:SetTextColor(unpack(on and C.green or C.dim))
     applyBackdrop(stateButton, on and C.greenBg or C.tabOff, on and C.green or C.border)
+    -- The veil starts under the header, so that the close cross stays reachable
+    -- while a panel is open. That left the one control up there reachable too,
+    -- and it is not a small one: a click turns the whole protection off, from
+    -- behind a panel that goes on listing names as if it were still on. The
+    -- click is refused below; the dimming is what says so before the click.
+    stateButton:SetAlpha(openPanel and 0.35 or 1)
 end
 
 local KIND_LABEL_KEYS = {
@@ -2145,6 +2167,8 @@ local function createMainFrame()
     stateButton.label = newLabel(stateButton, "", FONT_DESC, C.green, "CENTER")
     stateButton.label:SetPoint("CENTER")
     stateButton:SetScript("OnClick", function()
+        -- Modal means modal. See refreshStateButton.
+        if openPanel then return end
         ns.setEnabled(not ns.isEnabled())
         if ns.RefreshMinimapButton then ns.RefreshMinimapButton() end
         ns.refreshUI()
@@ -2216,8 +2240,8 @@ local function createMainFrame()
 
     -- The undo line sits above the tabs so it is visible whichever screen is up.
     undoLine = CreateFrame("Frame", "SanctuaryUndoLine", mainFrame, "BackdropTemplate")
-    undoLine:SetSize(FRAME_WIDTH - PAD * 2, 22)
-    undoLine:SetPoint("BOTTOMLEFT", mainFrame, "BOTTOMLEFT", PAD, 6)
+    undoLine:SetSize(FRAME_WIDTH - PAD * 2, UNDO_HEIGHT)
+    undoLine:SetPoint("BOTTOMLEFT", mainFrame, "BOTTOMLEFT", PAD, UNDO_MARGIN)
     undoLine:SetFrameLevel(LEVEL_OVER_PANEL)
     applyBackdrop(undoLine, C.tile, C.border)
     undoLine.label = newLabel(undoLine, "", FONT_BODY, C.soft)
