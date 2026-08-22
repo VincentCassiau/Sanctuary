@@ -739,6 +739,50 @@ end
 -- rebuildWhitelist, further down.
 local ensureWhitelistCache
 
+-- "Which Battle.net account is playing this character", asked in one place by
+-- the two callers that need it: the always-blocked door, and the attribution the
+-- panel prints. Three lookups, stopping at the first hit.
+--
+--   1. the full "Name-Realm" key -- the only one that tells two namesakes apart;
+--   2. the bare name -- what the map holds for a friend whose realm was unknown,
+--      and what `rebuildWhitelist` neutralises when two friends collide on it;
+--   3. only for a name that carries NO realm: the same name on the player's own
+--      realm.
+--
+-- Step 3 is the one that looks odd and is not. PARTY_INVITE_REQUEST,
+-- DUEL_REQUESTED and TRADE_SHOW all hand over a name stripped of its realm when
+-- the other player shares the player's own -- that is the whole reason step 2
+-- exists. So a bare name is never ambiguous about its realm even when the bare
+-- KEY is: the realm is ours, we know it, and "Name-OurRealm" stays distinct.
+-- Without this a blocked Battle.net contact walked in under his bare name for as
+-- long as some other friend happened to be logged on a namesake elsewhere.
+local function bnetAccountForCharacter(name)
+    local map = Sanctuary.bnetAccountByCharacter
+    if not map then return nil end
+
+    local fullKey = normalizeBlockedKey(name)
+    if fullKey then
+        local account = map[fullKey]
+        if account then return account end
+    end
+
+    local bareKey = normalizeName(name)
+    if bareKey and bareKey ~= fullKey then
+        local account = map[bareKey]
+        if account then return account end
+    end
+
+    if fullKey and not fullKey:find("-", 1, true) then
+        local realm = getPlayerRealm()
+        if realm ~= "" then
+            local sameRealmKey = normalizeBlockedKey(name .. "-" .. realm)
+            if sameRealmKey then return map[sameRealmKey] end
+        end
+    end
+
+    return nil
+end
+
 local isAlwaysBlocked
 do
 
@@ -780,20 +824,9 @@ isAlwaysBlocked = function(name)
         if blocked then return true, reason, detail end
     end
 
-    -- The same two lookups as `isBlockedName`, in the same order and stopping at
-    -- the first hit: the full "Name-Realm" key, then the bare name only when the
-    -- full one knows nobody. Falling through to the bare key after the full one
-    -- has answered would hand the decision to a namesake's account.
-    local account
-    local map = Sanctuary.bnetAccountByCharacter
-    if map then
-        local fullKey = normalizeBlockedKey(name)
-        if fullKey then account = map[fullKey] end
-        if not account then
-            local bareKey = normalizeName(name)
-            if bareKey and bareKey ~= fullKey then account = map[bareKey] end
-        end
-    end
+    -- One resolution rule, shared with the attribution the panel prints, so the
+    -- door and the label can never disagree about who is playing this character.
+    local account = bnetAccountForCharacter(name)
     if account then
         blocked, reason, detail = isAlwaysBlockedDirect(account)
         if blocked then return true, reason, detail end
@@ -1190,6 +1223,15 @@ local function classifyName(name)
     local source = characterKey and Sanctuary.whitelistSources[characterKey] or nil
     if source then
         local label = Sanctuary.whitelistLabels[characterKey]
+        -- The labels are keyed on the bare name and keep their first writer, which
+        -- for two Battle.net friends playing a namesake means one account is
+        -- printed for both -- and the one printed can be the account the person
+        -- has just blocked, shown as the REASON the other one is allowed. The
+        -- "Name-Realm" keys stay distinct, so ask the account map instead.
+        if source == "bnet" then
+            local account = bnetAccountForCharacter(name)
+            if account then label = account end
+        end
         return { verdict = "always_allowed", list = source, detail = label }
     end
 
@@ -1350,6 +1392,13 @@ function ns.describeAccessDecision(name)
         if characterKey and Sanctuary.whitelistSources[characterKey] then
             overridden = Sanctuary.whitelistSources[characterKey]
             overriddenDetail = Sanctuary.whitelistLabels[characterKey]
+            -- Same namesake trap as in `classifyName`, on the other half of the
+            -- tester's answer: "blocked, even though ..." has to name the account
+            -- of the person being blocked, not whichever namesake was read first.
+            if overridden == "bnet" then
+                local account = bnetAccountForCharacter(name)
+                if account then overriddenDetail = account end
+            end
         elseif accountKey and Sanctuary.bnetWhitelistSources[accountKey] then
             overridden = Sanctuary.bnetWhitelistSources[accountKey]
             overriddenDetail = Sanctuary.bnetWhitelistLabels[accountKey] or name

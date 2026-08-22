@@ -3191,6 +3191,49 @@ for _, order in ipairs({ { "Ysondre", "Hyjal" }, { "Hyjal", "Ysondre" } }) do
     ns.removeBlocked(ns.normalizeBlockedKey("Twin One#1111"))
 end
 
+-- C9c -- the same two namesakes, except the blocked one is on the player's OWN
+-- realm. PARTY_INVITE_REQUEST, DUEL_REQUESTED and TRADE_SHOW hand over a name
+-- with no realm on it when the other player shares ours, so the bare key is the
+-- one those events need -- and the bare key is exactly what a collision between
+-- two friends neutralises. The blocked contact walked straight in under his bare
+-- name, for as long as some other Battle.net friend happened to be logged on a
+-- namesake elsewhere. Played in both roster orders AND with either account
+-- blocked: the hole was a coincidence, so nothing may depend on which side of it
+-- we are standing.
+for _, blockedAccount in ipairs({ "Twin One#1111", "Twin Two#2222" }) do
+    local allowedAccount = (blockedAccount == "Twin One#1111")
+        and "Twin Two#2222" or "Twin One#1111"
+    for _, homeFirst in ipairs({ true, false }) do
+        resetModelState()
+        local home = { accountName = blockedAccount, bnetAccountID = 96,
+            gameAccountInfo = { characterName = "Twin", realmName = "TestRealm" } }
+        local away = { accountName = allowedAccount, bnetAccountID = 97,
+            gameAccountInfo = { characterName = "Twin", realmName = "Hyjal" } }
+        bnetFriends = homeFirst and { home, away } or { away, home }
+        SanctuaryDB.filters.scope = "blockedOnly"
+        ns.addBlocked(blockedAccount)
+        ns.invalidateWhitelist()
+
+        local blocked, reason = ns.getCharacterDecision("Twin")
+        equal(blocked, true,
+            "a bare name from a same-realm invitation still finds the blocked namesake")
+        equal(reason, "blocked_name",
+            "and is refused as a blocked name, not let through as a friend")
+        equal(select(1, ns.getCharacterDecision("Twin-TestRealm")), true,
+            "the same person spelled with his realm is blocked as well")
+        equal(select(1, ns.getCharacterDecision("Twin-Hyjal")), false,
+            "while the namesake on the other realm keeps the native behaviour")
+        equal(ns.classifyName("Twin-Hyjal").verdict, "always_allowed",
+            "'Test a name' still answers always allowed for the friend")
+        equal(ns.classifyName("Twin-Hyjal").detail, allowedAccount,
+            "and credits him to his own account, never to the one just blocked")
+        equal(ns.describeAccessDecision("Twin").overriddenDetail, blockedAccount,
+            "and the account named alongside the block is the one being blocked")
+
+        ns.removeBlocked(ns.normalizeBlockedKey(blockedAccount))
+    end
+end
+
 -- C10 -- the eight answers of the board, through classifyName.
 resetModelState()
 guildMembers = { "Guildy-TestRealm" }
