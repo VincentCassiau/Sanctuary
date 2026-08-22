@@ -46,9 +46,9 @@ ns.COLOR_HIGHLIGHT = COLOR_HIGHLIGHT
 
 local ACCOUNT_DEFAULTS = {
     -- Bumped to 2 by the 0.4.0 model (scope/preset switches, always-blocked
-    -- list). A settings file still carrying schema 1 is not migrated: it is
-    -- rebuilt from these defaults, keeping only the three lists the person typed
-    -- by hand. See handlers.ADDON_LOADED.
+    -- list). A settings file still carrying schema 1 is not migrated and not
+    -- partly kept: it is rebuilt from these defaults, lists included. See
+    -- handlers.ADDON_LOADED.
     schemaVersion = 2,
 
     filters = {
@@ -497,8 +497,11 @@ local function normalizeName(name)
     if not name then return nil end
     -- WoW character names never contain spaces.
     name = name:gsub("%s", ""):lower()
-    -- Compatibility note: existing SavedVariables use name-only keys. Keep that
-    -- behaviour in 0.3.2; realm-aware migration needs a dedicated release.
+    -- The allowed side stays realm-less on purpose, unlike the blocked list.
+    -- Dropping the realm here can only allow somebody by mistake, never block
+    -- somebody by mistake -- and of the two, only the second one hurts. Rosters
+    -- also hand over bare names often enough that demanding a realm would lose
+    -- friends the add-on is meant to let through.
     local nameOnly = name:match("^([^-]+)-") or name
     return nameOnly
 end
@@ -5618,7 +5621,11 @@ local frame = CreateFrame("Frame")
 -- every combination, and every one of those translations would be a guess about
 -- what the person meant. The settings go back to the defaults instead.
 --
--- What is kept is what cannot be reconstructed: the three lists typed by hand.
+-- The lists go with them. Keeping them meant a conversion -- the blocked list
+-- is keyed by realm in 0.4.0 and was not before -- and a conversion is another
+-- guess about what someone meant, written once and lived with forever. There is
+-- one user today, she is told, and she types her lists again once.
+--
 -- Idempotent by construction -- the rebuilt file carries schemaVersion 2, so a
 -- second load falls straight through to fillMissingDefaults.
 --
@@ -5631,39 +5638,25 @@ local frame = CreateFrame("Frame")
 -- right-click on the minimap button is the ordinary way to get one) would
 -- survive and leave Sanctuary silently off on that character.
 local function resetAccountToSchemaV2()
-    local carriedAccountWhitelist = SanctuaryDB and SanctuaryDB.manualWhitelist
-    local carriedKeywords = SanctuaryDB and SanctuaryDB.keywords
-    -- Not a setting, and that is exactly why it travels: this flag is the only
-    -- record `releaseStaleProtectedPopupSoundMute` can read to lift a
-    -- MuteSoundFile left behind by the previous session. A mute survives
-    -- /reload and relogging -- only a full client restart clears it -- and the
-    -- first load of 0.4.0 always goes through this reset. Dropped here, the
-    -- game's generic panel sounds stay off with no way out in game.
+    -- Not a setting, and that is the whole reason it is the one thing that
+    -- travels: this flag is the only record `releaseStaleProtectedPopupSoundMute`
+    -- can read to lift a MuteSoundFile left behind by the previous session. A
+    -- mute survives /reload and relogging -- only a full client restart clears
+    -- it -- and the first load of 0.4.0 always goes through this reset. Dropped
+    -- here, the game's generic panel sounds stay off with no way out in game,
+    -- which is a broken client, not a forgotten preference.
     local carriedPopupSoundMuted = SanctuaryDB and SanctuaryDB.protectedPopupSoundMuted
 
     SanctuaryDB = deepCopy(ACCOUNT_DEFAULTS)
 
-    if type(carriedAccountWhitelist) == "table" then
-        SanctuaryDB.manualWhitelist = carriedAccountWhitelist
-    end
-    if type(carriedKeywords) == "table" then
-        SanctuaryDB.keywords = carriedKeywords
-    end
     if carriedPopupSoundMuted then
         SanctuaryDB.protectedPopupSoundMuted = true
     end
-    -- The always-blocked list did not exist before 0.4.0; it starts empty.
     invalidateWhitelist()
 end
 
 local function resetCharacterToSchemaV2()
-    local carriedCharWhitelist = SanctuaryCharDB and SanctuaryCharDB.manualWhitelist
-
     SanctuaryCharDB = deepCopy(CHARACTER_DEFAULTS)
-
-    if type(carriedCharWhitelist) == "table" then
-        SanctuaryCharDB.manualWhitelist = carriedCharWhitelist
-    end
     invalidateWhitelist()
 end
 

@@ -3395,16 +3395,16 @@ equal(#chatMessages, 1, "and one more block produces one again")
 SanctuaryDB.notifications.mode = "silent"
 
 -- C15 -- the schema reset.
-local carriedWhitelist = { oldfriend = { displayName = "Oldfriend", addedAt = 42 } }
-local carriedKeywords = { "oldpattern" }
+local oldWhitelist = { oldfriend = { displayName = "Oldfriend", addedAt = 42 } }
+local oldKeywords = { "oldpattern" }
 SanctuaryDB = {
     schemaVersion = 1,
     filters = { groupInvite = false, whisper = false, say = true, channelMode = "all",
         autoTrust = true, strictGroupInviteSystemMessages = true },
     notifications = { mode = "verbose", minimalIntervalMinutes = 5 },
     logging = { enabled = false, maxEntries = 250, rotation = "deleteOldest" },
-    manualWhitelist = carriedWhitelist,
-    keywords = carriedKeywords,
+    manualWhitelist = oldWhitelist,
+    keywords = oldKeywords,
     log = { { type = "whisper", name = "Someone" } },
     uiSize = { 620, 480 },
     uiPosition = { point = "TOP", x = 5, y = 5 },
@@ -3427,11 +3427,13 @@ equal(SanctuaryDB.logging.maxEntries, 5000, "the retention limit goes back to it
 equal(SanctuaryDB.debugEnabled, false, "and debug mode is off again")
 equal(SanctuaryDB.uiSettings.showMessageColumn, false,
     "the text of blocked messages is not displayed until it is asked for")
-equal(SanctuaryDB.manualWhitelist, carriedWhitelist, "the names added by hand are kept")
-equal(SanctuaryDB.manualWhitelist.oldfriend.addedAt, 42, "with their dates")
-equal(SanctuaryDB.keywords, carriedKeywords, "the patterns are kept")
-equal(SanctuaryCharDB.manualWhitelist.charfriend ~= nil, true,
-    "and the per-character list too")
+-- The lists go back to empty with the settings. Keeping them meant converting
+-- them -- the blocked list is keyed by realm in 0.4.0 and was not before -- and
+-- a conversion is one more guess about what someone meant. She is told, and she
+-- types them again once.
+equal(next(SanctuaryDB.manualWhitelist), nil, "the names added by hand go too")
+equal(#SanctuaryDB.keywords, 0, "and the patterns")
+equal(next(SanctuaryCharDB.manualWhitelist), nil, "and the per-character list")
 equal(next(SanctuaryDB.blockedNames), nil, "the blocked list starts empty")
 -- Idempotent: the rebuilt file already carries schema 2, so a second load falls
 -- straight through.
@@ -3466,7 +3468,7 @@ equal(SanctuaryCharDB.schemaVersion, 2, "a second character's v1 file is reset o
 equal(SanctuaryCharDB.overrides.enabled, nil, "the override that switched Sanctuary off is gone")
 equal(next(SanctuaryCharDB.overrides.filters), nil, "and so are the per-character filter overrides")
 equal(next(SanctuaryCharDB.groupTracker), nil, "the group tracker starts empty")
-check(SanctuaryCharDB.manualWhitelist.secondchar ~= nil, "its own list of names is kept")
+equal(next(SanctuaryCharDB.manualWhitelist), nil, "its own list of names goes with them")
 equal(ns.isEnabled(), true, "and Sanctuary is on for that character")
 equal(SanctuaryDB.schemaVersion, 2, "the account file, already stamped, is left alone")
 
