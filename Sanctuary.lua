@@ -1473,9 +1473,13 @@ function ns.addAllowed(name, source)
         return false, key, SanctuaryDB.manualWhitelist[key]
     end
     local data = {
+        -- "menu" travels here exactly as it does through `addBlocked`. The chip
+        -- tooltip states where a name came from, and a name added from a right
+        -- click is not a name somebody typed: dropping the origin made the
+        -- tooltip claim a hand entry that never happened.
         displayName = clean,
         addedAt = time(),
-        source = source == "trust" and "trust" or nil,
+        source = (source == "trust" or source == "menu") and source or nil,
     }
     SanctuaryDB.manualWhitelist[key] = data
     invalidateWhitelist()

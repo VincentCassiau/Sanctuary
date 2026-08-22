@@ -245,7 +245,10 @@ end
 
 -- Input with a grey hint. The hint is a separate FontString rather than
 -- pre-filled text: pre-filled text gets submitted by someone who does not read.
-local function newInput(parent, name, width, hintText, onEnter)
+-- `keepText`: this box carries a setting rather than feeding a list. A list box
+-- clears on Enter, ready for the next name; a setting box must keep showing the
+-- value, which `onEnter` has just written and redrawn.
+local function newInput(parent, name, width, hintText, onEnter, keepText)
     local box = CreateFrame("EditBox", name, parent, "BackdropTemplate")
     box:SetSize(width or 220, 24)
     box:SetAutoFocus(false)
@@ -266,7 +269,7 @@ local function newInput(parent, name, width, hintText, onEnter)
     if onEnter then
         box:SetScript("OnEnterPressed", function(self)
             onEnter(self:GetText())
-            self:SetText("")
+            if not keepText then self:SetText("") end
             self:RefreshHint()
         end)
     end
@@ -1000,11 +1003,18 @@ local function buildAdvancedTab(parent)
     -- clamped and shown clamped, so nobody leaves thinking they set 50.
     advanced.maxInput = newInput(parent, "SanctuaryMaxEntriesInput", 90, "", function(text)
         local value = tonumber(text)
-        if not value then return end
-        value = math.floor(math.max(100, math.min(20000, value)))
-        SanctuaryDB.logging.maxEntries = value
+        if value then
+            SanctuaryDB.logging.maxEntries =
+                math.floor(math.max(100, math.min(20000, value)))
+        end
+        -- Rewritten from what is stored, whether the number was taken or
+        -- refused. The field reports a setting: left empty it reads as "no
+        -- limit", and left holding a refused number it reports a limit nobody
+        -- saved.
+        advanced.maxInput:SetText(tostring(SanctuaryDB.logging.maxEntries or 5000))
+        advanced.maxInput:RefreshHint()
         if ns.refreshUI then ns.refreshUI() end
-    end)
+    end, true)
     advanced.maxInput:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + 130, y + 4)
     advanced.maxUnit = newLabel(parent, L["ADV_ENTRIES"], FONT_BODY, C.dim)
     advanced.maxUnit:SetPoint("LEFT", advanced.maxInput, "RIGHT", 8, 0)
@@ -1315,6 +1325,23 @@ local function allowedSignature()
         parts[#parts + 1] = key
     end
     table.sort(parts)
+
+    -- The automatic groups go in by identity, not by headcount. A guild member
+    -- replaced at constant strength, or a Battle.net friend who logs in and
+    -- changes the character half of his line, moves nothing the totals can see,
+    -- so a signature built on counts alone leaves the panel showing a roster
+    -- that no longer exists. Reading the very groups the panel draws is what
+    -- keeps them in step.
+    local auto = {}
+    for _, group in ipairs(ns.getAutoWhitelistGroups()) do
+        auto[#auto + 1] = group.source .. ":" .. group.total
+        for _, entry in ipairs(group.entries) do
+            auto[#auto + 1] = entry.character and (entry.key .. "/" .. entry.character)
+                or entry.key
+        end
+    end
+    parts[#parts + 1] = table.concat(auto, ",")
+
     local counts = ns.getListCounts()
     return table.concat(parts, ",") .. "|" .. counts.allowed.total .. "|"
         .. tostring(panels.allowedExpanded and next(panels.allowedExpanded) and
@@ -2189,6 +2216,20 @@ local function positionMinimapButton()
         math.cos(angle) * radius, math.sin(angle) * radius)
 end
 
+-- Where the cursor is, in minimap terms, written and applied at once. Called on
+-- every frame while the button is dragged and once more at the release: the
+-- button has to follow the cursor around the ring, not sit still and jump when
+-- the mouse is let go.
+local function dragMinimapButton()
+    if not minimapButton or not SanctuaryDB or not Minimap then return end
+    local cx, cy = Minimap:GetCenter()
+    local px, py = GetCursorPosition()
+    local scale = UIParent:GetEffectiveScale() or 1
+    if not (cx and cy and px and py) or scale == 0 then return end
+    SanctuaryDB.minimap.angle = ns.minimapAngleFromPosition(cx, cy, px / scale, py / scale)
+    positionMinimapButton()
+end
+
 function ns.RefreshMinimapButton()
     if not minimapButton or not SanctuaryDB then return end
     if SanctuaryDB.minimap.hide then
@@ -2237,16 +2278,14 @@ local function createMinimapButton()
         btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         btn:RegisterForDrag("LeftButton")
         btn:SetMovable(true)
-        btn:SetScript("OnDragStart", function(self) self.dragging = true end)
+        btn:SetScript("OnDragStart", function(self)
+            self.dragging = true
+            self:SetScript("OnUpdate", dragMinimapButton)
+        end)
         btn:SetScript("OnDragStop", function(self)
             self.dragging = false
-            local cx, cy = Minimap:GetCenter()
-            local px, py = GetCursorPosition()
-            local scale = UIParent:GetEffectiveScale() or 1
-            if cx and cy and px and py then
-                SanctuaryDB.minimap.angle = ns.minimapAngleFromPosition(cx, cy, px / scale, py / scale)
-                positionMinimapButton()
-            end
+            self:SetScript("OnUpdate", nil)
+            dragMinimapButton()
         end)
         btn:SetScript("OnClick", function(self, button)
             if button == "RightButton" then

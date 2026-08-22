@@ -4341,6 +4341,41 @@ check(panelRowTexts(allowedPanel):find("Newcomer-TestRealm", 1, true) ~= nil,
 equal(_G.SanctuaryAllowedAddInput:GetText(), "Halftyped",
     "and the text being typed is never touched")
 
+-- A change that moves no count at all still has to reach the panel. The
+-- signature carried the manual keys and the totals only, so a guild member
+-- replaced at constant strength -- or a friend who logs in and gives his line
+-- its character half -- left the tick nothing to compare, and the panel went on
+-- showing a roster that no longer existed.
+do
+    local countsBefore = ns.getListCounts().allowed
+    guildMembers = { "Guildmate-TestRealm", "Officer-TestRealm", "Replacement-TestRealm" }
+    fire("GUILD_ROSTER_UPDATE")
+    equal(ns.getListCounts().allowed.guild, countsBefore.guild,
+        "the guild is the same strength as before")
+    runTickers()
+    local shown = panelRowTexts(allowedPanel)
+    check(shown:find("Replacement-TestRealm", 1, true) ~= nil,
+        "a guild member replaced at constant strength appears on the tick")
+    check(shown:find("Newcomer-TestRealm", 1, true) == nil,
+        "and the one he replaced is gone from the list")
+
+    -- Same again on the Battle.net side: the account was already listed, so no
+    -- count moves; only the character half of the line is new.
+    check(shown:find(string.format(ns.L["WL_BNET_OFFLINE"], "OfflineFriend#5678"), 1, true) ~= nil,
+        "the second friend is still listed as offline")
+    bnetFriends[2].gameAccountInfo = { characterName = "Offchar", realmName = "Hyjal" }
+    fire("BN_FRIEND_INFO_CHANGED")
+    equal(ns.getListCounts().allowed.bnet, countsBefore.bnet,
+        "a friend logging in adds no account to the count")
+    runTickers()
+    shown = panelRowTexts(allowedPanel)
+    check(shown:find(string.format(ns.L["WL_BNET_ROW"], "Offchar", "OfflineFriend#5678"), 1, true) ~= nil,
+        "yet the tick shows the character he just logged in on")
+    bnetFriends[2].gameAccountInfo = nil
+    fire("BN_FRIEND_INFO_CHANGED")
+    runTickers()
+end
+
 -- A redraw only happens when the model changed: the signature is what the tick
 -- compares, so a quiet tick does not repaint under the cursor.
 local repaints = 0
@@ -4529,6 +4564,23 @@ _G.SanctuaryMaxEntriesInput:SetText("5000")
 _G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesInput)
 equal(SanctuaryDB.logging.maxEntries, 5000, "a value in range is taken as typed")
 
+-- This field carries a setting, so it keeps showing it. Clearing on Enter the
+-- way the "add a name" fields do left the box blank right after a value was
+-- saved -- which reads as "no limit".
+equal(_G.SanctuaryMaxEntriesInput:GetText(), "5000",
+    "and the field still shows it after Enter instead of going blank")
+_G.SanctuaryMaxEntriesInput:SetText("50")
+_G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesInput)
+equal(_G.SanctuaryMaxEntriesInput:GetText(), "100",
+    "a clamped value is shown clamped, not as it was typed")
+_G.SanctuaryMaxEntriesInput:SetText("not a number")
+_G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesInput)
+equal(SanctuaryDB.logging.maxEntries, 100, "text that is not a number changes nothing")
+equal(_G.SanctuaryMaxEntriesInput:GetText(), "100",
+    "and the field goes back to the value that is stored")
+_G.SanctuaryMaxEntriesInput:SetText("5000")
+_G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesInput)
+
 -- ---------------------------------------------------------------------------
 -- The minimap button
 -- ---------------------------------------------------------------------------
@@ -4547,6 +4599,31 @@ equal(math.floor(ns.minimapAngleFromPosition(0, 0, 0, 10) + 0.5), 90, "due north
 equal(math.floor(ns.minimapAngleFromPosition(0, 0, -10, 0) + 0.5), 180, "due west is 180")
 minimapButton:GetScript("OnDragStop")(minimapButton)
 equal(math.floor(SanctuaryDB.minimap.angle + 0.5), 0, "dragging writes the angle it computes")
+
+-- The session protocol asks the tester to watch the button follow the cursor
+-- around the minimap. It only did so at the release: the drag posted a flag
+-- nothing read. The angle now moves while the mouse is still down.
+do
+    local function frame()
+        local onUpdate = minimapButton:GetScript("OnUpdate")
+        if onUpdate then onUpdate(minimapButton, 0.016) end
+    end
+    GetCursorPosition = function() return 100, 180 end
+    minimapButton:GetScript("OnDragStart")(minimapButton)
+    check(minimapButton:GetScript("OnUpdate") ~= nil, "a drag installs the follow")
+    frame()
+    equal(math.floor(SanctuaryDB.minimap.angle + 0.5), 90,
+        "and the button moves to the cursor while the mouse is still down")
+    GetCursorPosition = function() return 20, 100 end
+    frame()
+    equal(math.floor(SanctuaryDB.minimap.angle + 0.5), 180,
+        "it keeps following, frame by frame")
+    minimapButton:GetScript("OnDragStop")(minimapButton)
+    equal(minimapButton:GetScript("OnUpdate"), nil, "and the release takes the follow back off")
+    equal(math.floor(SanctuaryDB.minimap.angle + 0.5), 180,
+        "leaving it where the cursor let go")
+    GetCursorPosition = function() return 180, 100 end
+end
 
 local togglesBefore = ns.isEnabled()
 minimapButton:GetScript("OnClick")(minimapButton, "RightButton")
@@ -4592,6 +4669,33 @@ equal(SanctuaryDB.blockedNames["bareprobe"], nil, "and it removes the key that w
 equal(SanctuaryDB.blockedNames["bareprobe-ysondre"], nil, "having written no second key")
 check(ns.classifyName("Bareprobe-Ysondre").verdict ~= "always_blocked",
     "so one click really does stop blocking him")
+
+-- Where a name came from survives the allowed list too. `addBlocked` kept
+-- "menu"; `addAllowed` dropped it, so the chip tooltip of a name added by right
+-- click claimed it had been typed in by hand.
+do
+    menuEntries = ns.buildPlayerMenuEntries({ name = "Menuprobe", server = "Ysondre" })
+    check(menuEntries[1].text:find(ns.L["MENU_ALLOW"], 1, true) ~= nil, "the first entry allows")
+    menuEntries[1].action()
+    local menuKey = ns.normalizeName("Menuprobe-Ysondre")
+    check(SanctuaryDB.manualWhitelist[menuKey] ~= nil, "the click writes the allowed list")
+    equal(SanctuaryDB.manualWhitelist[menuKey].source, "menu",
+        "recording that the right-click menu added it")
+    ns.addAllowed("Handtyped")
+    equal(SanctuaryDB.manualWhitelist.handtyped.source, nil,
+        "while a name with no stated origin stays a plain hand entry")
+    ns.addAllowed("Menutwo", "menu")
+    equal(SanctuaryDB.manualWhitelist.menutwo.source, "menu",
+        "and the origin travels on the direct call")
+    -- Still counted among the names she added: she did add it, with two clicks
+    -- instead of by typing. Only the automatic trust entries stand apart.
+    local before = ns.getListCounts().allowed.manual
+    ns.removeAllowed("menutwo")
+    equal(ns.getListCounts().allowed.manual, before - 1,
+        "a name added from the menu counts as one she added, not as automatic trust")
+    ns.removeAllowed(menuKey)
+    ns.removeAllowed("handtyped")
+end
 
 equal(#ns.buildPlayerMenuEntries({ name = "Victim" }), 0, "the player themselves gets nothing")
 equal(#ns.buildPlayerMenuEntries({}), 0, "an unresolved identity gets nothing")

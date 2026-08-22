@@ -55,6 +55,22 @@ class ProtocolTests(unittest.TestCase):
         for step in qa_protocol.played_steps():
             self.assertIn(step["id"], plan)
 
+    def test_minimap_drag_expectation_matches_the_code(self):
+        """D.5 asks the tester to watch the button follow the cursor.
+
+        The code used to post a flag on OnDragStart that nothing read, so the
+        icon only jumped at the release: the protocol asked for something the
+        add-on did not do, and a session would have reported a false failure.
+        This ties the two together -- change either side and this test says so.
+        """
+        step = next(s for s in qa_protocol.STEPS if s["id"] == "D.5")
+        self.assertIn("suit le curseur", step["attendu"])
+        with open(os.path.join(REPO, "SanctuaryUI.lua"), encoding="utf-8") as handle:
+            source = handle.read()
+        drag_start = source.index('btn:SetScript("OnDragStart"')
+        drag_stop = source.index('btn:SetScript("OnDragStop"', drag_start)
+        self.assertIn('SetScript("OnUpdate", dragMinimapButton)', source[drag_start:drag_stop])
+
     def test_check_reports_a_broken_step(self):
         broken = dict(qa_protocol.STEPS[1])
         broken["titre"] = "  "
