@@ -4444,6 +4444,32 @@ check(reportText:find(ns.L["DEBUG_SUMMARY_FILE"], 1, true) == nil,
     "and drops the go-and-find-the-file note, since this window IS the transport")
 exportFrame:Hide()
 
+-- The copy window scrolls. Its scroll child was sized once at build time, like
+-- the diagnostics column, so the range measured zero: the wheel did nothing, the
+-- bar never appeared, and everything past the first screenful was unreachable --
+-- while step B.1 asks the tester to read the header "then the log after it", and
+-- D.6 the same of "Copy the log". Ctrl+A still copied it all; nobody could read
+-- it.
+-- Scoped: this file is one long function and Lua caps a function at 200 live
+-- locals, so a self-contained case declares its own inside a block.
+do
+    local exportScroll = _G.SanctuaryExportScroll
+    check(exportScroll ~= nil, "the copy window has a scroll of its own")
+    local longLines = {}
+    for i = 1, 200 do longLines[i] = "line " .. i end
+    ns.ShowTextWindow("long", table.concat(longLines, "\n"))
+    check((exportScroll.child:GetHeight() or 0) > (exportScroll:GetHeight() or 0),
+        "200 lines make the content taller than the window")
+    equal(exportScroll.bar:IsShown(), true, "so the bar says it scrolls")
+    equal(exportFrame.box:GetHeight(), exportScroll.child:GetHeight(),
+        "and the box that draws the lines is as tall as the child, so none are clipped")
+    ns.ShowTextWindow("short", "one line")
+    check((exportScroll.child:GetHeight() or 0) <= (exportScroll:GetHeight() or 0),
+        "a short text does not pretend to scroll")
+    equal(exportScroll.bar:IsShown(), false, "with no bar left over")
+end
+exportFrame:Hide()
+
 -- The journal size is clamped on write, so nobody leaves thinking they set 50.
 _G.SanctuaryMaxEntriesInput:SetText("50")
 _G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesInput)

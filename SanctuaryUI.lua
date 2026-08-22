@@ -1685,6 +1685,36 @@ end
 
 local exportFrame
 
+local EXPORT_LINE_HEIGHT = 14
+
+-- Same defect, and same fix, as the diagnostics result column: `newScroll`
+-- sizes its child once at build time, so a child left at its build height
+-- measures a scroll range of zero -- the wheel does nothing and the bar never
+-- appears. Everything past the first screen of a long report was unreachable,
+-- while the session asks the tester to read the header "then the log after it".
+-- The EditBox is sized too, not just the child: it is what actually draws the
+-- lines, and a box left at the height of the frame clips them.
+local function resizeExportBox()
+    if not exportFrame then return end
+    local scroll, box = exportFrame.scroll, exportFrame.box
+    if not scroll or not scroll.child or not box then return end
+
+    -- Two measures, the larger wins -- counting the lines needs no layout pass,
+    -- GetStringHeight adds whatever the wrapping of a long line produced.
+    local content = box:GetText() or ""
+    local lines = 1
+    for _ in content:gmatch("\n") do lines = lines + 1 end
+    local measured = (box.GetStringHeight and box:GetStringHeight()) or 0
+    local height = math.max(1, math.max(lines * EXPORT_LINE_HEIGHT, measured))
+
+    box:SetHeight(height)
+    scroll.child:SetHeight(height)
+    -- A new report starts at the top, whatever the last one was scrolled to.
+    scroll.offset = 0
+    scroll:SetVerticalScroll(0)
+    scroll:RefreshBar()
+end
+
 function ns.ShowTextWindow(titleText, bodyText)
     if not exportFrame then
         exportFrame = CreateFrame("Frame", "SanctuaryExportFrame", UIParent, "BackdropTemplate")
@@ -1705,6 +1735,7 @@ function ns.ShowTextWindow(titleText, bodyText)
 
         local scroll = newScroll(exportFrame, "SanctuaryExportScroll", 520, 320)
         scroll:SetPoint("TOPLEFT", exportFrame, "TOPLEFT", 14, -52)
+        exportFrame.scroll = scroll
         local box = CreateFrame("EditBox", nil, scroll.child)
         box:SetMultiLine(true)
         box:SetFontObject("ChatFontNormal")
@@ -1736,6 +1767,7 @@ function ns.ShowTextWindow(titleText, bodyText)
             box:Insert(bodyText:sub(i, math.min(i + chunkSize - 1, #bodyText)))
         end
     end
+    resizeExportBox()
     box:SetCursorPosition(0)
     box:HighlightText()
     exportFrame:Show()
