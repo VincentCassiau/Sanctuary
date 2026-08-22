@@ -23,6 +23,9 @@ local L = ns.L
 -- "Moderne": the dark palette the add-on already used.
 local C = {
     panel      = { 0.051, 0.051, 0.102, 0.97 },
+    -- `.veil { background: rgba(0,0,0,.45) }` -- what the mock-up dims the screen
+    -- with while a side panel is open.
+    veil       = { 0.000, 0.000, 0.000, 0.45 },
     header     = { 0.078, 0.078, 0.149, 1.00 },
     border     = { 0.302, 0.302, 0.400, 0.85 },
     ink        = { 1.000, 1.000, 1.000, 1.00 },
@@ -51,6 +54,14 @@ local HEADER_HEIGHT = 40
 local TAB_HEIGHT = 22
 local PAD = 18
 local PANEL_WIDTH = 540
+-- The stacking order the modal panel needs, stated once. The content area nests
+-- a handful of frames deep and stays near the window's own level, so the veil
+-- clears it by a wide margin; the panel sits over the veil. Two things sit over
+-- the PANEL: the resize grip, which is window chrome and not a setting -- the
+-- close button is above the veil for the same reason, by being in the header --
+-- and the undo strip, whose only four callers are the panels themselves. Burying
+-- either under the veil would take away a control the panel needs.
+local LEVEL_VEIL, LEVEL_PANEL, LEVEL_OVER_PANEL = 180, 200, 220
 -- Room kept under the content for the tabs' own strip and the undo line, which
 -- are anchored to the bottom of the frame.
 local CONTENT_BOTTOM = 30
@@ -337,6 +348,16 @@ local function newScroll(parent, name, width, height)
         local range = (self.child:GetHeight() or 0) - (self:GetHeight() or 0)
         if range > 1 then self.bar:Show() else self.bar:Hide() end
     end
+
+    -- A viewport that follows its container. The width never moves -- nothing in
+    -- this window scrolls sideways -- so only the height is handed over, and the
+    -- track is resized with it rather than keeping the height it was born with.
+    function scroll:SetViewportHeight(newHeight)
+        local bounded = math.max(40, newHeight or height)
+        self:SetSize(width, bounded)
+        self.bar:SetHeight(bounded)
+        self:RefreshBar()
+    end
     return scroll
 end
 
@@ -366,6 +387,10 @@ end
 -- ============================================================================
 
 local mainFrame, contentFrame, contentScroll, stateButton, resizeGrip
+-- The sheet of nothing that makes the side panels modal: it covers the frame
+-- from the bottom of the header down and eats every click, so the screen behind
+-- an open panel can be read but not touched.
+local panelVeil
 local tabFrames, tabButtons = {}, {}
 local activeTab = "protection"
 local manualSize = nil
@@ -1296,11 +1321,38 @@ local function describeChipSource(data)
     return table.concat(parts, "\n")
 end
 
+-- What the panel keeps for its own heading, above and below the list.
+local PANEL_SCROLL_TOP, PANEL_SCROLL_BOTTOM = 44, 12
+
+-- The panels and their veil are as tall as the frame under its header, whatever
+-- the window currently measures. The anchors say so to the client, which follows
+-- the grip pixel by pixel; the explicit height says the same number out loud, so
+-- the list inside knows how much room it has been given -- and so a check can
+-- read it back without a screenshot.
+local function applyPanelViewport(frameHeight)
+    local height = math.max(120, (frameHeight or MIN_FRAME_HEIGHT) - HEADER_HEIGHT)
+    if panelVeil then panelVeil:SetSize(FRAME_WIDTH, height) end
+    for _, panel in pairs(panels) do
+        if type(panel) == "table" and panel.SetHeight then
+            panel:SetHeight(height)
+            if panel.scroll and panel.scroll.SetViewportHeight then
+                panel.scroll:SetViewportHeight(height - PANEL_SCROLL_TOP - PANEL_SCROLL_BOTTOM)
+            end
+        end
+    end
+end
+
 local function newPanelFrame(name, titleText)
     local panel = CreateFrame("Frame", name, mainFrame, "BackdropTemplate")
-    panel:SetSize(PANEL_WIDTH, 400)
+    panel:SetWidth(PANEL_WIDTH)
+    panel:SetHeight(MIN_FRAME_HEIGHT - HEADER_HEIGHT)
+    -- Two anchors, not a size: the panel runs from the bottom of the header to
+    -- the bottom of the frame. Anchored on the top corner alone it kept the 400
+    -- pixels it was built with, and the rest of the window stayed uncovered --
+    -- and clickable -- underneath it.
     panel:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", 0, -HEADER_HEIGHT)
-    panel:SetFrameLevel(200)
+    panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 0)
+    panel:SetFrameLevel(LEVEL_PANEL)
     applyBackdrop(panel, C.panel, C.border, 2)
     panel:Hide()
 
@@ -1311,8 +1363,9 @@ local function newPanelFrame(name, titleText)
     panel.count = newLabel(panel, "", FONT_DESC, C.accent)
     panel.count:SetPoint("LEFT", panel.title, "RIGHT", 10, 0)
 
-    panel.scroll = newScroll(panel, name .. "Scroll", PANEL_WIDTH - 24, 320)
-    panel.scroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 12, -44)
+    panel.scroll = newScroll(panel, name .. "Scroll", PANEL_WIDTH - 24,
+        MIN_FRAME_HEIGHT - HEADER_HEIGHT - PANEL_SCROLL_TOP - PANEL_SCROLL_BOTTOM)
+    panel.scroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 12, -PANEL_SCROLL_TOP)
     return panel
 end
 
@@ -1689,6 +1742,10 @@ function ns.OpenPanel(which)
     openPanel = which
     local panel = panels[which]
     if not panel then return end
+    -- The window may have been resized while no panel was open: take its height
+    -- now rather than trusting the one left over from the last opening.
+    applyPanelViewport(mainFrame:GetHeight())
+    if panelVeil then panelVeil:Show() end
     panel:Show()
     panel.signature = nil
     refreshOpenPanel(true)
@@ -1707,6 +1764,7 @@ function ns.ClosePanel()
     for _, panel in pairs(panels) do
         if type(panel) == "table" and panel.Hide then panel:Hide() end
     end
+    if panelVeil then panelVeil:Hide() end
     openPanel = nil
     releaseChips()
 end
@@ -1918,6 +1976,9 @@ local function applyViewport(frameHeight)
     local active = tabFrames[activeTab]
     if active then active:SetHeight(contentHeight) end
     contentScroll:RefreshBar()
+    -- The panels are not inside the content area, so nothing above resizes them:
+    -- they answer to the window itself, on the same pass.
+    applyPanelViewport(frameHeight)
 end
 
 local function applyHeight(height)
@@ -1945,6 +2006,12 @@ end
 
 local function selectTab(key)
     if not isTabVisible(tabDefByKey(key)) then return end
+    -- Changing screen closes the panel rather than being refused: the tab strip
+    -- hangs below the frame, so the veil cannot cover it, and of the two ways out
+    -- of that -- close, or ignore the click -- closing is the one that never
+    -- leaves a person clicking a live button that does nothing. A list of
+    -- allowed names floating over the Journal is a state the design never had.
+    ns.ClosePanel()
     activeTab = key
     for _, def in ipairs(TAB_DEFS) do
         local frame = tabFrames[def.key]
@@ -2085,6 +2152,22 @@ local function createMainFrame()
         applyViewport(self:GetHeight())
     end)
 
+    -- The veil takes the mouse and the wheel and does nothing with them. That is
+    -- the point: the Cards and Checks behind an open panel must not be settings a
+    -- person changes without seeing what they are doing.
+    panelVeil = CreateFrame("Frame", "SanctuaryPanelVeil", mainFrame, "BackdropTemplate")
+    panelVeil:SetSize(FRAME_WIDTH, MIN_FRAME_HEIGHT - HEADER_HEIGHT)
+    panelVeil:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -HEADER_HEIGHT)
+    panelVeil:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 0)
+    panelVeil:SetFrameLevel(LEVEL_VEIL)
+    applyBackdrop(panelVeil, C.veil, nil)
+    panelVeil:EnableMouse(true)
+    panelVeil:EnableMouseWheel(true)
+    panelVeil:SetScript("OnMouseDown", function() end)
+    panelVeil:SetScript("OnMouseUp", function() end)
+    panelVeil:SetScript("OnMouseWheel", function() end)
+    panelVeil:Hide()
+
     for _, def in ipairs(TAB_DEFS) do
         local frame = CreateFrame("Frame", "SanctuaryTabContent_" .. def.key, contentFrame)
         frame:SetSize(FRAME_WIDTH, MIN_HEIGHT)
@@ -2108,6 +2191,7 @@ local function createMainFrame()
     undoLine = CreateFrame("Frame", "SanctuaryUndoLine", mainFrame, "BackdropTemplate")
     undoLine:SetSize(FRAME_WIDTH - PAD * 2, 22)
     undoLine:SetPoint("BOTTOMLEFT", mainFrame, "BOTTOMLEFT", PAD, 6)
+    undoLine:SetFrameLevel(LEVEL_OVER_PANEL)
     applyBackdrop(undoLine, C.tile, C.border)
     undoLine.label = newLabel(undoLine, "", FONT_BODY, C.soft)
     undoLine.label:SetPoint("LEFT", undoLine, "LEFT", 8, 0)
@@ -2124,6 +2208,7 @@ local function createMainFrame()
     resizeGrip = CreateFrame("Button", "SanctuaryResizeGrip", mainFrame)
     resizeGrip:SetSize(16, 16)
     resizeGrip:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", -2, 2)
+    resizeGrip:SetFrameLevel(LEVEL_OVER_PANEL)
     resizeGrip:SetNormalTexture("Interface/ChatFrame/UI-ChatIM-SizeGrabber-Up")
     resizeGrip:SetHighlightTexture("Interface/ChatFrame/UI-ChatIM-SizeGrabber-Highlight")
     resizeGrip.lastClick = 0

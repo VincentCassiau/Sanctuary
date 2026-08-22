@@ -4475,6 +4475,68 @@ equal(ns.addPattern("SPSPAM"), false, "and a duplicate is a no-op")
 ns.ClosePanel()
 
 -- ---------------------------------------------------------------------------
+-- The panels are modal, and as tall as the window
+-- ---------------------------------------------------------------------------
+
+-- The brief asks for a right-hand panel with a veil behind it, and the mock-up
+-- draws it from the bottom of the title bar to the bottom of the frame. Built at
+-- a fixed 400 pixels with no veil at all, it left a band of the Protection
+-- screen uncovered underneath -- and Cards and Checks stay clickable, so those
+-- were settings changed blind, behind a panel.
+do
+    local veil = _G.SanctuaryPanelVeil
+    local allowedPanelFrame = _G.SanctuaryPanelAllowed
+    local blockedPanelFrame = _G.SanctuaryPanelBlocked
+    check(veil ~= nil, "the window carries a veil for its panels")
+    equal(veil:IsShown(), false, "which stays out of the way while no panel is open")
+    check(type(veil:GetScript("OnMouseDown")) == "function",
+        "and it swallows the clicks that would land on the screen behind it")
+    check(type(veil:GetScript("OnMouseWheel")) == "function", "and the wheel with them")
+
+    -- Both extremes of the window, reached through the stored size, which
+    -- `applyHeight` clamps to the bounds: the test asks for an absurd height at
+    -- either end and reads back whatever the window settled on, so it does not
+    -- have to know the two constants to prove the panel follows them.
+    local measured = {}
+    for _, asked in ipairs({ 1, 10000 }) do
+        SanctuaryDB.uiSize = { 780, asked }
+        ns.refreshUI()
+        ns.OpenPanel("allowed")
+        local frameHeight = mainFrame:GetHeight()
+        measured[#measured + 1] = frameHeight
+        local band = "at a window " .. tostring(frameHeight) .. " high"
+        equal(allowedPanelFrame:GetHeight(), frameHeight - 40,
+            "the panel runs from under the header to the bottom of the frame, " .. band)
+        equal(veil:GetHeight(), frameHeight - 40, "and the veil covers the same band, " .. band)
+        equal(veil:IsShown(), true, "the veil is up as long as the panel is, " .. band)
+        equal(allowedPanelFrame.scroll:GetHeight(), frameHeight - 40 - 44 - 12,
+            "and the list inside is given the room the panel gained, " .. band)
+    end
+    check(measured[1] ~= measured[2],
+        "and the two heights measured really were two different windows")
+
+    -- Resizing with a panel already open moves it too: the grip drives
+    -- `applyViewport` on every pixel of the drag, panels included.
+    SanctuaryDB.uiSize = { 780, 1 }
+    ns.refreshUI()
+    equal(allowedPanelFrame:GetHeight(), mainFrame:GetHeight() - 40,
+        "a window resized under an open panel takes the panel with it")
+
+    -- The tab strip hangs below the frame, where no veil can reach it. Clicking a
+    -- tab therefore closes the panel, rather than leaving a list of allowed names
+    -- floating over the Journal -- a state the design never had.
+    equal(allowedPanelFrame:IsShown(), true, "the panel is still open before the tab is clicked")
+    _G["SanctuaryTab_journal"]:Click()
+    equal(allowedPanelFrame:IsShown(), false, "clicking a tab closes the panel")
+    equal(blockedPanelFrame:IsShown(), false, "and leaves no other panel standing behind it")
+    equal(veil:IsShown(), false, "and takes the veil down with it")
+    equal(_G["SanctuaryTabContent_journal"]:IsShown(), true, "leaving the Journal alone on screen")
+
+    SanctuaryDB.uiSize = nil
+    _G["SanctuaryTab_protection"]:Click()
+end
+
+-- ---------------------------------------------------------------------------
 -- The header control
 -- ---------------------------------------------------------------------------
 
