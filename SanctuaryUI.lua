@@ -1455,6 +1455,11 @@ local function acquireAutoRow(parent, panel)
         row.label:SetPoint("LEFT", row, "LEFT", 0, 0)
     end
     row:SetParent(parent)
+    -- Rows are pooled and a hint row leaves a wrapping width behind it. Reset
+    -- both here, once, rather than at every call site: a header that inherited a
+    -- width would wrap its own name.
+    row:SetHeight(18)
+    row.label:SetWidth(0)
     row:Show()
     panel.autoRows[#panel.autoRows + 1] = row
     return row
@@ -1463,6 +1468,14 @@ end
 local AUTO_GROUP_LABELS = {
     bnet = "WL_SOURCE_BNET", friend = "WL_SOURCE_FRIEND",
     guild = "WL_SOURCE_GUILD", trust = "WL_SOURCE_TRUST",
+}
+
+-- One line under the group header, for the two groups whose rule is not obvious
+-- from their name: automatic trust has a condition, and Battle.net has a limit
+-- that has to be said where somebody would go looking to block one of them.
+local AUTO_GROUP_HINTS = {
+    trust = "WL_TRUST_HINT",
+    bnet = "WL_BNET_HINT",
 }
 
 local function refreshAllowedPanel(force)
@@ -1566,13 +1579,19 @@ local function refreshAllowedPanel(force)
         end)
         y = y - 20
 
-        if source == "trust" then
+        local hintKey = AUTO_GROUP_HINTS[source]
+        if hintKey then
             local hint = acquireAutoRow(child, panel)
             hint:ClearAllPoints()
             hint:SetPoint("TOPLEFT", child, "TOPLEFT", 16, y)
+            hint:SetHeight(34)
             hint.label:SetTextColor(unpack(C.dim))
-            hint.label:SetText(L["WL_TRUST_HINT"])
-            y = y - 20
+            -- Wrapped, and two lines of room for it: both hints are full
+            -- sentences and both ran past the right edge of the panel on one
+            -- line, in French first.
+            hint.label:SetWidth(PANEL_WIDTH - 76)
+            hint.label:SetText(L[hintKey])
+            y = y - 38
         end
 
         if expanded then
@@ -1632,6 +1651,13 @@ local function buildBlockedPanel()
     panel.desc:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0)
     panel.desc:SetWidth(PANEL_WIDTH - 40)
 
+    -- Said here, where somebody types a name in: the blocked list holds WoW
+    -- characters, and Battle.net is cut in Battle.net. Without the line the only
+    -- way to learn it is to add a friend's account and watch nothing happen.
+    panel.bnetNote = newLabel(child, L["PANEL_BLOCKED_BNET"], FONT_BODY, C.dim)
+    panel.bnetNote:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -32)
+    panel.bnetNote:SetWidth(PANEL_WIDTH - 40)
+
     panel.namesSection = newSection(child, L["PANEL_BLOCKED_NAMES"], nil, PANEL_WIDTH - 40)
     panel.nameInput = newInput(child, "SanctuaryBlockedAddInput", 250, L["PANEL_ADD_NAME_HINT"],
         function(text)
@@ -1672,7 +1698,8 @@ local function refreshBlockedPanel(force)
     local counts = ns.getListCounts()
     panel.count:SetText(tostring(counts.blocked.total))
 
-    local y = -40
+    -- -40 before the Battle.net line was added under the description.
+    local y = -72
     panel.namesSection:ClearAllPoints()
     panel.namesSection:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
     panel.namesSection.count:SetText("(" .. tostring(counts.blocked.names) .. ")")

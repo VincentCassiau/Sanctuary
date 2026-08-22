@@ -65,6 +65,8 @@ The addon maintains a whitelist from multiple sources. All sources are always ac
 
 **Suspect patterns override the whitelist.** If a player's name contains a suspect keyword, they are blocked even if they are in your guild or friends list.
 
+**Battle.net is never filtered by Sanctuary.** Your Battle.net friends are always allowed on Battle.net: neither the blocked list nor the suspect patterns apply to Battle.net whispers. Adding someone to Battle.net is an act of trust Sanctuary does not second-guess -- cutting a Battle.net contact off is done in Battle.net, by removing or blocking the account.
+
 ## Compatibility
 
 - **WoW version:** Retail (Midnight) -- Interface 120007
@@ -143,6 +145,8 @@ L'addon maintient une whitelist a partir de plusieurs sources. Toutes les source
 | Auto-trust (optionnel) | Apres 5 min en groupe |
 
 **Les patterns suspects priment sur la whitelist.** Si le pseudo d'un joueur contient un mot-cle suspect, il sera bloque meme s'il est dans votre guilde ou votre liste d'amis.
+
+**Sanctuary ne bloque jamais personne sur Battle.net.** Vos amis Battle.net sont toujours autorises sur Battle.net : ni la liste des bloques ni les patterns suspects ne s'appliquent aux chuchotements Battle.net. Ajouter quelqu'un sur Battle.net est un acte de confiance que Sanctuary ne remet pas en cause -- pour couper un contact Battle.net, retirez-le ou bloquez-le dans Battle.net.
 
 ### Compatibilite
 

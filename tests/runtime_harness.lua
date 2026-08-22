@@ -3106,132 +3106,107 @@ ChatFrame3 = nil
 
 end
 
--- C9 -- Battle.net, resolved both ways.
+-- C9 -- Battle.net is out of Sanctuary's reach. The blocked list and the
+-- patterns hold WoW characters and act on the WoW paths; the Battle.net channel
+-- follows the Battle.net roster and nothing else. Cutting a Battle.net friend is
+-- done in Battle.net.
 resetModelState()
 bnetFriends = {
     { accountName = "Real Friend#1234", bnetAccountID = 91,
-      gameAccountInfo = { characterName = "Bnetchar" } },
+      gameAccountInfo = { characterName = "Bnetchar", realmName = "Ysondre" } },
     { accountName = "Dash-Friend#5678", bnetAccountID = 92 },
 }
-SanctuaryDB.filters.whisper = false
+ns.invalidateWhitelist()
+
+-- The account is in the blocked list, and the whisper still arrives.
 ns.addBlocked("Real Friend#1234")
 ns.invalidateWhitelist()
-equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(91)), true,
-    "a blocked Battle.net account is discarded with the whisper filter unticked")
-equal(select(1, ns.getCharacterDecision("Bnetchar")), true,
-    "and their known character is blocked on the WoW paths too")
+equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(91)), false,
+    "a Battle.net friend whose account is in the blocked list still whispers")
 ns.removeBlocked(ns.normalizeBlockedKey("Real Friend#1234"))
 
-ns.addBlocked("Bnetchar")
+-- Same for a pattern: it never reaches the Battle.net channel either.
+SanctuaryDB.keywords = { "friend" }
 ns.invalidateWhitelist()
-equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(91)), true,
-    "blocking the character blocks the account's whispers as well")
-ns.removeBlocked(ns.normalizeBlockedKey("Bnetchar"))
+equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(91)), false,
+    "a pattern matching a Battle.net account name does not block the whisper")
+equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(92)), false,
+    "not even on an account name carrying a hyphen")
+SanctuaryDB.keywords = {}
+ns.invalidateWhitelist()
 
--- The right-click menu writes "Name-Realm" into the blocked list, and
--- `isBlockedName` only ever falls back from the full key to the bare one, never
--- the other way round. So the character has to be recorded with its realm, or
--- the very key the menu produces is the one key nothing matches.
-bnetFriends[#bnetFriends + 1] = { accountName = "Realm Friend#4321", bnetAccountID = 93,
-    gameAccountInfo = { characterName = "Bnetrealmchar", realmName = "Ysondre" } }
-ns.addBlocked("Bnetrealmchar-Ysondre", "menu")
+-- Blocking the CHARACTER a Battle.net friend plays is a different act, and it
+-- works: that character is blocked on the WoW paths (decision 29, the blocked
+-- list beats the friend lists) while the account keeps whispering.
+ns.addBlocked("Bnetchar-Ysondre", "menu")
 ns.invalidateWhitelist()
-equal(select(1, ns.getCharacterDecision("Bnetrealmchar-Ysondre")), true,
-    "the menu's key blocks the character on the WoW paths")
-equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(93)), true,
-    "and the account's Battle.net whispers with it, filter unticked")
-equal(ns.classifyName("Realm Friend#4321").verdict, "always_blocked",
-    "and 'Test a name' answers always blocked rather than always allowed")
-ns.removeBlocked(ns.normalizeBlockedKey("Bnetrealmchar-Ysondre"))
--- Blocking that same account still reaches the character it plays.
-ns.addBlocked("Realm Friend#4321")
-ns.invalidateWhitelist()
-equal(select(1, ns.getCharacterDecision("Bnetrealmchar-Ysondre")), true,
-    "and the other direction still resolves with a realm in the way")
-ns.removeBlocked(ns.normalizeBlockedKey("Realm Friend#4321"))
+equal(select(1, ns.getCharacterDecision("Bnetchar-Ysondre")), true,
+    "the character of a Battle.net friend can be blocked on the WoW paths")
+equal(ns.classifyName("Bnetchar-Ysondre").verdict, "always_blocked",
+    "and 'Test a name' says so rather than crediting the friendship")
+equal(ns.describeAccessDecision("Bnetchar-Ysondre").overriddenDetail, "Real Friend#1234",
+    "naming the account the block overrides")
+equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(91)), false,
+    "while his Battle.net whispers keep arriving")
+ns.removeBlocked(ns.normalizeBlockedKey("Bnetchar-Ysondre"))
 
-ns.addBlocked("Dash-Friend#5678")
-ns.invalidateWhitelist()
-equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(92)), true,
-    "an account name carrying a hyphen is found")
--- The one gap, and it is stated in the release notes: an offline friend has no
--- known character, so there is nothing to resolve from.
-local offline = ns.classifyName("SomeCharacterOf5678")
-equal(offline.verdict, "unknown", "an offline friend's unknown character resolves to nothing")
-
--- C9b -- two Battle.net friends, two realms, one character name. Keyed on the
--- bare name alone, the second friend read overwrote the first and one account
--- answered for both: in one roster order the blocked account's character walked
--- straight through, in the other an allowed friend was blocked in his place.
--- Played in both orders, because the roster order is exactly what decided it.
-for _, order in ipairs({ { "Ysondre", "Hyjal" }, { "Hyjal", "Ysondre" } }) do
-    resetModelState()
-    local blockedFirst = order[1] == "Ysondre"
-    bnetFriends = {
-        { accountName = blockedFirst and "Twin One#1111" or "Twin Two#2222",
-          bnetAccountID = blockedFirst and 94 or 95,
-          gameAccountInfo = { characterName = "Twin", realmName = order[1] } },
-        { accountName = blockedFirst and "Twin Two#2222" or "Twin One#1111",
-          bnetAccountID = blockedFirst and 95 or 94,
-          gameAccountInfo = { characterName = "Twin", realmName = order[2] } },
-    }
-    -- "Everyone except the people I block": the mode where the blocked list is
-    -- the only thing standing between the two of them.
-    SanctuaryDB.filters.scope = "blockedOnly"
-    ns.addBlocked("Twin One#1111")
-    ns.invalidateWhitelist()
-    equal(select(1, ns.getCharacterDecision("Twin-Ysondre")), true,
-        "the blocked account's character is filtered, whichever friend was read first")
-    equal(select(1, ns.getCharacterDecision("Twin-Hyjal")), false,
-        "and his namesake on the other realm keeps the native behaviour")
-    equal(ns.classifyName("Twin-Ysondre").verdict, "always_blocked",
-        "so 'Test a name' names the blocked one for what he is")
-    equal(ns.classifyName("Twin-Hyjal").verdict, "always_allowed",
-        "and still answers always allowed for the friend")
-    ns.removeBlocked(ns.normalizeBlockedKey("Twin One#1111"))
+-- The account itself is answered as a Battle.net friend, and so is the character
+-- it plays -- with the account named as the reason.
+do
+    local verdict = ns.classifyName("Bnetchar-Ysondre")
+    equal(verdict.verdict, "always_allowed", "a friend's character is always allowed")
+    equal(verdict.list, "bnet", "as a Battle.net friend")
+    equal(verdict.detail, "Real Friend#1234", "credited to the account playing it")
 end
 
--- C9c -- the same two namesakes, except the blocked one is on the player's OWN
--- realm. PARTY_INVITE_REQUEST, DUEL_REQUESTED and TRADE_SHOW hand over a name
--- with no realm on it when the other player shares ours, so the bare key is the
--- one those events need -- and the bare key is exactly what a collision between
--- two friends neutralises. The blocked contact walked straight in under his bare
--- name, for as long as some other Battle.net friend happened to be logged on a
--- namesake elsewhere. Played in both roster orders AND with either account
--- blocked: the hole was a coincidence, so nothing may depend on which side of it
--- we are standing.
-for _, blockedAccount in ipairs({ "Twin One#1111", "Twin Two#2222" }) do
-    local allowedAccount = (blockedAccount == "Twin One#1111")
-        and "Twin Two#2222" or "Twin One#1111"
-    for _, homeFirst in ipairs({ true, false }) do
-        resetModelState()
-        local home = { accountName = blockedAccount, bnetAccountID = 96,
-            gameAccountInfo = { characterName = "Twin", realmName = "TestRealm" } }
-        local away = { accountName = allowedAccount, bnetAccountID = 97,
-            gameAccountInfo = { characterName = "Twin", realmName = "Hyjal" } }
-        bnetFriends = homeFirst and { home, away } or { away, home }
-        SanctuaryDB.filters.scope = "blockedOnly"
-        ns.addBlocked(blockedAccount)
-        ns.invalidateWhitelist()
+-- The way out, and the only one: the contact leaves the Battle.net roster.
+bnetFriends = {}
+ns.invalidateWhitelist()
+equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(91)), true,
+    "removed in Battle.net, the same whisper is filtered as a stranger's")
 
-        local blocked, reason = ns.getCharacterDecision("Twin")
-        equal(blocked, true,
-            "a bare name from a same-realm invitation still finds the blocked namesake")
-        equal(reason, "blocked_name",
-            "and is refused as a blocked name, not let through as a friend")
-        equal(select(1, ns.getCharacterDecision("Twin-TestRealm")), true,
-            "the same person spelled with his realm is blocked as well")
-        equal(select(1, ns.getCharacterDecision("Twin-Hyjal")), false,
-            "while the namesake on the other realm keeps the native behaviour")
-        equal(ns.classifyName("Twin-Hyjal").verdict, "always_allowed",
-            "'Test a name' still answers always allowed for the friend")
-        equal(ns.classifyName("Twin-Hyjal").detail, allowedAccount,
-            "and credits him to his own account, never to the one just blocked")
-        equal(ns.describeAccessDecision("Twin").overriddenDetail, blockedAccount,
-            "and the account named alongside the block is the one being blocked")
+-- The diagnostic reports what the filter does, not what the list says: no
+-- always-blocked verdict can appear on this channel.
+bnetFriends = {
+    { accountName = "Real Friend#1234", bnetAccountID = 91,
+      gameAccountInfo = { characterName = "Bnetchar", realmName = "Ysondre" } },
+}
+SanctuaryDB.keywords = { "friend" }
+ns.addBlocked("Real Friend#1234")
+ns.invalidateWhitelist()
+do
+    local diag = ns.simulateBNetWhisper("Real Friend#1234")
+    equal(diag.shouldBlock, false, "the Battle.net diagnostic passes the blocked-and-patterned friend")
+    equal(diag.reason, "bnet_whitelist", "for the one reason this channel knows")
+    equal(diag.keyword, nil, "and never names a pattern")
+end
+ns.removeBlocked(ns.normalizeBlockedKey("Real Friend#1234"))
+SanctuaryDB.keywords = {}
 
-        ns.removeBlocked(ns.normalizeBlockedKey(blockedAccount))
-    end
+-- C9b -- two Battle.net friends, two realms, one character name. Nothing is
+-- blocked here: what the namesakes decide is the ATTRIBUTION the tester prints.
+-- Keyed on the bare name alone, the second friend read overwrote the first and
+-- one account answered for both. Played in both roster orders, because the
+-- roster order is exactly what decided it.
+for _, order in ipairs({ { "Ysondre", "Hyjal" }, { "Hyjal", "Ysondre" } }) do
+    resetModelState()
+    local firstIsOne = order[1] == "Ysondre"
+    bnetFriends = {
+        { accountName = firstIsOne and "Twin One#1111" or "Twin Two#2222",
+          bnetAccountID = firstIsOne and 94 or 95,
+          gameAccountInfo = { characterName = "Twin", realmName = order[1] } },
+        { accountName = firstIsOne and "Twin Two#2222" or "Twin One#1111",
+          bnetAccountID = firstIsOne and 95 or 94,
+          gameAccountInfo = { characterName = "Twin", realmName = order[2] } },
+    }
+    ns.invalidateWhitelist()
+
+    local ysondre = ns.classifyName("Twin-Ysondre")
+    local hyjal = ns.classifyName("Twin-Hyjal")
+    equal(ysondre.verdict, "always_allowed", "both namesakes are always allowed")
+    equal(hyjal.verdict, "always_allowed", "whichever friend was read first")
+    equal(ysondre.detail, "Twin One#1111", "and each is credited to his own account")
+    equal(hyjal.detail, "Twin Two#2222", "never to the other one's")
 end
 
 -- C10 -- the eight answers of the board, through classifyName.
@@ -4260,6 +4235,10 @@ check(rendered:find("RealFriend#1234", 1, true) == nil,
     "the automatic groups stay folded, so the panel does not spill a friends list")
 check(rendered:find(ns.L["WL_GROUP_NOTE"], 1, true) ~= nil,
     "and the current group is a line, not a list")
+-- The Battle.net rule is on screen where somebody would look for a way to cut
+-- one of them off, folded group or not.
+check(rendered:find(ns.L["WL_BNET_HINT"], 1, true) ~= nil,
+    "the Battle.net group says Sanctuary never blocks on Battle.net")
 
 -- Unfolding shows "Character . Account" for a connected friend, and the account
 -- alone for one who is offline.
@@ -4453,6 +4432,8 @@ check(blockedPanel ~= nil and blockedPanel:IsShown(), "the blocked panel opens")
 check(panelRowTexts(blockedPanel):find("Xxxxxxx-Ysondre", 1, true) ~= nil,
     "it lists the blocked names")
 check(panelRowTexts(blockedPanel):find("test", 1, true) ~= nil, "and the patterns")
+check(panelRowTexts(blockedPanel):find(ns.L["PANEL_BLOCKED_BNET"], 1, true) ~= nil,
+    "and says a Battle.net friend cannot be blocked from here")
 
 _G.SanctuaryBlockedAddInput:SetText("Toto")
 check(ns.addBlocked("Toto"), "a name already in the allowed list can be blocked")

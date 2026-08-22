@@ -739,9 +739,12 @@ end
 -- rebuildWhitelist, further down.
 local ensureWhitelistCache
 
--- "Which Battle.net account is playing this character", asked in one place by
--- the two callers that need it: the always-blocked door, and the attribution the
--- panel prints. Three lookups, stopping at the first hit.
+-- "Which Battle.net account is playing this character". Attribution only: it
+-- names the account behind a character on screen -- the tester's answer and the
+-- allowed panel's line -- and decides nothing. Nothing in the blocked path calls
+-- it (see the Battle.net invariant next to `bnetWhisperFilter`).
+--
+-- Three lookups, stopping at the first hit:
 --
 --   1. the full "Name-Realm" key -- the only one that tells two namesakes apart;
 --   2. the bare name -- what the map holds for a friend whose realm was unknown,
@@ -754,8 +757,8 @@ local ensureWhitelistCache
 -- the other player shares the player's own -- that is the whole reason step 2
 -- exists. So a bare name is never ambiguous about its realm even when the bare
 -- KEY is: the realm is ours, we know it, and "Name-OurRealm" stays distinct.
--- Without this a blocked Battle.net contact walked in under his bare name for as
--- long as some other friend happened to be logged on a namesake elsewhere.
+-- Without it the tester credited a character to whichever namesake the roster
+-- happened to list first.
 local function bnetAccountForCharacter(name)
     local map = Sanctuary.bnetAccountByCharacter
     if not map then return nil end
@@ -783,10 +786,20 @@ local function bnetAccountForCharacter(name)
     return nil
 end
 
-local isAlwaysBlocked
-do
+-- The single gate every decision path asks first. It beats every trust source
+-- and every filter setting, in both scopes -- that is the whole point of the
+-- list.
+--
+-- It answers about WoW characters and nothing else. See the Battle.net
+-- invariant next to `bnetWhisperFilter`: the blocked list and the patterns never
+-- reach the Battle.net channel, and no account name is ever resolved into a
+-- character here or the other way round. A Battle.net friend whose character is
+-- typed into the blocked list is blocked on the WoW paths -- that is that
+-- character being blocked, not the account.
+local function isAlwaysBlocked(name)
+    if name == nil then return false, nil, nil end
+    if not hasAlwaysBlockedEntries() then return false, nil, nil end
 
-local function isAlwaysBlockedDirect(name)
     local blockedKey = isBlockedName(name)
     if blockedKey then
         local data = SanctuaryDB.blockedNames[blockedKey]
@@ -796,45 +809,6 @@ local function isAlwaysBlockedDirect(name)
     local matched, keyword = matchesKeyword(name)
     if matched then return true, "keyword", keyword end
     return false, nil, nil
-end
-
--- The single gate every decision path asks first. It beats every trust source
--- and every filter setting, in both scopes -- that is the whole point of the
--- list.
---
--- Battle.net resolves both ways. Sanctuary already knows which character each of
--- its Battle.net friends is playing, so blocking the account blocks the
--- character on the normal WoW paths, and blocking the character blocks the
--- account's whispers. The one gap, stated in the release notes: a friend who is
--- offline has no known character, so they have to be blocked by account.
-isAlwaysBlocked = function(name)
-    if name == nil then return false, nil, nil end
-    if not hasAlwaysBlockedEntries() then return false, nil, nil end
-
-    local blocked, reason, detail = isAlwaysBlockedDirect(name)
-    if blocked then return true, reason, detail end
-
-    if ensureWhitelistCache then ensureWhitelistCache() end
-
-    local accountKey = normalizeBNetName(name)
-    local character = accountKey and Sanctuary.bnetCharacterByAccount
-        and Sanctuary.bnetCharacterByAccount[accountKey]
-    if character then
-        blocked, reason, detail = isAlwaysBlockedDirect(character)
-        if blocked then return true, reason, detail end
-    end
-
-    -- One resolution rule, shared with the attribution the panel prints, so the
-    -- door and the label can never disagree about who is playing this character.
-    local account = bnetAccountForCharacter(name)
-    if account then
-        blocked, reason, detail = isAlwaysBlockedDirect(account)
-        if blocked then return true, reason, detail end
-    end
-
-    return false, nil, nil
-end
-
 end
 
 ns.normalizeBlockedKey = normalizeBlockedKey
@@ -2576,14 +2550,25 @@ local function whisperFilter(self, event, msg, sender, ...)
 end
 
 -- Battle.net whispers use account display names, not character names.
+--
+-- INVARIANT -- Sanctuary never blocks anyone on Battle.net. The always-blocked
+-- list and the patterns are deliberately absent from this path, and from every
+-- other Battle.net one. Adding a friend to Battle.net is an act of trust the
+-- person already performed, in a client Sanctuary does not own; cutting one is
+-- done there too, by removing or blocking the account. An add-on that silently
+-- swallowed a Battle.net friend's whisper would leave the person waiting for an
+-- answer that never comes, with nothing on screen to explain it -- and no way to
+-- undo it from Battle.net, where they would look first.
+--
+-- So the only question this filter asks is the whitelist one: is the account a
+-- Battle.net friend, or in the current group. The blocked list holds WoW
+-- characters, and reaches them on the WoW paths only.
 local function bnetWhisperFilter(self, event, msg, sender, ...)
     if not isEnabled() then return false end
+    if isFilterOn("whisper") ~= true then return false end
 
     local bnetSender = resolveBNetWhisperSender(sender, ...)
     local decisionName = bnetSender.accountName or sender
-    if isAlwaysBlocked(decisionName) then return true end
-    if isFilterOn("whisper") ~= true then return false end
-
     if isBNetWhitelisted(decisionName) then return false end
     if isBNetSenderInGroup and isBNetSenderInGroup(decisionName) then return false end
     return true
@@ -4559,9 +4544,11 @@ function handlers.CHAT_MSG_BN_WHISPER(msg, sender, ...)
 
     local bnetSender = resolveBNetWhisperSender(sender, ...)
     local decisionName = bnetSender.accountName or sender
-    local alwaysBlocked, alwaysReason, alwaysDetail = isAlwaysBlocked(decisionName)
     local filterEnabled = isFilterOn("whisper") == true
-    if not alwaysBlocked and not filterEnabled then
+    -- No always-blocked branch here, and none in the filter either: see the
+    -- Battle.net invariant next to `bnetWhisperFilter`. With the whisper filter
+    -- unticked this path decides nothing at all.
+    if not filterEnabled then
         debugLogChatDecision("bn_whisper", decisionName, msg, "PASS_FILTER_DISABLED", "filter_disabled", nil, {
             filterEnabled = false,
             rawSender = bnetSender.rawSenderText,
@@ -4576,11 +4563,7 @@ function handlers.CHAT_MSG_BN_WHISPER(msg, sender, ...)
     local detail = nil
     local bnetWhitelisted = isBNetWhitelisted(decisionName)
     local bnetGroup = false
-    if alwaysBlocked then
-        action = describeBlockAction(true, alwaysReason)
-        reason = alwaysReason
-        detail = alwaysDetail
-    elseif bnetWhitelisted then
+    if bnetWhitelisted then
         action = "ALLOW"
         reason = "bnet_whitelist"
     else
@@ -4792,9 +4775,10 @@ local function simulateBNetWhisper(sender, sourceLabel, bnSenderID)
     local rawSender = bnSenderID and "|Ksanctuary|k" or target
     local bnetSender = resolveBNetWhisperSender(rawSender, getBNetWhisperPayloadArgs(rawSender, bnSenderID))
     local decisionName = bnetSender.accountName or (bnSenderID and rawSender) or target
-    -- Through the same gate as the real path, so the simulation cannot report a
-    -- verdict the filter would not reach.
-    local keywordMatch, keywordReason, keyword = isAlwaysBlocked(decisionName)
+    -- No always-blocked probe here either: the Battle.net invariant next to
+    -- `bnetWhisperFilter` says the list and the patterns never reach this
+    -- channel, and a diagnostic that reported a verdict the filter cannot reach
+    -- would be the one place claiming otherwise.
     local filterEnabled = isEnabled() and isFilterOn("whisper") == true
     local bnetWhitelisted = isBNetWhitelisted(decisionName)
     local inGroup = isBNetSenderInGroup and isBNetSenderInGroup(decisionName) or false
@@ -4802,9 +4786,7 @@ local function simulateBNetWhisper(sender, sourceLabel, bnSenderID)
         getBNetWhisperPayloadArgs(rawSender, bnSenderID)) and true or false
     local reason = "not_whitelisted"
 
-    if keywordMatch then
-        reason = keywordReason
-    elseif not isEnabled() then
+    if not isEnabled() then
         reason = "addon_disabled"
     elseif not filterEnabled then
         reason = "filter_disabled"
@@ -4822,7 +4804,6 @@ local function simulateBNetWhisper(sender, sourceLabel, bnSenderID)
         filtered = filtered,
         shouldBlock = filtered,
         reason = reason,
-        keyword = keyword,
         filterEnabled = filterEnabled,
         bnetWhitelisted = bnetWhitelisted and true or false,
         inGroup = inGroup and true or false,
@@ -4834,7 +4815,6 @@ local function simulateBNetWhisper(sender, sourceLabel, bnSenderID)
         normalized = result.normalized or "nil",
         action = filtered and "BLOCK" or "ALLOW",
         reason = reason,
-        keyword = keyword or "none",
         filterEnabled = filterEnabled,
         bnetWhitelisted = result.bnetWhitelisted,
         inGroup = result.inGroup,
@@ -4951,10 +4931,8 @@ local function formatBNetSimulationResult(result)
 
     local action = result.filtered and "BLOCK" or "ALLOW"
     local chat = result.filtered and "blocked" or "visible"
+    -- No `:keyword` suffix: a pattern can never be the reason on this channel.
     local reason = result.reason or "unknown"
-    if result.keyword then
-        reason = reason .. ":" .. result.keyword
-    end
 
     return string.format(
         "Simulation bnet whisper: %s -> %s (%s) | filter=%s | bnet-cache=%s | id=%s | group=%s | chat=%s",
