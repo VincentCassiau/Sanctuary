@@ -3159,6 +3159,38 @@ equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPaylo
 local offline = ns.classifyName("SomeCharacterOf5678")
 equal(offline.verdict, "unknown", "an offline friend's unknown character resolves to nothing")
 
+-- C9b -- two Battle.net friends, two realms, one character name. Keyed on the
+-- bare name alone, the second friend read overwrote the first and one account
+-- answered for both: in one roster order the blocked account's character walked
+-- straight through, in the other an allowed friend was blocked in his place.
+-- Played in both orders, because the roster order is exactly what decided it.
+for _, order in ipairs({ { "Ysondre", "Hyjal" }, { "Hyjal", "Ysondre" } }) do
+    resetModelState()
+    local blockedFirst = order[1] == "Ysondre"
+    bnetFriends = {
+        { accountName = blockedFirst and "Twin One#1111" or "Twin Two#2222",
+          bnetAccountID = blockedFirst and 94 or 95,
+          gameAccountInfo = { characterName = "Twin", realmName = order[1] } },
+        { accountName = blockedFirst and "Twin Two#2222" or "Twin One#1111",
+          bnetAccountID = blockedFirst and 95 or 94,
+          gameAccountInfo = { characterName = "Twin", realmName = order[2] } },
+    }
+    -- "Everyone except the people I block": the mode where the blocked list is
+    -- the only thing standing between the two of them.
+    SanctuaryDB.filters.scope = "blockedOnly"
+    ns.addBlocked("Twin One#1111")
+    ns.invalidateWhitelist()
+    equal(select(1, ns.getCharacterDecision("Twin-Ysondre")), true,
+        "the blocked account's character is filtered, whichever friend was read first")
+    equal(select(1, ns.getCharacterDecision("Twin-Hyjal")), false,
+        "and his namesake on the other realm keeps the native behaviour")
+    equal(ns.classifyName("Twin-Ysondre").verdict, "always_blocked",
+        "so 'Test a name' names the blocked one for what he is")
+    equal(ns.classifyName("Twin-Hyjal").verdict, "always_allowed",
+        "and still answers always allowed for the friend")
+    ns.removeBlocked(ns.normalizeBlockedKey("Twin One#1111"))
+end
+
 -- C10 -- the eight answers of the board, through classifyName.
 resetModelState()
 guildMembers = { "Guildy-TestRealm" }

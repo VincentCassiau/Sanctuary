@@ -775,9 +775,20 @@ isAlwaysBlocked = function(name)
         if blocked then return true, reason, detail end
     end
 
-    local characterKey = normalizeName(name)
-    local account = characterKey and Sanctuary.bnetAccountByCharacter
-        and Sanctuary.bnetAccountByCharacter[characterKey]
+    -- The same two lookups as `isBlockedName`, in the same order and stopping at
+    -- the first hit: the full "Name-Realm" key, then the bare name only when the
+    -- full one knows nobody. Falling through to the bare key after the full one
+    -- has answered would hand the decision to a namesake's account.
+    local account
+    local map = Sanctuary.bnetAccountByCharacter
+    if map then
+        local fullKey = normalizeBlockedKey(name)
+        if fullKey then account = map[fullKey] end
+        if not account then
+            local bareKey = normalizeName(name)
+            if bareKey and bareKey ~= fullKey then account = map[bareKey] end
+        end
+    end
     if account then
         blocked, reason, detail = isAlwaysBlockedDirect(account)
         if blocked then return true, reason, detail end
@@ -885,6 +896,26 @@ local function rebuildWhitelist()
     local characterByAccount = {}
     local accountByCharacter = {}
 
+    -- A character name answers with one account, or with nobody. Two Battle.net
+    -- friends whose characters share a name on two realms collide on the bare
+    -- key, and letting the last one written win means the roster order decides
+    -- which account answers for both: in one order the blocked account's
+    -- character walks through, in the other an allowed friend is blocked in his
+    -- place. Both break a product rule, so an ambiguous key resolves to nobody
+    -- and the "Name-Realm" keys, which stay distinct, keep answering.
+    local accountKeyByCharacter = {}
+    local function noteAccountForCharacter(key, accountName, accountKey)
+        if not key or not accountName or not accountKey then return end
+        local held = accountKeyByCharacter[key]
+        if held == nil then
+            accountKeyByCharacter[key] = accountKey
+            accountByCharacter[key] = accountName
+        elseif held ~= accountKey then
+            accountKeyByCharacter[key] = false
+            accountByCharacter[key] = nil
+        end
+    end
+
     local function noteSource(store, labelStore, key, source, displayName)
         if not key or store[key] then return end
         store[key] = source
@@ -986,12 +1017,18 @@ local function rebuildWhitelist()
                         characterName = characterName .. "-" .. realmName
                     end
                     local accountKey = normalizeBNetName(info.accountName)
-                    -- `normalizeName` drops the realm, so both spellings of the
-                    -- character land on the same key here.
-                    local characterKey = normalizeName(characterName)
-                    if accountKey and characterKey then
+                    -- Both spellings are recorded, keyed like the blocked list:
+                    -- the full "Name-Realm" and the bare name `normalizeName`
+                    -- produces. The bare one is what a same-realm event carries,
+                    -- the full one is what tells two namesakes apart.
+                    local fullKey = normalizeBlockedKey(characterName)
+                    local bareKey = normalizeName(characterName)
+                    if accountKey then
                         characterByAccount[accountKey] = characterName
-                        accountByCharacter[characterKey] = info.accountName
+                        noteAccountForCharacter(fullKey, info.accountName, accountKey)
+                        if bareKey ~= fullKey then
+                            noteAccountForCharacter(bareKey, info.accountName, accountKey)
+                        end
                     end
                 end
             end
