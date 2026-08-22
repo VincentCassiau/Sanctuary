@@ -2278,12 +2278,13 @@ local function createMinimapButton()
         btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         btn:RegisterForDrag("LeftButton")
         btn:SetMovable(true)
+        -- The handler installed on the drag IS the state: the flag that used to
+        -- stand here was read by nothing, which is exactly why the button sat
+        -- still until the mouse was let go.
         btn:SetScript("OnDragStart", function(self)
-            self.dragging = true
             self:SetScript("OnUpdate", dragMinimapButton)
         end)
         btn:SetScript("OnDragStop", function(self)
-            self.dragging = false
             self:SetScript("OnUpdate", nil)
             dragMinimapButton()
         end)
