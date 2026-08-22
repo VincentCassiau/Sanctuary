@@ -1867,6 +1867,27 @@ end
 -- bounds. Beyond them -- "I choose" unfolded is taller than 700 -- the content
 -- scrolls rather than being cut off, which is also what the manual mode needs
 -- when the person makes the window smaller than its content.
+-- The height the active screen last asked for. `applyHeight` gets it from the
+-- screen's own refresh; `applyViewport` fires on every pixel of a drag, has no
+-- refresh to ask, and reuses the last answer.
+local fittedNeed = MIN_HEIGHT
+
+-- The content area is anchored on one point with an explicit size, so nothing
+-- moves it on its own: whoever changes the window's height has to hand the new
+-- height here. `applyHeight` does it after its own SetSize, and the window's
+-- OnSizeChanged does it while the grip is being dragged. It never resizes the
+-- window itself, so calling it from OnSizeChanged cannot loop.
+local function applyViewport(frameHeight)
+    if not contentScroll or not contentFrame then return end
+    local viewport = math.max(120, (frameHeight or MIN_FRAME_HEIGHT) - HEADER_HEIGHT - CONTENT_BOTTOM)
+    contentScroll:SetSize(FRAME_WIDTH, viewport)
+    local contentHeight = math.max(fittedNeed, viewport)
+    contentFrame:SetHeight(contentHeight)
+    local active = tabFrames[activeTab]
+    if active then active:SetHeight(contentHeight) end
+    contentScroll:RefreshBar()
+end
+
 local function applyHeight(height)
     if not mainFrame then return end
     -- SavedVariables is the source of truth for the manual size, not a copy made
@@ -1874,6 +1895,7 @@ local function applyHeight(height)
     -- applying a size the settings no longer hold.
     manualSize = SanctuaryDB and SanctuaryDB.uiSize or nil
     local needed = math.max(MIN_HEIGHT, height or MIN_HEIGHT)
+    fittedNeed = needed
     local frameHeight
     if manualSize then
         -- The stored width is never read back. Slot 1 stays in the record for
@@ -1886,14 +1908,7 @@ local function applyHeight(height)
         frameHeight = bounded + HEADER_HEIGHT + CONTENT_BOTTOM
     end
     mainFrame:SetSize(FRAME_WIDTH, frameHeight)
-
-    local viewport = math.max(120, frameHeight - HEADER_HEIGHT - CONTENT_BOTTOM)
-    contentScroll:SetSize(FRAME_WIDTH, viewport)
-    local contentHeight = math.max(needed, viewport)
-    contentFrame:SetHeight(contentHeight)
-    local active = tabFrames[activeTab]
-    if active then active:SetHeight(contentHeight) end
-    contentScroll:RefreshBar()
+    applyViewport(frameHeight)
 end
 
 local function selectTab(key)
@@ -2031,6 +2046,13 @@ local function createMainFrame()
     contentScroll:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -HEADER_HEIGHT)
     contentFrame = contentScroll.child
 
+    -- The content follows the window while the grip is being dragged, not only
+    -- once it is released. `applyViewport` never resizes the window, so this
+    -- cannot feed back into itself.
+    mainFrame:SetScript("OnSizeChanged", function(self)
+        applyViewport(self:GetHeight())
+    end)
+
     for _, def in ipairs(TAB_DEFS) do
         local frame = CreateFrame("Frame", "SanctuaryTabContent_" .. def.key, contentFrame)
         frame:SetSize(FRAME_WIDTH, MIN_HEIGHT)
@@ -2100,6 +2122,11 @@ local function createMainFrame()
         -- frame the window is built from.
         manualSize = { FRAME_WIDTH, mainFrame:GetHeight() }
         if SanctuaryDB then SanctuaryDB.uiSize = { manualSize[1], manualSize[2] } end
+        -- Recording the size is not applying it. The content area keeps the
+        -- height it was given by the last refresh until something hands it the
+        -- new one, so a drag left the screen either floating in a taller window
+        -- or spilling out under a shorter one, over the tab strip, with no bar.
+        ns.refreshUI()
     end)
 
     buildProtectionTab(tabFrames.protection)

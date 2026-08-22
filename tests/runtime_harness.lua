@@ -4750,15 +4750,42 @@ check(grip ~= nil, "the resize grip is reachable")
 local gripDown = grip:GetScript("OnMouseDown")
 local gripUp = grip:GetScript("OnMouseUp")
 
+-- Releasing the grip has to APPLY the size, not just write it down. The content
+-- area is anchored on one point with an explicit size and only applyHeight ever
+-- resized it, so between the two gestures the session asks for -- "drag the
+-- grip, THEN double-click" -- the screen kept its old height: 320 px of content
+-- spilling under a shrunken window, over the tab strip, with no bar. This case
+-- used to call ns.refreshUI() by hand right after gripUp and hid it.
+local viewportOf = function() return _G.SanctuaryContentScroll:GetHeight() end
+local expectedViewport = function() return mainFrame:GetHeight() - 40 - 30 end
+
 now = now + 5
 gripDown(grip)
 mainFrame:SetSize(1240, 560)
 gripUp(grip)
 equal(SanctuaryDB.uiSize[1], 780, "a diagonal drag records the one width there is")
 equal(SanctuaryDB.uiSize[2], 560, "and the height it was actually dragged to")
-ns.refreshUI()
-equal(mainFrame:GetWidth(), 780, "so a refresh puts the window back on that width")
+equal(viewportOf(), expectedViewport(), "and the content area follows on release")
+equal(mainFrame:GetWidth(), 780, "releasing puts the window back on that width")
 equal(mainFrame:GetHeight(), 560, "while keeping the height that was asked for")
+
+-- Downwards too: shrinking is the direction that spilled content off-screen.
+now = now + 5
+gripDown(grip)
+mainFrame:SetSize(780, 450)
+gripUp(grip)
+equal(mainFrame:GetHeight(), 450, "a drag downwards is kept")
+equal(viewportOf(), expectedViewport(), "and the content area shrinks with it")
+
+-- During the drag, not only on release: the window's own size handler carries
+-- the new height to the content area.
+mainFrame:SetHeight(600)
+mainFrame:GetScript("OnSizeChanged")(mainFrame)
+equal(viewportOf(), expectedViewport(), "the content follows while the grip is still down")
+now = now + 5
+gripDown(grip)
+mainFrame:SetSize(780, 560)
+gripUp(grip)
 mainFrame:Hide()
 mainFrame:Show()
 equal(mainFrame:GetWidth(), 780, "and reopening does not bring the dragged width back")
