@@ -155,8 +155,14 @@ end
 
 local playerRealm = nil
 
+-- Cached, but only once there is something worth caching. The API answers nil
+-- -- and, on some paths, an empty string -- until the world is entered, and an
+-- empty string is truthy: caching one froze the realm as "unknown" for the whole
+-- session. That used to cost a realm comparison; since 0.4.0 every entry of the
+-- blocked list is keyed by realm, so it would have cost the blocked list
+-- entirely, in silence, with the panel still showing the names.
 local function getPlayerRealm()
-    if not playerRealm then
+    if not playerRealm or playerRealm == "" then
         playerRealm = GetNormalizedRealmName()
     end
     return playerRealm or ""
@@ -2596,11 +2602,6 @@ end
 
 local isSelf
 do
-local function normalizeRealmToken(realm)
-    if not realm or realm == "" then return nil end
-    return realm:lower():gsub("[%s%-']", "")
-end
-
 -- Never filter the player's own public messages. Realm information is honored
 -- when present so a same-named player on another realm is not mistaken for self.
 isSelf = function(sender)
@@ -2621,7 +2622,11 @@ isSelf = function(sender)
     end
 
     if senderRealm and senderRealm ~= "" then
-        return normalizeRealmToken(senderRealm) == normalizeRealmToken(playerRealm)
+        -- The same realm rule the blocked list uses. It was written twice, and
+        -- two spellings of one realm is exactly the fault this release went
+        -- looking for; the second copy also returned gsub's replacement count
+        -- as a second value, harmless in a comparison and a trap anywhere else.
+        return normalizeRealm(senderRealm) == normalizeRealm(playerRealm)
     end
     return true
 end

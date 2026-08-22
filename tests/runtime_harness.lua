@@ -595,6 +595,16 @@ filtered = chatFilters.CHAT_MSG_SAY(nil, "CHAT_MSG_SAY", "hello", "Unknown")
 check(filtered, "say filter on blocks unknown sender")
 filtered = chatFilters.CHAT_MSG_SAY(nil, "CHAT_MSG_SAY", "hello", "Victim-TestRealm")
 check(not filtered, "own say message passes")
+-- "Am I the sender" folds the realm by the one rule the blocked list uses, so a
+-- realm written with a space, a hyphen or an apostrophe is still the player's
+-- own realm. It used to have a second copy of that rule, which is precisely the
+-- fault this release hunted down elsewhere.
+filtered = chatFilters.CHAT_MSG_SAY(nil, "CHAT_MSG_SAY", "hello", "Victim-Test Realm")
+check(not filtered, "own message passes with the realm spelled with a space")
+filtered = chatFilters.CHAT_MSG_SAY(nil, "CHAT_MSG_SAY", "hello", "Victim-Test-Realm")
+check(not filtered, "and with a hyphen")
+filtered = chatFilters.CHAT_MSG_SAY(nil, "CHAT_MSG_SAY", "hello", "Victim-Ysondre")
+check(filtered, "while the same name on another realm is not the player")
 SanctuaryDB.filters.say = false
 
 SanctuaryDB.filters.channelMode = "none"
