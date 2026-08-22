@@ -2828,6 +2828,79 @@ equal(why, "keyword", "and is still reported as a pattern")
 equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Spammerguy-TestRealm"), true,
     "a pattern discards a whisper with the filter unticked")
 
+-- C2b -- every entry of the blocked list carries a realm, spelled one way.
+-- Two faults lived here. A bare key stood for every realm at once, so blocking
+-- one harasser cut off his namesake in the player's own guild -- in silence, the
+-- worst way to be wrong. And on a hyphenated realm the two halves of a key came
+-- from sources that spell the realm differently -- `GetNormalizedRealmName`
+-- drops the hyphen, the realm half of an event keeps it -- so the entry and the
+-- lookup never met and the block simply did not happen.
+resetModelState()
+guildMembers = { "Toto-TestRealm" }
+inGuild = true
+ns.invalidateWhitelist()
+
+equal(select(2, ns.addBlocked("Toto-Ysondre")), "toto-ysondre",
+    "an entry typed with a realm is keyed on that realm")
+equal(ns.classifyName("Toto-Ysondre").verdict, "always_blocked",
+    "the character the entry names is blocked")
+equal(ns.classifyName("Toto-TestRealm").verdict, "always_allowed",
+    "while his namesake in the guild is left alone")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Toto-Ysondre"), true,
+    "the blocked one's whisper is discarded")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Toto-TestRealm"), false,
+    "and the guild member's arrives, exactly as it did before anyone was blocked")
+
+-- The same split on the invitation path, where being wrong is silent: one
+-- invite refused, the other left to WoW.
+local beforeSplitDeclines = declinedGroups
+fire("PARTY_INVITE_REQUEST", "Toto-Ysondre")
+runTimers(3)
+equal(declinedGroups, beforeSplitDeclines + 1, "the blocked namesake's invite is refused")
+fire("PARTY_INVITE_REQUEST", "Toto-TestRealm")
+runTimers(3)
+equal(declinedGroups, beforeSplitDeclines + 1, "the guild namesake's invite is not")
+
+-- A name typed with no realm means the realm the player is on -- what an invite
+-- box shows when the other player shares it -- and not every realm at once.
+resetModelState()
+equal(select(2, ns.addBlocked("Solo")), "solo-testrealm",
+    "a name typed with no realm is stored on the player's own realm")
+equal(ns.classifyName("Solo").verdict, "always_blocked",
+    "so it answers to the bare name an event carries")
+equal(ns.classifyName("Solo-TestRealm").verdict, "always_blocked",
+    "and to the same character written out in full")
+check(ns.classifyName("Solo-Ysondre").verdict ~= "always_blocked",
+    "while the same name on another realm is nobody anyone blocked")
+
+-- A hyphenated realm, spelled both ways. The entry is typed the way the player
+-- reads it in game ("Azjol-Nerub"); the lookup arrives with the spelling the
+-- game normalises to ("AzjolNerub"). One rule makes the two meet, and it has to
+-- hold in both directions, since either side can be the one carrying the hyphen.
+resetModelState()
+equal(select(2, ns.addBlocked("Hyphen-Azjol-Nerub")), "hyphen-azjolnerub",
+    "the first hyphen splits name from realm, the rest of them belong to the realm")
+equal(ns.classifyName("Hyphen-AzjolNerub").verdict, "always_blocked",
+    "the de-hyphenated spelling finds the entry typed with the hyphen")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Hyphen-Azjol-Nerub"), true,
+    "a whisper from that realm is discarded as typed")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Hyphen-AzjolNerub"), true,
+    "and as the game hands it over")
+
+equal(select(2, ns.addBlocked("Other-AzjolNerub")), "other-azjolnerub",
+    "an entry that already carries the game's spelling is keyed the same way")
+equal(ns.classifyName("Other-Azjol-Nerub").verdict, "always_blocked",
+    "so the hyphenated spelling finds that one too")
+check(ns.classifyName("Hyphen-TestRealm").verdict ~= "always_blocked",
+    "and none of this leaks onto the player's own realm")
+
+-- Spaces and apostrophes fold like hyphens, so a realm keeps one spelling
+-- whether it comes from the roster, an event or the keyboard.
+equal(ns.normalizeBlockedKey("Mixed-Conseil des Ombres"), "mixed-conseildesombres",
+    "a realm written with spaces is keyed without them")
+equal(ns.normalizeBlockedKey("Mixed-Kil'jaeden"), "mixed-kiljaeden",
+    "and one written with an apostrophe without it")
+
 -- C3 -- "everyone except the people I block".
 resetModelState()
 guildMembers = { "Mate-TestRealm" }
@@ -3088,7 +3161,8 @@ equal(outputEntry and outputEntry.data.filterEnabled, false, "the filter being o
 
 -- The control: with the filter ticked the envelope still works, and now names
 -- the filter as the decider.
-equal(select(1, ns.removeBlocked("harasser")), true, "the name is taken back out")
+equal(select(1, ns.removeBlocked(ns.normalizeBlockedKey("Harasser"))), true,
+    "the name is taken back out")
 SanctuaryDB.filters.scope = "strangers"
 ChatFrame3:AddMessage(inviteLine)
 equal(#printedLines, 0, "an unknown name is still hidden when the filter is ticked")
@@ -4442,7 +4516,7 @@ check(SanctuaryDB.manualWhitelist.toto ~= nil,
 local blockedNow, blockedReason = ns.getCharacterDecision("Toto")
 equal(blockedNow, true, "the decision changes immediately")
 equal(blockedReason, "blocked_name", "and names the list that decided")
-ns.removeBlocked("toto")
+ns.removeBlocked(ns.normalizeBlockedKey("Toto"))
 equal(select(1, ns.getCharacterDecision("Toto")), false, "removing it changes the decision back")
 
 _G.SanctuaryPatternAddInput:SetText("  Sp Spam ")
@@ -4773,20 +4847,31 @@ check(menuEntries[2].text:find(ns.L["MENU_UNBLOCK"], 1, true) ~= nil,
 menuEntries[2].action()
 equal(SanctuaryDB.blockedNames["toto-ysondre"], nil, "and does")
 
--- A bare name blocks every realm. The menu searched for the full key alone, so
--- on a character of an already-blocked bare name it offered to block again, and
--- the click wrote a second key: from then on "stop blocking" removed one of the
--- two and left the other blocking.
+-- A name typed with no realm means the player's own realm, and the menu says the
+-- same thing as the core about both sides of that: it offers to stop blocking on
+-- the character that entry covers, and to block on his namesake elsewhere. The
+-- menu asks `findBlockedKey` rather than searching itself, which is what keeps
+-- the two answers from drifting apart.
 ns.addBlocked("Bareprobe")
-menuEntries = ns.buildPlayerMenuEntries({ name = "Bareprobe", server = "Ysondre" })
+equal(SanctuaryDB.blockedNames["bareprobe-testrealm"] ~= nil, true,
+    "a name typed with no realm is stored on the player's realm")
+menuEntries = ns.buildPlayerMenuEntries({ name = "Bareprobe", server = "TestRealm" })
 check(menuEntries[2].text:find(ns.L["MENU_UNBLOCK"], 1, true) ~= nil,
-    "the menu on a character of a bare blocked name offers to stop blocking")
-equal(ns.classifyName("Bareprobe-Ysondre").verdict, "always_blocked",
+    "the menu on that character offers to stop blocking")
+equal(ns.classifyName("Bareprobe-TestRealm").verdict, "always_blocked",
     "which is the truth, since the core already holds him blocked")
-menuEntries[2].action()
-equal(SanctuaryDB.blockedNames["bareprobe"], nil, "and it removes the key that was found")
-equal(SanctuaryDB.blockedNames["bareprobe-ysondre"], nil, "having written no second key")
+
+menuEntries = ns.buildPlayerMenuEntries({ name = "Bareprobe", server = "Ysondre" })
+check(menuEntries[2].text:find(ns.L["MENU_BLOCK"], 1, true) ~= nil,
+    "while his namesake on another realm is offered a block, not an unblock")
 check(ns.classifyName("Bareprobe-Ysondre").verdict ~= "always_blocked",
+    "because nothing blocks that one")
+
+menuEntries = ns.buildPlayerMenuEntries({ name = "Bareprobe", server = "TestRealm" })
+menuEntries[2].action()
+equal(SanctuaryDB.blockedNames["bareprobe-testrealm"], nil,
+    "and one click removes the key that was found")
+check(ns.classifyName("Bareprobe-TestRealm").verdict ~= "always_blocked",
     "so one click really does stop blocking him")
 
 -- Where a name came from survives the allowed list too. `addBlocked` kept

@@ -699,28 +699,55 @@ end
 -- The always-blocked door
 -- ----------------------------------------------------------------------------
 
--- One key shape for the exact-name list: formatting stripped, lower case, no
--- spaces. Spaces are removed rather than collapsed so a Battle.net display name
--- typed with or without them lands on the same key.
+-- One spelling for a realm, whoever hands it over. `GetNormalizedRealmName`
+-- already drops spaces and hyphens -- "Azjol-Nerub" comes back "AzjolNerub" --
+-- while the realm half of `UnitName` and `gameAccountInfo.realmName` keep them.
+-- Two halves of the same key built from two of those sources never met: on a
+-- hyphenated realm a blocked character walked straight in, because the lookup
+-- spelled his realm one way and his entry the other.
+local function normalizeRealm(realm)
+    if type(realm) ~= "string" then return nil end
+    realm = realm:gsub("[%s%-']", ""):lower()
+    if realm == "" then return nil end
+    return realm
+end
+
+-- One key shape for the exact-name list, and it always carries a realm:
+-- "name-realm". A name typed with no realm means the realm the player is on --
+-- what WoW itself shows in an invite box when the other player shares it -- so
+-- the key says which realm rather than standing for all of them at once.
+--
+-- A character name never contains a hyphen, so the first one splits the name
+-- from the realm; the realm may hold more of them, and keeps them until
+-- `normalizeRealm` strips them.
+--
+-- Answers nil while the player's realm is still unknown, which is only true
+-- before the world is entered: no invitation, whisper or name test reaches this
+-- code that early, and a key invented then would be an entry no later lookup
+-- could match.
 local function normalizeBlockedKey(name)
     local clean = stripWoWFormatting(name)
     if not clean then return nil end
-    clean = clean:gsub("%s", ""):lower()
-    if clean == "" then return nil end
-    return clean
+    clean = clean:gsub("%s", "")
+    local namePart, realmPart = clean:match("^([^%-]+)%-(.+)$")
+    if not namePart then namePart = clean end
+    namePart = namePart:lower()
+    if namePart == "" then return nil end
+    local realm = normalizeRealm(realmPart) or normalizeRealm(getPlayerRealm())
+    if not realm then return nil end
+    return namePart .. "-" .. realm
 end
 
--- Two lookups, in this order: the full key, then the same name without its
--- realm. Blocking "Toto-Ysondre" therefore blocks only that character, while
--- blocking "Toto" blocks every realm -- which is what someone typing a bare
--- name means.
+-- One lookup, on the one key shape. Blocking "Toto" blocks the Toto on your own
+-- realm -- the one an invitation means when it shows a bare name -- and nobody
+-- else. There is no bare-key fallback any more: a bare key answered for every
+-- realm at once, so a namesake in your own guild was cut off in silence because
+-- somebody else's Toto, on another realm, had been blocked.
 local function isBlockedName(name)
     if not SanctuaryDB or type(SanctuaryDB.blockedNames) ~= "table" then return nil end
     local key = normalizeBlockedKey(name)
     if not key then return nil end
     if SanctuaryDB.blockedNames[key] then return key end
-    local nameOnly = key:match("^([^-]+)%-") or nil
-    if nameOnly and SanctuaryDB.blockedNames[nameOnly] then return nameOnly end
     return nil
 end
 
@@ -744,21 +771,19 @@ local ensureWhitelistCache
 -- allowed panel's line -- and decides nothing. Nothing in the blocked path calls
 -- it (see the Battle.net invariant next to `bnetWhisperFilter`).
 --
--- Three lookups, stopping at the first hit:
+-- Two lookups, stopping at the first hit:
 --
---   1. the full "Name-Realm" key -- the only one that tells two namesakes apart;
---   2. the bare name -- what the map holds for a friend whose realm was unknown,
---      and what `rebuildWhitelist` neutralises when two friends collide on it;
---   3. only for a name that carries NO realm: the same name on the player's own
---      realm.
+--   1. the realm-qualified key -- the only one that tells two namesakes apart,
+--      and the one a bare name resolves to on the player's own realm;
+--   2. the bare name -- what the map holds for a friend whose realm the roster
+--      did not give, and what `rebuildWhitelist` neutralises when two friends
+--      collide on it.
 --
--- Step 3 is the one that looks odd and is not. PARTY_INVITE_REQUEST,
--- DUEL_REQUESTED and TRADE_SHOW all hand over a name stripped of its realm when
--- the other player shares the player's own -- that is the whole reason step 2
--- exists. So a bare name is never ambiguous about its realm even when the bare
--- KEY is: the realm is ours, we know it, and "Name-OurRealm" stays distinct.
--- Without it the tester credited a character to whichever namesake the roster
--- happened to list first.
+-- Step 2 earns its place because PARTY_INVITE_REQUEST, DUEL_REQUESTED and
+-- TRADE_SHOW hand over a name stripped of its realm when the other player
+-- shares ours, and an offline friend often has no realm to record. Without it
+-- the tester credited a character to whichever namesake the roster happened to
+-- list first.
 local function bnetAccountForCharacter(name)
     local map = Sanctuary.bnetAccountByCharacter
     if not map then return nil end
@@ -773,14 +798,6 @@ local function bnetAccountForCharacter(name)
     if bareKey and bareKey ~= fullKey then
         local account = map[bareKey]
         if account then return account end
-    end
-
-    if fullKey and not fullKey:find("-", 1, true) then
-        local realm = getPlayerRealm()
-        if realm ~= "" then
-            local sameRealmKey = normalizeBlockedKey(name .. "-" .. realm)
-            if sameRealmKey then return map[sameRealmKey] end
-        end
     end
 
     return nil
@@ -812,9 +829,10 @@ local function isAlwaysBlocked(name)
 end
 
 ns.normalizeBlockedKey = normalizeBlockedKey
--- The KEY that answers, not just whether one does: a caller that wants to undo
--- the block has to remove the entry the lookup actually found, which for a bare
--- name blocking every realm is not the key it asked about.
+-- The KEY that answers, not just whether one does: the right-click menu has to
+-- remove the entry the lookup actually found, and it asks here rather than
+-- deriving the key itself so that the menu and the filters can never disagree
+-- about who is blocked.
 ns.findBlockedKey = isBlockedName
 ns.hasAlwaysBlockedEntries = hasAlwaysBlockedEntries
 ns.isAlwaysBlocked = isAlwaysBlocked
@@ -1019,28 +1037,27 @@ local function rebuildWhitelist()
                 local gameInfo = info.gameAccountInfo
                 if gameInfo and gameInfo.characterName and gameInfo.characterName ~= "" then
                     addCharacterName(gameInfo.characterName, "bnet", info.accountName)
-                    -- Keyed on the blocked-list key shape, not on the whitelist
-                    -- one, so a lookup can go straight from either identity to
-                    -- the other without a second normalisation rule.
-                    --
-                    -- The realm belongs in the stored character name. The
-                    -- right-click menu writes "Name-Realm" into the blocked
-                    -- list, and `isBlockedName` only ever falls back from the
-                    -- full key to the bare one -- never the other way round. A
-                    -- bare name here would therefore miss the very key the menu
-                    -- produces, while "Name-Realm" matches both spellings.
+                    -- Keyed on the blocked-list key shape so a character seen on
+                    -- any WoW path resolves to its account under one rule, with
+                    -- the realm spelled the single way `normalizeRealm` spells
+                    -- it -- `gameAccountInfo.realmName` keeps the hyphen of an
+                    -- Azjol-Nerub, `GetNormalizedRealmName` does not.
                     local characterName = gameInfo.characterName
                     local realmName = gameInfo.realmName
-                    if type(realmName) == "string" and realmName ~= ""
-                        and not characterName:find("-", 1, true) then
-                        characterName = characterName .. "-" .. realmName
+                    local qualified = nil
+                    if characterName:find("-", 1, true) then
+                        qualified = characterName
+                    elseif type(realmName) == "string" and realmName ~= "" then
+                        qualified = characterName .. "-" .. realmName
                     end
+                    if qualified then characterName = qualified end
                     local accountKey = normalizeBNetName(info.accountName)
-                    -- Both spellings are recorded, keyed like the blocked list:
-                    -- the full "Name-Realm" and the bare name `normalizeName`
-                    -- produces. The bare one is what a same-realm event carries,
-                    -- the full one is what tells two namesakes apart.
-                    local fullKey = normalizeBlockedKey(characterName)
+                    -- Both spellings are recorded. The bare one is what a
+                    -- same-realm event carries, the qualified one is what tells
+                    -- two namesakes apart -- and it is only recorded when the
+                    -- roster actually gave a realm, so an offline friend is
+                    -- never claimed to be playing on ours.
+                    local fullKey = qualified and normalizeBlockedKey(qualified) or nil
                     local bareKey = normalizeName(characterName)
                     if accountKey then
                         characterByAccount[accountKey] = characterName
@@ -1312,9 +1329,9 @@ function ns.getAutoWhitelistGroups(filterText)
                         entry.account = label
                         entry.character = Sanctuary.bnetCharacterByAccount
                             and Sanctuary.bnetCharacterByAccount[key] or nil
-                        -- `character` carries the realm because the always-
-                        -- blocked list resolves on it; the panel prints
-                        -- `characterDisplay`, the bare name the friend shows.
+                        -- `character` carries the realm when the roster gave
+                        -- one; the panel prints `characterDisplay`, the bare
+                        -- name the friend shows.
                         entry.characterDisplay = (Sanctuary.bnetCharacterDisplayByAccount
                             and Sanctuary.bnetCharacterDisplayByAccount[key]) or entry.character
                     end

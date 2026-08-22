@@ -2473,12 +2473,11 @@ function ns.buildPlayerMenuEntries(contextData)
     local allowedKey = ns.normalizeName and ns.normalizeName(name)
     local isAllowed = allowedKey and SanctuaryDB and SanctuaryDB.manualWhitelist
         and SanctuaryDB.manualWhitelist[allowedKey] ~= nil
-    -- The same resolution the core uses to decide -- full "Name-Realm" key, then
-    -- the bare name -- rather than an exact search on the full key. A name
-    -- blocked bare from the panel blocks every realm, so an exact search missed
-    -- it: the menu on "Bareprobe-Ysondre" offered to block someone already
-    -- blocked, the click wrote a second key, and removing either of the two left
-    -- the other one still blocking.
+    -- The core's own resolution, asked rather than reimplemented: whatever key
+    -- shape the blocked list uses, the menu reads the same verdict the filters
+    -- read. A second search written here once said "block" about somebody the
+    -- core already held blocked, the click wrote a second key, and removing
+    -- either of the two left the other one blocking.
     local blockedKey = ns.findBlockedKey and ns.findBlockedKey(name)
     local isBlocked = blockedKey ~= nil
 
