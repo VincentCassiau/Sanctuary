@@ -3333,6 +3333,8 @@ equal(SanctuaryDB.uiPosition, nil, "and its position")
 equal(#SanctuaryDB.log, 0, "the journal is emptied")
 equal(SanctuaryDB.logging.maxEntries, 5000, "the retention limit goes back to its default")
 equal(SanctuaryDB.debugEnabled, false, "and debug mode is off again")
+equal(SanctuaryDB.uiSettings.showMessageColumn, false,
+    "the text of blocked messages is not displayed until it is asked for")
 equal(SanctuaryDB.manualWhitelist, carriedWhitelist, "the names added by hand are kept")
 equal(SanctuaryDB.manualWhitelist.oldfriend.addedAt, 42, "with their dates")
 equal(SanctuaryDB.keywords, carriedKeywords, "the patterns are kept")
@@ -4425,13 +4427,24 @@ groupRow:Click()
 rendered = panelRowTexts(journalContent)
 check(rendered:find(ns.L["LOG_TYPE_INVITE"], 1, true) ~= nil,
     "unfolding shows the localized type of each entry")
-check(rendered:find("slt", 1, true) ~= nil, "and the message text while the option is ticked")
 equal(ns.getLogEntryDisplayType({ type = "group" }), ns.L["LOG_TYPE_GROUP"],
     "the group-chat type has a label of its own")
+
+-- The message column starts off. The text is recorded either way -- only the
+-- display is withheld: on an addon whose job is to shield someone from
+-- harassment, printing what was sent to them is something they ask for.
+equal(SanctuaryDB.uiSettings.showMessageColumn, false,
+    "the message column is off by default once the file carries schema 2")
+equal(_G.SanctuaryJournalShowMessages:GetChecked(), false,
+    "and the Journal box reads unticked")
+check(rendered:find("slt", 1, true) == nil,
+    "an unfolded blocked whisper does not show its text")
 _G.SanctuaryJournalShowMessages:Click()
 rendered = panelRowTexts(journalContent)
-check(rendered:find("slt", 1, true) == nil, "unticking the option hides the message text")
+check(rendered:find("slt", 1, true) ~= nil, "ticking the option brings the text out")
 _G.SanctuaryJournalShowMessages:Click()
+rendered = panelRowTexts(journalContent)
+check(rendered:find("slt", 1, true) == nil, "and unticking it hides the text again")
 
 -- Copying opens the window with the journal in it, types localized.
 findRow(journalContent, ns.L["LOGS_COPY_BTN"]):Click()

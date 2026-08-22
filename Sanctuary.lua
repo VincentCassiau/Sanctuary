@@ -100,7 +100,12 @@ local ACCOUNT_DEFAULTS = {
     uiPosition = nil, -- saved window position { point, x, y }
     uiSize = nil,         -- saved window size { width, height }
     uiSettings = {
-        showMessageColumn = true,
+        -- The journal records the text of a blocked message either way; this
+        -- only decides whether the Journal tab prints it on screen. It starts
+        -- off: on an addon whose job is to shield someone from harassment, the
+        -- cautious default is not to display what was sent to them until they
+        -- ask. The "Show the text of blocked messages" box brings it back.
+        showMessageColumn = false,
     },
     debugEnabled = false,
     debugLog = {},
