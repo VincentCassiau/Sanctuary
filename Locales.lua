@@ -154,7 +154,7 @@ L["UNDO_MOVED"] = "%s removed from \"%s\""
 L["UNDO_BTN"] = "Undo"
 L["CHIP_ADDED_ON"] = "Added on %s"
 L["CHIP_SOURCE_MANUAL"] = "Added by hand"
-L["CHIP_SOURCE_MENU"] = "Added from the right-click menu"
+L["CHIP_SOURCE_MENU"] = "Added by interacting with the name"
 L["CHIP_SOURCE_TRUST"] = "Automatic trust"
 
 -- Right-click menu
@@ -404,7 +404,7 @@ L["UNDO_MOVED"] = "%s retir\195\169 de \194\171 %s \194\187"
 L["UNDO_BTN"] = "Annuler"
 L["CHIP_ADDED_ON"] = "Ajout\195\169 le %s"
 L["CHIP_SOURCE_MANUAL"] = "Ajout\195\169 \195\160 la main"
-L["CHIP_SOURCE_MENU"] = "Ajout\195\169 au clic droit"
+L["CHIP_SOURCE_MENU"] = "Ajout\195\169 par interaction avec le pseudo"
 L["CHIP_SOURCE_TRUST"] = "Trust automatique"
 
 -- Right-click menu

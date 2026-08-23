@@ -2869,6 +2869,19 @@ local function resolveMenuName(contextData)
         local ok, secret = pcall(C_Secrets.ShouldUnitIdentityBeSecret, contextData.unit)
         if ok and secret then return nil end
     end
+    -- A player, or nothing. Right-clicking a shopkeeper offered "Sanctuary :
+    -- toujours autoriser / toujours bloquer" about a name no invitation, no
+    -- whisper and no duel can ever carry -- two entries that would write a dead
+    -- record into a list and count it in a tile. Decision 113.
+    --
+    -- Only asked when there IS a unit: a name right-clicked in the chat or in a
+    -- roster has no unit token and is a player by construction. Under pcall like
+    -- the secret check above it, and failing open, because a menu entry that
+    -- does not appear is worth less than an error in somebody's right-click.
+    if contextData.unit and UnitIsPlayer then
+        local ok, isPlayer = pcall(UnitIsPlayer, contextData.unit)
+        if ok and not isPlayer then return nil end
+    end
     local full = name
     if contextData.server and contextData.server ~= "" then
         full = name .. "-" .. contextData.server

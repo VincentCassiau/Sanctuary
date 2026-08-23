@@ -146,6 +146,11 @@ function GetNumGroupMembers()
     return #groupMembers + (inRaid and 0 or 1)
 end
 function UnitIsUnit(unitA, unitB) return unitA == unitB end
+-- Which unit tokens name a player. Anything a case declares here is a player;
+-- everything else -- a shopkeeper, a training dummy -- is not, which is the
+-- distinction the right-click menu now refuses to write a list entry without.
+npcUnits = {}
+function UnitIsPlayer(unit) return not npcUnits[unit] end
 function UnitFullName(unit)
     if unit == "player" then return "Victim", "TestRealm" end
     local index = tonumber(unit:match("%d+"))
@@ -6047,6 +6052,25 @@ menuEntries[1].action()
 equal(SanctuaryDB.manualWhitelist["real friend#1234"], nil, "which one click does")
 
 equal(#ns.buildPlayerMenuEntries({}), 0, "an unresolved identity gets nothing")
+
+-- And a PNJ gets nothing either, decision 113: "deja le souci c'est qu'on peut
+-- le faire sur les PNJ". Allowing or blocking a shopkeeper writes a dead record
+-- into a list and counts it in a tile, about a name no invitation, no whisper
+-- and no duel can ever carry.
+do
+    npcUnits.target = true
+    equal(#ns.buildPlayerMenuEntries({ name = "Innkeeper", unit = "target" }), 0,
+        "right-clicking a PNJ offers no Sanctuary entry")
+    equal(#ns.buildPlayerMenuEntries({ name = "Innkeeper", server = "TestRealm", unit = "target" }), 0,
+        "not even one carrying a realm")
+    npcUnits.target = nil
+    equal(#ns.buildPlayerMenuEntries({ name = "Stranger", unit = "target" }), 2,
+        "while a real player still gets the two entries")
+    -- No unit at all -- a name right-clicked in the chat or in a roster -- is a
+    -- player by construction and must not be caught by the same rule.
+    equal(#ns.buildPlayerMenuEntries({ name = "Chatstranger" }), 2,
+        "and a name with no unit behind it is still offered both")
+end
 equal(#ns.buildPlayerMenuEntries({ name = makeSecretValue("secret") }), 0,
     "and a secret name gets nothing")
 local savedCombat = InCombatLockdown
