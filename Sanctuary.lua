@@ -498,6 +498,110 @@ local function stripWoWFormatting(value)
     return value
 end
 
+-- The one case fold this add-on has, used everywhere a key is built or compared
+-- and nowhere else.
+--
+-- `string.lower` is byte-by-byte under Lua's C locale: it folds A-Z and nothing
+-- more -- the same ASCII-only limit the `%p`/`%d` rule above `ns.addPattern`
+-- already documents. Everything a French or Russian player types walked past it.
+-- Somebody typed "elodie" in the blocked field, the game handed over
+-- "Elodie-TestRealm", the two keys met and the block worked; they typed "élodie"
+-- and the two keys differed on exactly the byte `:lower()` cannot fold. The chip
+-- appeared, the tile counted it, the tester said "always blocked" -- and nobody
+-- was blocked.
+--
+-- The other direction is the one with no excuse. "élodie" in the ALLOWED field
+-- left "Élodie-TestRealm" unknown, so in the default scope a friend the person
+-- had just allowed by hand was cut off with no popup, no sound and no chat line.
+-- An allowed player keeps WoW's own behaviour: that rule has no exception, and
+-- an add-on whose public is French cannot call an accented pseudo an edge case.
+--
+-- Bounded on purpose, and written by bytes rather than pulled from a library
+-- WoW does not ship:
+--   * Latin-1 supplement U+00C0-U+00DE except U+00D7, the multiplication sign --
+--     in UTF-8 the lead byte 0xC3 with a second byte of 0x80-0x9E except 0x97.
+--     The lowercase letter is the same lead byte plus 0x20. ß (U+00DF) is out of
+--     the range on purpose: its uppercase is two letters, not one.
+--   * Latin Extended-A (U+0100-U+017F) by the explicit pair table below. The
+--     arithmetic on that block changes direction twice, so the pairs are written
+--     out rather than guessed at.
+--   * Cyrillic U+0410-U+042F -> +0x20, plus Ё (U+0401) -> ё (U+0451), which sits
+--     outside that run.
+-- Anything else comes back byte for byte, so every ASCII name coming out of the
+-- game keeps the exact key it has always had.
+--
+-- What this must never become is a whitelist of accepted letters: the comment
+-- above `ns.addPattern` says why -- it would refuse precisely the names this
+-- fixes. `os.setlocale` is not an option either; the client's locale is not ours
+-- to set, and the answer must not depend on it.
+local foldCase
+do
+    -- Uppercase codepoint -> lowercase codepoint, one line per letter family.
+    local LATIN_EXT_A = {
+        [0x0100] = 0x0101, [0x0102] = 0x0103, [0x0104] = 0x0105, -- Ā Ă Ą
+        [0x0106] = 0x0107, [0x0108] = 0x0109, [0x010A] = 0x010B, [0x010C] = 0x010D, -- Ć Ĉ Ċ Č
+        [0x010E] = 0x010F, [0x0110] = 0x0111, -- Ď Đ
+        [0x0112] = 0x0113, [0x0114] = 0x0115, [0x0116] = 0x0117, [0x0118] = 0x0119, [0x011A] = 0x011B, -- Ē Ĕ Ė Ę Ě
+        [0x011C] = 0x011D, [0x011E] = 0x011F, [0x0120] = 0x0121, [0x0122] = 0x0123, -- Ĝ Ğ Ġ Ģ
+        [0x0124] = 0x0125, [0x0126] = 0x0127, -- Ĥ Ħ
+        [0x0128] = 0x0129, [0x012A] = 0x012B, [0x012C] = 0x012D, [0x012E] = 0x012F, [0x0132] = 0x0133, -- Ĩ Ī Ĭ Į Ĳ
+        [0x0134] = 0x0135, [0x0136] = 0x0137, -- Ĵ Ķ
+        [0x0139] = 0x013A, [0x013B] = 0x013C, [0x013D] = 0x013E, [0x013F] = 0x0140, [0x0141] = 0x0142, -- Ĺ Ļ Ľ Ŀ Ł
+        [0x0143] = 0x0144, [0x0145] = 0x0146, [0x0147] = 0x0148, [0x014A] = 0x014B, -- Ń Ņ Ň Ŋ
+        [0x014C] = 0x014D, [0x014E] = 0x014F, [0x0150] = 0x0151, [0x0152] = 0x0153, -- Ō Ŏ Ő Œ
+        [0x0154] = 0x0155, [0x0156] = 0x0157, [0x0158] = 0x0159, -- Ŕ Ŗ Ř
+        [0x015A] = 0x015B, [0x015C] = 0x015D, [0x015E] = 0x015F, [0x0160] = 0x0161, -- Ś Ŝ Ş Š
+        [0x0162] = 0x0163, [0x0164] = 0x0165, [0x0166] = 0x0167, -- Ţ Ť Ŧ
+        [0x0168] = 0x0169, [0x016A] = 0x016B, [0x016C] = 0x016D, [0x016E] = 0x016F, -- Ũ Ū Ŭ Ů
+        [0x0170] = 0x0171, [0x0172] = 0x0173, -- Ű Ų
+        [0x0174] = 0x0175, [0x0176] = 0x0177, [0x0178] = 0x00FF, -- Ŵ Ŷ Ÿ (Ÿ folds back into Latin-1)
+        [0x0179] = 0x017A, [0x017B] = 0x017C, [0x017D] = 0x017E, -- Ź Ż Ž
+    }
+
+    -- Every codepoint above lives in U+0080-U+07FF, the two-byte range.
+    local function encode(cp)
+        return string.char(0xC0 + math.floor(cp / 64), 0x80 + cp % 64)
+    end
+
+    -- Built once at load: the fold itself is a table lookup on a byte pair.
+    local FOLD = {}
+    for upper, lower in pairs(LATIN_EXT_A) do
+        FOLD[encode(upper)] = encode(lower)
+    end
+    -- İ (U+0130) is the one pair whose lowercase leaves the two-byte range: it
+    -- folds to a plain one-byte "i". Written out rather than forced through
+    -- `encode`, which would emit an overlong sequence for it.
+    FOLD["\196\176"] = "i"
+    for trail = 0x80, 0x9E do
+        if trail ~= 0x97 then
+            FOLD[string.char(0xC3, trail)] = string.char(0xC3, trail + 0x20)
+        end
+    end
+    -- А-П stay on lead byte 0xD0; Р-Я cross to 0xD1, where the low half of the
+    -- lowercase run lives.
+    for trail = 0x90, 0x9F do
+        FOLD[string.char(0xD0, trail)] = string.char(0xD0, trail + 0x20)
+    end
+    for trail = 0xA0, 0xAF do
+        FOLD[string.char(0xD0, trail)] = string.char(0xD1, trail - 0x20)
+    end
+    FOLD[string.char(0xD0, 0x81)] = string.char(0xD1, 0x91)
+
+    -- `gsub` keeps the match untouched when the function answers nil, which is
+    -- exactly "this pair is outside the mapped blocks, leave it alone".
+    local function foldPair(pair)
+        return FOLD[pair]
+    end
+
+    foldCase = function(text)
+        if type(text) ~= "string" then return text end
+        -- ASCII first. `lower` folds A-Z and never touches a byte >= 0x80, so
+        -- the two passes cannot tread on each other.
+        text = text:lower()
+        return (text:gsub("[\194-\223][\128-\191]", foldPair))
+    end
+end
+
 -- Forward declaration: the one rule that says where a pseudo ends lives further
 -- down, next to the always-blocked door, and is assigned there. Declared here so
 -- `normalizeName` cuts with it rather than with a rule of its own -- keep the
@@ -536,7 +640,7 @@ local function normalizeBNetName(name)
     name = stripWoWFormatting(name)
     if not name then return nil end
     -- Battle.net account display names may contain spaces; preserve them.
-    name = name:gsub("%s+", " "):lower()
+    name = foldCase((name:gsub("%s+", " ")))
     return name
 end
 
@@ -752,7 +856,7 @@ function splitCharacterName(name)
     if clean == "" then return nil end
     local namePart, realmPart = clean:match("^([^%s%-]+)[%s%-](.*)$")
     if not namePart then namePart = clean end
-    namePart = namePart:lower()
+    namePart = foldCase(namePart)
     if namePart == "" then return nil end
     return namePart, realmPart
 end
@@ -777,7 +881,7 @@ local function matchesKeyword(name)
     if not nameOnly then return false, nil end
 
     for _, keyword in ipairs(SanctuaryDB.keywords) do
-        local cleanKeyword = tostring(keyword or ""):lower():gsub("%s", "")
+        local cleanKeyword = foldCase(tostring(keyword or "")):gsub("%s", "")
         if cleanKeyword ~= "" and nameOnly:find(cleanKeyword, 1, true) then
             return true, keyword
         end
@@ -797,7 +901,7 @@ end
 -- spelled his realm one way and his entry the other.
 local function normalizeRealm(realm)
     if type(realm) ~= "string" then return nil end
-    realm = realm:gsub("[%s%-']", ""):lower()
+    realm = foldCase((realm:gsub("[%s%-']", "")))
     if realm == "" then return nil end
     return realm
 end
@@ -1754,7 +1858,7 @@ local function normalizePatternText(text)
     if type(text) ~= "string" then return nil end
     local clean = stripWoWFormatting(text)
     if not clean then return nil end
-    clean = clean:gsub("%s", ""):lower()
+    clean = foldCase((clean:gsub("%s", "")))
     if clean == "" then return nil end
     return clean
 end
@@ -2782,7 +2886,9 @@ isSelf = function(sender)
     end
     playerName = playerName or UnitName("player")
     playerRealm = playerRealm or getPlayerRealm()
-    if not playerName or senderName:lower() ~= playerName:lower() then
+    -- Folded by the same rule the keys are built with, so an accented pseudo is
+    -- recognised as the player's own on both sides of the comparison.
+    if not playerName or foldCase(senderName) ~= foldCase(playerName) then
         return false
     end
 
