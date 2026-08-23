@@ -1395,8 +1395,17 @@ local function rebuildWhitelist()
 
     -- The automatic sources, and only those: a roster name, keyed on its bare
     -- pseudo. The manual entries have their own writer just below.
-    local function addCharacterName(name, source, displayName)
-        local normalized = normalizeName(name)
+    --
+    -- `bareNameIsOurRealm` says what a roster handing over a pseudo with no
+    -- realm means by it. True of the guild, of character friends and of the
+    -- group: all three are read on the realm the player stands on, and WoW
+    -- qualifies the names that are not. Left unsaid it means "no idea", which
+    -- is the only safe default -- see the deduplication below.
+    local function addCharacterName(name, source, displayName, bareNameIsOurRealm)
+        -- One cut, both halves. The first is what `normalizeName` answers -- the
+        -- bare pseudo this cache is keyed on -- and the second is what the
+        -- deduplication just below has to know before it trusts a realm.
+        local normalized, realmPart = splitCharacterName(name)
         if not normalized then return end
         -- A contact the person also typed by hand keeps their own entry, and
         -- gets one line, not two. First-writer-wins used to do that on its own,
@@ -1406,7 +1415,18 @@ local function rebuildWhitelist()
         -- roster group -- and be counted twice in the tile. Asked on the
         -- qualified key, so a namesake on ANOTHER realm is left alone: he is
         -- not the person who was typed in.
-        local manualKey = normalizeCharacterKey(name)
+        --
+        -- INVARIANT -- only where the two keys are KNOWN to name one person. A
+        -- bare pseudo has no realm of its own, so `normalizeCharacterKey` fills
+        -- the player's in; the Battle.net roster is the one source for which
+        -- that guess is wrong, since it names the realm on the side and a
+        -- friend may be playing anywhere. For that friend the bare key is the
+        -- only one the WoW channel ever holds: dropped in favour of a
+        -- namesake's manual entry, adding him to the allowed list is what takes
+        -- him off it -- whisper discarded, invitation and duel refused with no
+        -- popup and no sound, while the panel goes on showing him allowed.
+        local manualKey = (normalizeRealm(realmPart) or bareNameIsOurRealm)
+            and normalizeCharacterKey(name) or nil
         if manualKey and sources[manualKey] then return end
         cache[normalized] = true
         noteSource(sources, sourceLabels, normalized, source,
@@ -1511,7 +1531,9 @@ local function rebuildWhitelist()
         local numMembers = GetNumGuildMembers() or 0
         for i = 1, numMembers do
             local name = GetGuildRosterInfo(i)
-            if name then addCharacterName(name, "guild") end
+            -- A guild is read from inside it: a mate the roster names without a
+            -- realm shares the player's own.
+            if name then addCharacterName(name, "guild", nil, true) end
         end
     end)
 
@@ -1525,6 +1547,10 @@ local function rebuildWhitelist()
                 addBNetAccountName(info.accountName, "bnet", nil, true)
                 local gameInfo = info.gameAccountInfo
                 if gameInfo and gameInfo.characterName and gameInfo.characterName ~= "" then
+                    -- No fourth argument, and that is the point: this roster
+                    -- names the realm on the side, in `realmName` just below, so
+                    -- the bare pseudo it hands over says nothing about where the
+                    -- friend is playing.
                     addCharacterName(gameInfo.characterName, "bnet", info.accountName)
                     -- Keyed on the blocked-list key shape so a character seen on
                     -- any WoW path resolves to its account under one rule, with
@@ -1575,7 +1601,10 @@ local function rebuildWhitelist()
         local numFriends = C_FriendList.GetNumFriends() or 0
         for i = 1, numFriends do
             local info = C_FriendList.GetFriendInfoByIndex(i)
-            if info and info.name then addCharacterName(info.name, "friend") end
+            -- Character friends are per-character too: no realm means ours.
+            if info and info.name then
+                addCharacterName(info.name, "friend", nil, true)
+            end
         end
     end)
 
@@ -1591,7 +1620,9 @@ local function rebuildWhitelist()
                     if realm and realm ~= "" then
                         name = name .. "-" .. realm
                     end
-                    addCharacterName(name, "group")
+                    -- `UnitName` gives the realm exactly when it is not ours, so
+                    -- what is left bare here is on ours.
+                    addCharacterName(name, "group", nil, true)
                 end
             end
         end

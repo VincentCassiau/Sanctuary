@@ -4130,6 +4130,108 @@ for _, order in ipairs({ { "Ysondre", "Hyjal" }, { "Hyjal", "Ysondre" } }) do
     equal(hyjal.detail, "Twin Two#2222", "never to the other one's")
 end
 
+-- C9c -- adding somebody to "Toujours autorises" may never be what takes them
+-- off it. The WoW paths know a Battle.net friend by the bare pseudo his roster
+-- hands over; that roster names his realm on the side, so the same pseudo typed
+-- into the allowed field is keyed on the PLAYER's realm -- somebody else
+-- entirely as soon as the friend plays elsewhere. Deduplicating the two dropped
+-- the roster entry, the only one the WoW channel ever had for him: his whisper
+-- was discarded and his invitation and duel refused with no popup, no sound and
+-- no system line, while the Battle.net group went on showing him allowed.
+-- Silently cutting an allowed player is the side of the error the product
+-- forbids, and here it was the act of allowing him that did it.
+resetModelState()
+bnetFriends = {
+    { accountName = "RealFriend#1234", bnetAccountID = 96,
+      gameAccountInfo = { characterName = "Bnetchar", realmName = "Hyjal" } },
+}
+ns.invalidateWhitelist()
+-- Scoped: this file is one chunk and Lua counts live locals per function.
+do
+    equal(ns.classifyName("Bnetchar-Hyjal").verdict, "always_allowed",
+        "a Battle.net friend playing on another realm is allowed")
+    equal(select(2, ns.addAllowed("Bnetchar")), "bnetchar-testrealm",
+        "and his pseudo, typed by hand, is keyed on the realm the player is on")
+    equal(ns.classifyName("Bnetchar-Hyjal").verdict, "always_allowed",
+        "which leaves the friend allowed, not unknown")
+    equal(select(1, ns.getCharacterDecision("Bnetchar-Hyjal")), false,
+        "the decision does not block him")
+    equal((ns.decideChat("whisper", "Bnetchar-Hyjal")), false,
+        "his whisper is not discarded")
+    equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Bnetchar-Hyjal"), false,
+        "and it arrives through the registered filter too")
+
+    local beforeDeclines, beforeDuels = declinedGroups, cancelledDuels
+    fire("PARTY_INVITE_REQUEST", "Bnetchar-Hyjal")
+    runTimers(3)
+    equal(declinedGroups, beforeDeclines, "his group invitation is left to WoW")
+    fire("DUEL_REQUESTED", "Bnetchar-Hyjal")
+    runTimers(3)
+    equal(cancelledDuels, beforeDuels, "and so is his duel")
+
+    equal(select(1, ns.removeAllowed("bnetchar-testrealm")), true,
+        "while the entry the person typed is still theirs to delete")
+end
+
+-- Same friend, roster giving no realm at all: the bare pseudo is everything
+-- anyone has for him, so it is the entry that must survive the typing.
+resetModelState()
+bnetFriends = {
+    { accountName = "NoRealm#9999", bnetAccountID = 97,
+      gameAccountInfo = { characterName = "Namelesschar" } },
+}
+ns.invalidateWhitelist()
+do
+    equal(ns.classifyName("Namelesschar-Hyjal").verdict, "always_allowed",
+        "a friend the roster gave no realm for is allowed wherever he is seen")
+    equal(select(1, ns.addAllowed("Namelesschar")), true,
+        "his pseudo is typed into the allowed field as well")
+    equal(ns.classifyName("Namelesschar-Hyjal").verdict, "always_allowed",
+        "and he stays allowed")
+    equal(select(1, ns.getCharacterDecision("Namelesschar-Hyjal")), false,
+        "with nothing blocked on the WoW paths")
+    equal((ns.decideChat("whisper", "Namelesschar-Hyjal")), false,
+        "and his whisper arriving")
+end
+
+-- The deduplication itself stays where it is true. A guild is read from inside
+-- it, so a mate the roster names bare is on the player's own realm and the two
+-- keys really do name one person: one line, one count, under the label the
+-- person gave.
+resetModelState()
+guildMembers = { "Guildtwin-TestRealm" }
+inGuild = true
+ns.invalidateWhitelist()
+do
+    equal(ns.getListCounts().allowed.total, 1, "the guild mate counts once on his own")
+    equal(select(1, ns.addAllowed("Guildtwin")), true, "then the person types him in too")
+    local counts = ns.getListCounts()
+    equal(counts.allowed.total, 1, "and the tile still counts him once")
+    equal(counts.allowed.manual, 1, "as the entry they made")
+    equal(counts.allowed.guild, 0, "and not a second time as a guild mate")
+    local guildGroup
+    for _, group in ipairs(ns.getAutoWhitelistGroups()) do
+        if group.source == "guild" then guildGroup = group end
+    end
+    equal(guildGroup and guildGroup.total, 0,
+        "the automatic guild group has no second line for him")
+    equal(ns.classifyName("Guildtwin-TestRealm").list, "manual",
+        "and he is credited to the list the person can act on")
+end
+inGuild = false
+
+-- And decision 119 is untouched by any of it: a namesake on another realm, in
+-- nobody's roster, is not the person who was typed in.
+resetModelState()
+do
+    equal(select(2, ns.addAllowed("Typedonly")), "typedonly-testrealm",
+        "a name typed with no realm means the realm the player is on")
+    equal(ns.classifyName("Typedonly-TestRealm").verdict, "always_allowed",
+        "so the character it names is allowed")
+    equal(ns.classifyName("Typedonly-Ysondre").verdict, "unknown",
+        "and his namesake on another realm stays a stranger")
+end
+
 -- C10 -- the eight answers of the board, through classifyName.
 resetModelState()
 guildMembers = { "Guildy-TestRealm" }
