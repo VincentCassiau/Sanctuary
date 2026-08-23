@@ -1184,6 +1184,49 @@ function ns.findAllowedKey(name)
     return isAccountName(clean) and normalizeBNetName(clean) or normalizeCharacterKey(clean)
 end
 
+-- What a character entry reads as on screen: "Pseudo-Royaume", always, whatever
+-- the person typed. Decision 119 puts the realm in every key; a panel that then
+-- shows "Kadaj" alone tells the reader less than the add-on knows, and after a
+-- transfer it would tell them something false -- the entry names a character on
+-- the realm it was added from, not on the one they are standing on now.
+--
+-- Built from the KEY, which is the record, and not from the game: what is on the
+-- chip is what the lookup will match. The pseudo keeps the capital the person
+-- typed (`splitCharacterName`'s third answer, the folded key being no way to
+-- write a name), and the realm is the typed one when there was one, so
+-- "Toto-Azjol-Nerub" stays readable rather than coming back "Toto-Azjolnerub".
+--
+-- Accounts pass through untouched: a BattleTag has no realm to add.
+function ns.qualifiedDisplayName(key, displayName)
+    local raw = displayName
+    if type(raw) ~= "string" or raw:gsub("%s", "") == "" then raw = key end
+    if type(raw) ~= "string" then return nil end
+    if isAccountName(raw) or (type(key) == "string" and isAccountName(key)) then return raw end
+
+    local _, typedRealm, pseudo = splitCharacterName(raw)
+    if not pseudo then return raw end
+
+    local realm = type(key) == "string" and key:match("^[^%-]+%-(.+)$") or nil
+    -- The realm as the person wrote it, but only where it is the realm the key
+    -- actually holds: a display name and a key that disagree means a settings
+    -- file somebody edited by hand, and the key is the half the decision reads.
+    if typedRealm and normalizeRealm(typedRealm)
+        and (realm == nil or normalizeRealm(typedRealm) == realm) then
+        return pseudo .. "-" .. typedRealm
+    end
+    if not realm then return raw end
+    -- The key holds a folded realm. Spelled back the way the client spells it
+    -- when it is the player's own -- the common case, a name typed with no realm
+    -- -- and otherwise with a capital, since "kadaj-ysondre" on a chip reads as a
+    -- bug rather than as a realm. `%l` is ASCII under Lua's C locale, so a
+    -- cyrillic realm is left exactly as it is instead of being cut mid-character.
+    local own = getPlayerRealm()
+    if own ~= "" and normalizeRealm(own) == realm then return pseudo .. "-" .. own end
+    local first = realm:match("^%l")
+    if first then realm = first:upper() .. realm:sub(2) end
+    return pseudo .. "-" .. realm
+end
+
 ns.normalizeCharacterKey = normalizeCharacterKey
 -- The KEY that answers, not just whether one does: the right-click menu has to
 -- remove the entry the lookup actually found, and it asks here rather than
@@ -1987,7 +2030,12 @@ function ns.describeAccessDecision(name)
 
     return {
         valid = true,
-        input = name,
+        -- What the sentence names, and it is never just what was typed: a
+        -- character is said with its realm, the way both panels say it and the
+        -- way the key that answered is built (decision 119). Typing "Kadaj" on
+        -- Ysondre asks about Kadaj-Ysondre, and the answer says so rather than
+        -- letting the reader assume it covered every Kadaj there is.
+        display = ns.qualifiedDisplayName(ns.findAllowedKey(name), name),
         normalized = normalized,
         verdict = classification.verdict,
         list = classification.list,

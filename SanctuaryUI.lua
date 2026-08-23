@@ -684,7 +684,8 @@ local function offerDisplacedUndo(addedKey, displaced)
     if type(displaced) ~= "table" then return end
     local spec = DISPLACED_UNDO[displaced.list]
     if not spec or not addedKey then return end
-    local label = (type(displaced.data) == "table" and displaced.data.displayName)
+    local label = ns.qualifiedDisplayName(displaced.key,
+        type(displaced.data) == "table" and displaced.data.displayName or nil)
         or displaced.key
     offerUndoLine(string.format(L["UNDO_MOVED"], label, L[spec.titleKey]), function()
         ns[spec.remove](addedKey)
@@ -963,7 +964,7 @@ function ns.RefreshTestAnswer(text)
         else
             reason = L["LIST_BLOCKED"]
         end
-        answer:SetText(string.format(L["TEST_ALWAYS_BLOCKED"], info.input, reason))
+        answer:SetText(string.format(L["TEST_ALWAYS_BLOCKED"], info.display, reason))
         answer:SetTextColor(unpack(C.red))
         return
     end
@@ -976,16 +977,16 @@ function ns.RefreshTestAnswer(text)
             local key = LIST_KEYS[info.list]
             reason = key and L[key] or tostring(info.list)
         end
-        answer:SetText(string.format(L["TEST_ALWAYS_ALLOWED"], info.input, reason))
+        answer:SetText(string.format(L["TEST_ALWAYS_ALLOWED"], info.display, reason))
         answer:SetTextColor(unpack(C.green))
         return
     end
 
     if info.blockedNow then
-        answer:SetText(string.format(L["TEST_UNKNOWN_BLOCKED"], info.input))
+        answer:SetText(string.format(L["TEST_UNKNOWN_BLOCKED"], info.display))
         answer:SetTextColor(unpack(C.orange))
     else
-        answer:SetText(string.format(L["TEST_UNKNOWN_ALLOWED"], info.input))
+        answer:SetText(string.format(L["TEST_UNKNOWN_ALLOWED"], info.display))
         answer:SetTextColor(unpack(C.dim))
     end
 end
@@ -1780,8 +1781,14 @@ local function layoutChips(parent, entries, startY, onRemove)
     return y
 end
 
-local function describeChipSource(data)
+-- The name first, then where it came from. A chip is cut to the width of its
+-- row, and since decision 119 every character on one carries its realm as well
+-- -- the two together are what runs past the edge. The tooltip is where the
+-- whole of it can be read, so it says the name in full before saying anything
+-- about it. No sentence to translate: a name is a name in both languages.
+local function describeChipSource(data, label)
     local parts = {}
+    if type(label) == "string" and label ~= "" then parts[#parts + 1] = label end
     if type(data) == "table" then
         if data.addedAt then
             parts[#parts + 1] = string.format(L["CHIP_ADDED_ON"], formatDate(data.addedAt))
@@ -2042,10 +2049,16 @@ local function refreshAllowedPanel(force)
     local manual = {}
     for key, data in pairs(SanctuaryDB.manualWhitelist or {}) do
         if type(data) ~= "table" or data.source ~= "trust" then
+            -- Read off the key, never off what was typed: the key is what the
+            -- decision matches on, so a chip saying "Kadaj" where the entry only
+            -- covers Kadaj-Ysondre would be the panel telling the reader
+            -- something the add-on does not do (decision 119).
+            local label = ns.qualifiedDisplayName(key,
+                type(data) == "table" and data.displayName or nil) or key
             manual[#manual + 1] = {
                 key = key,
-                label = (type(data) == "table" and data.displayName) or key,
-                tooltip = describeChipSource(data),
+                label = label,
+                tooltip = describeChipSource(data, label),
                 data = data,
             }
         end
@@ -2092,7 +2105,11 @@ local function refreshAllowedPanel(force)
     local trustEntries = {}
     for key, data in pairs(SanctuaryDB.manualWhitelist or {}) do
         if type(data) == "table" and data.source == "trust" then
-            trustEntries[#trustEntries + 1] = { key = key, label = data.displayName or key, data = data }
+            trustEntries[#trustEntries + 1] = {
+                key = key,
+                label = ns.qualifiedDisplayName(key, data.displayName) or key,
+                data = data,
+            }
         end
     end
     table.sort(trustEntries, function(a, b) return tostring(a.label):lower() < tostring(b.label):lower() end)
@@ -2144,7 +2161,8 @@ local function refreshAllowedPanel(force)
                 for _, item in ipairs(trustEntries) do
                     chips[#chips + 1] = {
                         key = item.key, label = item.label,
-                        tooltip = describeChipSource(item.data), data = item.data,
+                        tooltip = describeChipSource(item.data, item.label),
+                        data = item.data,
                     }
                 end
                 y = layoutChips(child, chips, y, function(item)
@@ -2263,10 +2281,15 @@ local function refreshBlockedPanel(force)
 
     local names = {}
     for key, data in pairs(SanctuaryDB.blockedNames or {}) do
+        -- Same rule as the allowed panel: the realm has been in the key since
+        -- 1.0.0, and showing the bare pseudo let a person read "Toto" on the
+        -- list while the entry only ever blocked the Toto of one realm.
+        local label = ns.qualifiedDisplayName(key,
+            type(data) == "table" and data.displayName or nil) or key
         names[#names + 1] = {
             key = key,
-            label = (type(data) == "table" and data.displayName) or key,
-            tooltip = describeChipSource(data),
+            label = label,
+            tooltip = describeChipSource(data, label),
         }
     end
     table.sort(names, function(a, b) return tostring(a.label):lower() < tostring(b.label):lower() end)
