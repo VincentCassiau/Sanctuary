@@ -943,9 +943,13 @@ end
 -- which is what the game hands over when both sides share it.
 --
 -- Nothing Sanctuary does may touch what the player says to themselves: this is
--- the single site that answers that question, and `decideChat` is its only
--- caller.
-local function isSelf(sender)
+-- the single site that answers that question, `decideChat` is its only caller
+-- in this file, and the right-click menu asks it from the interface file.
+--
+-- Published on `ns` rather than kept as a chunk local, like the list writers
+-- below: Lua caps a chunk at 200 live registers, this one runs at 184, and a
+-- rule with one caller does not need to hold one of the sixteen left.
+function ns.isSelf(sender)
     local senderName, senderRealm = splitCharacterName(sender)
     if not senderName then return false end
 
@@ -964,7 +968,6 @@ local function isSelf(sender)
     return realm == normalizeRealm(playerRealm)
 end
 
-ns.isSelf = isSelf
 
 -- One key shape for the exact-name list, and it always carries a realm:
 -- "name-realm". A name typed with no realm means the realm the player is on --
@@ -1086,14 +1089,15 @@ end
 -- `ns.normalizeName` alone: an account allowed by hand ("Real Friend#1234") is
 -- keyed whole, so the menu looked up "real", found nothing, and offered to allow
 -- somebody who already was.
-local function findAllowedKey(name)
+-- On `ns` for the same reason `ns.isSelf` is, one screen up: one caller here,
+-- one caller in the interface, and no register to spare.
+function ns.findAllowedKey(name)
     local clean = stripWoWFormatting(name)
     if not clean or clean:gsub("%s", "") == "" then return nil end
     return isAccountName(clean) and normalizeBNetName(clean) or normalizeName(clean)
 end
 
 ns.normalizeBlockedKey = normalizeBlockedKey
-ns.findAllowedKey = findAllowedKey
 -- The KEY that answers, not just whether one does: the right-click menu has to
 -- remove the entry the lookup actually found, and it asks here rather than
 -- deriving the key itself so that the menu and the filters can never disagree
@@ -1542,7 +1546,130 @@ local function getCharacterDecision(name)
     return true, "not_whitelisted", nil
 end
 
+-- ----------------------------------------------------------------------------
+-- One decision per interaction, one decision per message
+-- ----------------------------------------------------------------------------
+
+-- The one decision order, for every attributable path there is:
+--   isAlwaysBlocked(name) -> the gate for this kind -> getCharacterDecision(name)
+-- The always-blocked list comes before the gate on purpose: it is what makes it
+-- beat a filter the person unticked.
+--
+-- Answers four values, `(block, reason, detail, gateOpen)`. `gateOpen` is what a
+-- debug entry publishes as `filterEnabled`; a caller that wants three reads
+-- three, which is what the four interaction handlers do.
+--
+-- The gate is not the same question for every kind, and this is the only place
+-- that knows which:
+--   * `group` -- never open. Group, raid and instance chat is filtered for the
+--     always-blocked list and nothing else, whatever is ticked.
+--   * `channel` -- the three-mode setting, open at "all" alone.
+--   * everything else -- the checkbox for that kind, popup names mapped first.
+local function decideInteraction(kind, name)
+    local gateOpen
+    if kind == "group" then
+        gateOpen = false
+    elseif kind == "channel" then
+        gateOpen = isFilterOn("channelMode") == "all"
+    else
+        gateOpen = isFilterOn(FILTER_KEY_BY_POPUP[kind] or kind) == true
+    end
+
+    local blocked, reason, detail = isAlwaysBlocked(name)
+    if blocked then return true, reason, detail, gateOpen end
+    if not gateOpen then return false, "filter_off", nil, false end
+    local shouldBlock, decisionReason, decisionDetail = getCharacterDecision(name)
+    return shouldBlock, decisionReason, decisionDetail, true
+end
+
+-- What the debug log calls a block. "blocked_name" gets its own word: reading
+-- BLOCK_NOT_WHITELISTED on someone the person blocked by hand would send a
+-- reader looking through the wrong list.
+local function describeBlockAction(shouldBlock, reason)
+    if not shouldBlock then return "ALLOW" end
+    if reason == "keyword" then return "BLOCK_KEYWORD" end
+    if reason == "blocked_name" then return "BLOCK_BLOCKED_NAME" end
+    return "BLOCK_NOT_WHITELISTED"
+end
+
+-- The log's `keyword` column means "the pattern that matched", nothing else. An
+-- exact blocked name is not a pattern and must not be exported as one.
+local function keywordOf(reason, detail)
+    if reason == "keyword" then return detail end
+    return nil
+end
+
+-- INVARIANT, and the whole point of this release: `isSelf`, `isAlwaysBlocked`,
+-- `getCharacterDecision` and `isFilterOn` are not called on a message path
+-- anywhere but in `decideInteraction`, `decideChat` and `decideBNetWhisper`. A
+-- new condition is posed in the decision, never in a consumer.
+--
+-- Every chat message used to be judged twice -- once by the filter, deciding
+-- whether the line shows, once by the event handler, deciding what is logged,
+-- counted, announced and closed -- and the two copies spelled the same order
+-- out. A fix landed on one of the two had one chance in two of landing on the
+-- right one; that happened three times in this release, and the last of them
+-- was a player's note to themselves swallowed by the handler while the filter
+-- let it through. The body where a guard can be forgotten no longer exists:
+-- filters and handlers are generated from `CHAT_KINDS`, out of this function.
+--
+-- `reason` says what happened to callers: "disabled" and "self" mean nothing was
+-- decided and nothing at all is to be written, "filter_off" means the gate is
+-- shut, anything else is a decision.
+local function decideChat(kind, sender)
+    if not isEnabled() then return false, "disabled", nil, false end
+    -- Whispering yourself is a real thing people do -- a note, a link kept for
+    -- later -- and Sanctuary may never touch what the player says to themselves.
+    if ns.isSelf(sender) then return false, "self", nil, false end
+    return decideInteraction(kind, sender)
+end
+
+-- Battle.net whispers use account display names, not character names.
+--
+-- INVARIANT -- Sanctuary never blocks anyone on Battle.net. The always-blocked
+-- list and the patterns are deliberately absent from this path, and from every
+-- other Battle.net one. Adding a friend to Battle.net is an act of trust the
+-- person already performed, in a client Sanctuary does not own; cutting one is
+-- done there too, by removing or blocking the account. An add-on that silently
+-- swallowed a Battle.net friend's whisper would leave the person waiting for an
+-- answer that never comes, with nothing on screen to explain it -- and no way to
+-- undo it from Battle.net, where they would look first.
+--
+-- So the only question asked here is the whitelist one: is the account a
+-- Battle.net friend, or in the current group. The blocked list holds WoW
+-- characters, and reaches them on the WoW paths only.
+--
+-- Answers `(block, reason, info)`. `info` carries everything the debug entry
+-- publishes, so the filter and the handler cannot describe one whisper two ways.
+-- The sender is resolved before the checkbox is read, which costs one
+-- `GetAccountInfoByID` per ChatFrame while the whisper filter is unticked: the
+-- price of the two paths asking one function rather than each their own.
+local function decideBNetWhisper(sender, ...)
+    local bnetSender = resolveBNetWhisperSender(sender, ...)
+    local decisionName = bnetSender.accountName or sender
+    local info = {
+        accountName = decisionName,
+        rawSender = bnetSender.rawSenderText,
+        bnetSenderID = bnetSender.bnSenderIDState,
+        bnetResolvedByID = bnetSender.resolvedByID,
+        bnetWhitelisted = false,
+        inGroup = false,
+    }
+
+    if not isEnabled() then return false, "disabled", info end
+    if isFilterOn("whisper") ~= true then return false, "filter_off", info end
+
+    info.bnetWhitelisted = isBNetWhitelisted(decisionName) and true or false
+    if info.bnetWhitelisted then return false, "bnet_whitelist", info end
+
+    info.inGroup = (isBNetSenderInGroup and isBNetSenderInGroup(decisionName)) and true or false
+    if info.inGroup then return false, "bnet_group", info end
+
+    return true, "not_whitelisted", info
+end
+
 ns.classifyName = classifyName
+ns.decideChat = decideChat
 
 -- Export whitelist functions to namespace
 ns.isBNetWhitelisted = isBNetWhitelisted
@@ -1811,7 +1938,7 @@ function ns.addAllowed(name, source)
     -- Both halves of that rule live in `findAllowedKey`, which the right-click
     -- menu reads too: the key this writes and the key the menu looks up are one
     -- piece of code, not two that have to agree.
-    local key = findAllowedKey(clean)
+    local key = ns.findAllowedKey(clean)
     if not key then return false end
     SanctuaryDB.manualWhitelist = SanctuaryDB.manualWhitelist or {}
     if SanctuaryDB.manualWhitelist[key] then
@@ -2887,13 +3014,15 @@ local function shouldSuppressSecretGroupInviteSystemMessage(msg)
     return (evaluateStrictSecretSuppression())
 end
 
--- The order every attributable decision path follows:
---   isEnabled() -> isAlwaysBlocked(sender) -> isFilterOn(kind) -> getCharacterDecision
--- The always-blocked list comes before the filter flag on purpose: it is what
--- makes it beat a filter the person unticked.
+-- The order every attributable decision path follows is `decideInteraction`, up
+-- next to `getCharacterDecision`. Nothing in this section spells it out again.
 
 -- System-message filters are invoked once per destination chat frame, so they
 -- must stay side-effect free. Logging/debugging happens in CHAT_MSG_SYSTEM.
+--
+-- The secret predicate stays first and stays apart: a line nobody can read
+-- cannot be attributed to anybody, so it is not a decision about a person and
+-- has no business inside one.
 local function systemMessageFilter(self, event, msg, ...)
     if not isEnabled() then return false end
 
@@ -2902,117 +3031,18 @@ local function systemMessageFilter(self, event, msg, ...)
     local inviterName = extractInviterFromSystemMessage(msg)
     if not inviterName then return false end
 
-    if isAlwaysBlocked(inviterName) then return true end
-    if isFilterOn("groupInvite") ~= true then return false end
-
-    local shouldBlock = getCharacterDecision(inviterName)
-    return shouldBlock
+    -- Parenthesised, and so is every other filter here: Blizzard's registry
+    -- reads a filter's second return value as a replacement for the message
+    -- text, so a decision handing back its `reason` would rewrite the line.
+    return (decideInteraction("groupInvite", inviterName))
 end
 
--- Whisper filter (P1 — active if setting enabled)
-local function whisperFilter(self, event, msg, sender, ...)
-    if not isEnabled() then return false end
-    -- Whispering yourself is a real thing people do -- a note, a link kept for
-    -- later -- and it arrives as a CHAT_MSG_WHISPER whose sender is the player.
-    -- This line was on the six other character filters and missing here alone,
-    -- so a player who had blocked their own name, or who fell under one of their
-    -- own patterns, saw their note vanish. Nothing Sanctuary does may touch what
-    -- the player says to themselves.
-    if isSelf(sender) then return false end
-
-    if isAlwaysBlocked(sender) then return true end
-    if isFilterOn("whisper") ~= true then return false end
-
-    local shouldBlock = getCharacterDecision(sender)
-    return shouldBlock
-end
-
--- Battle.net whispers use account display names, not character names.
---
--- INVARIANT -- Sanctuary never blocks anyone on Battle.net. The always-blocked
--- list and the patterns are deliberately absent from this path, and from every
--- other Battle.net one. Adding a friend to Battle.net is an act of trust the
--- person already performed, in a client Sanctuary does not own; cutting one is
--- done there too, by removing or blocking the account. An add-on that silently
--- swallowed a Battle.net friend's whisper would leave the person waiting for an
--- answer that never comes, with nothing on screen to explain it -- and no way to
--- undo it from Battle.net, where they would look first.
---
--- So the only question this filter asks is the whitelist one: is the account a
--- Battle.net friend, or in the current group. The blocked list holds WoW
--- characters, and reaches them on the WoW paths only.
+-- The Battle.net whisper filter. The decision, the invariant it obeys and every
+-- field the handler publishes live in `decideBNetWhisper`, next to the other two
+-- decisions: this is one of its two consumers, the CHAT_MSG_BN_WHISPER handler
+-- is the other, and neither may ask a question of its own.
 local function bnetWhisperFilter(self, event, msg, sender, ...)
-    if not isEnabled() then return false end
-    if isFilterOn("whisper") ~= true then return false end
-
-    local bnetSender = resolveBNetWhisperSender(sender, ...)
-    local decisionName = bnetSender.accountName or sender
-    if isBNetWhitelisted(decisionName) then return false end
-    if isBNetSenderInGroup and isBNetSenderInGroup(decisionName) then return false end
-    return true
-end
-
--- Say filter (P2 — off by default)
-local function sayFilter(self, event, msg, sender, ...)
-    if not isEnabled() then return false end
-    if isSelf(sender) then return false end
-
-    if isAlwaysBlocked(sender) then return true end
-    if isFilterOn("say") ~= true then return false end
-
-    local shouldBlock = getCharacterDecision(sender)
-    return shouldBlock
-end
-
--- Yell filter (P2 — off by default)
-local function yellFilter(self, event, msg, sender, ...)
-    if not isEnabled() then return false end
-    if isSelf(sender) then return false end
-
-    if isAlwaysBlocked(sender) then return true end
-    if isFilterOn("yell") ~= true then return false end
-
-    local shouldBlock = getCharacterDecision(sender)
-    return shouldBlock
-end
-
--- Emote filter (P2 — off by default)
-local function emoteFilter(self, event, msg, sender, ...)
-    if not isEnabled() then return false end
-    if isSelf(sender) then return false end
-
-    if isAlwaysBlocked(sender) then return true end
-    if isFilterOn("emote") ~= true then return false end
-
-    local shouldBlock = getCharacterDecision(sender)
-    return shouldBlock
-end
-
--- Channel filter (/1, /2, /3...) with 3 modes: none, keywords, all.
--- The always-blocked gate now runs before the mode: a pattern used to let a
--- public channel through while "no filtering" was selected, which contradicted
--- "always blocked, whatever the settings".
-local function channelFilter(self, event, msg, sender, ...)
-    if not isEnabled() then return false end
-    if isSelf(sender) then return false end
-
-    if isAlwaysBlocked(sender) then return true end
-
-    local mode = isFilterOn("channelMode")
-    if mode ~= "all" then return false end
-
-    local shouldBlock = getCharacterDecision(sender)
-    return shouldBlock
-end
-
--- Group, raid and instance chat. The only channels Sanctuary ever touches, and
--- only for the always-blocked list: never a stranger, never the player, and no
--- setting is consulted. This is the unwanted team-mate case that motivated the
--- list -- their /p was the one thing that stayed visible.
-local function groupChatFilter(self, event, msg, sender, ...)
-    if not isEnabled() then return false end
-    if isSelf(sender) then return false end
-    return isAlwaysBlocked(sender) and true or false
+    return (decideBNetWhisper(sender, ...))
 end
 
 local GROUP_CHAT_EVENTS = {
@@ -3026,6 +3056,67 @@ local GROUP_CHAT_EVENTS = {
 }
 
 ns.GROUP_CHAT_EVENTS = GROUP_CHAT_EVENTS
+
+-- ----------------------------------------------------------------------------
+-- The thirteen character-message events, in one table
+-- ----------------------------------------------------------------------------
+
+-- Every chat event whose sender is a WoW character. The filter that decides
+-- whether the line shows, the handler that journals and counts it, and the
+-- event registration itself are all generated from this table -- so the two
+-- halves of one message cannot be given two different orders, and a kind added
+-- here reaches all three at once.
+--
+-- Six filter bodies and four handler bodies used to spell the same order out,
+-- twice per kind. That is the shape the whole release went after: three fixes
+-- in this mission landed on one of the two copies, and the last one -- a
+-- player's whisper to themselves, swallowed by the handler while the filter let
+-- it through -- is why the bodies are gone rather than merely aligned.
+--
+-- Per row:
+--   * `kind`       -- what `decideInteraction` gates on;
+--   * `logType`    -- the Journal type, the one the person reads;
+--   * `quietPass`  -- write nothing at all, not even debug, when the decision is
+--                     not a block. Group chat only: it is far too talkative, and
+--                     that is what the old handler already did;
+--   * `closesTab`  -- close the whisper tab a blocked sender owns;
+--   * `debugExtra` -- one extra field on the debug entry.
+--
+-- CHAT_MSG_SYSTEM and CHAT_MSG_BN_WHISPER are deliberately not here: their
+-- senders are not characters, so neither goes through `decideChat`. They keep a
+-- named filter and a named handler, registered alongside the loop.
+local CHAT_KINDS = {
+    { event = "CHAT_MSG_WHISPER",    kind = "whisper", logType = "whisper", closesTab = true },
+    { event = "CHAT_MSG_SAY",        kind = "say",     logType = "say" },
+    { event = "CHAT_MSG_YELL",       kind = "yell",    logType = "yell" },
+    { event = "CHAT_MSG_EMOTE",      kind = "emote",   logType = "emote" },
+    { event = "CHAT_MSG_TEXT_EMOTE", kind = "emote",   logType = "emote" },
+    { event = "CHAT_MSG_CHANNEL",    kind = "channel", logType = "channel",
+      debugExtra = "channelMode" },
+}
+
+-- Group, raid and instance chat. The only channels Sanctuary ever touches for
+-- anything but a filter, and only for the always-blocked list: never a stranger,
+-- never the player, and no setting is consulted -- which is exactly what the
+-- `group` gate of `decideInteraction` says. This is the unwanted team-mate case
+-- that motivated the list; their /p was the one thing that stayed visible.
+for _, event in ipairs(GROUP_CHAT_EVENTS) do
+    CHAT_KINDS[#CHAT_KINDS + 1] = {
+        event = event, kind = "group", logType = "group", quietPass = true,
+    }
+end
+
+-- One filter per row, and its whole body is the decision. Parenthesised on
+-- purpose: Blizzard's registry reads a filter's second return value as a
+-- replacement for the message text, so handing back `reason` alongside the
+-- verdict would rewrite what the person reads.
+for _, row in ipairs(CHAT_KINDS) do
+    row.filter = function(self, event, msg, sender, ...)
+        return (decideChat(row.kind, sender))
+    end
+end
+
+ns.CHAT_KINDS = CHAT_KINDS
 
 -- Register all filters
 local chatFiltersRegistered = false
@@ -3046,16 +3137,12 @@ local function registerChatFilters()
     chatFiltersRegistered = true
     chatFilterApiUsed = apiPath
 
+    -- The two whose sender is not a character, by name; every other one from
+    -- the table, so a kind can never be given a handler and no filter.
     addFilter("CHAT_MSG_SYSTEM", systemMessageFilter)
-    addFilter("CHAT_MSG_WHISPER", whisperFilter)
     addFilter("CHAT_MSG_BN_WHISPER", bnetWhisperFilter)
-    addFilter("CHAT_MSG_SAY", sayFilter)
-    addFilter("CHAT_MSG_YELL", yellFilter)
-    addFilter("CHAT_MSG_EMOTE", emoteFilter)
-    addFilter("CHAT_MSG_TEXT_EMOTE", emoteFilter)
-    addFilter("CHAT_MSG_CHANNEL", channelFilter)
-    for _, event in ipairs(GROUP_CHAT_EVENTS) do
-        addFilter(event, groupChatFilter)
+    for _, row in ipairs(CHAT_KINDS) do
+        addFilter(row.event, row.filter)
     end
 
     debugLog("CHAT_FILTER_REGISTRY", {
@@ -3262,20 +3349,24 @@ local function hookChatOutputDiagnostics()
 
                 local inviterName, patternIndex, patternKind = extractInviterFromSystemMessage(text)
                 if inviterName then
-                    local shouldBlock, reason, keyword = getCharacterDecision(inviterName)
-                    local addonEnabled = isEnabled()
-                    local filterEnabled = addonEnabled and isFilterOn("groupInvite") == true
-                    -- Order 4.1, the same one `systemMessageFilter` applies: the
-                    -- always-blocked gate comes before the filter flag. This
-                    -- envelope exists because a 2026-06-25 recording showed
+                    -- The same decision `systemMessageFilter` takes, from the
+                    -- same function -- always blocked first, the gate second.
+                    -- This envelope exists because a 2026-06-25 recording showed
                     -- invite lines printed outside the filter registry in raid
-                    -- and in instances; reading the flag first let a blocked
-                    -- name print its line in the open mode -- a visible trace,
-                    -- on the nominal path of the list.
-                    local alwaysBlocked = addonEnabled and isAlwaysBlocked(inviterName) and true or false
-                    local suppress = alwaysBlocked or (filterEnabled and shouldBlock) or false
+                    -- and in instances; it used to spell that order out itself,
+                    -- and an earlier spelling read the flag first, which let a
+                    -- blocked name print its line in the open mode.
+                    local suppress, reason, keyword, filterEnabled = false, "disabled", nil, false
+                    if isEnabled() then
+                        suppress, reason, keyword, filterEnabled =
+                            decideInteraction("groupInvite", inviterName)
+                    end
+                    -- Which of the two halves decided, read off the reason
+                    -- rather than asked a second time.
+                    local alwaysBlocked = (reason == "blocked_name" or reason == "keyword")
                     local suppressedBy = alwaysBlocked and "always_blocked"
                         or (suppress and "filter" or "none")
+                    local shouldBlock = suppress
                     if activeChatOutputProbe and activeChatOutputProbe.message == text then
                         activeChatOutputProbe.observed = true
                         activeChatOutputProbe.frame = frameIndex
@@ -4458,39 +4549,16 @@ end
 -- SECTION H: Event Handlers (side effects happen HERE, not in filters)
 -- ============================================================================
 
--- The one decision order the four interaction handlers share:
---   isAlwaysBlocked(sender) -> isFilterOn(kind) -> getCharacterDecision(sender)
-local function decideInteraction(kind, name)
-    local blocked, reason, detail = isAlwaysBlocked(name)
-    if blocked then return true, reason, detail end
-    if isFilterOn(FILTER_KEY_BY_POPUP[kind] or kind) ~= true then
-        return false, "filter_off", nil
-    end
-    return getCharacterDecision(name)
-end
-
--- What the debug log calls a block. "blocked_name" gets its own word: reading
--- BLOCK_NOT_WHITELISTED on someone the person blocked by hand would send a
--- reader looking through the wrong list.
-local function describeBlockAction(shouldBlock, reason)
-    if not shouldBlock then return "ALLOW" end
-    if reason == "keyword" then return "BLOCK_KEYWORD" end
-    if reason == "blocked_name" then return "BLOCK_BLOCKED_NAME" end
-    return "BLOCK_NOT_WHITELISTED"
-end
+-- `decideInteraction`, `describeBlockAction` and `keywordOf` used to live here,
+-- next to their first callers. They now sit under `getCharacterDecision`, with
+-- `decideChat` and `decideBNetWhisper`: the chat filters need them too, and they
+-- are registered several hundred lines above this section.
 
 -- Which half of isProtectionArmed put the guard in place. In a report, "the
 -- window was masked although the filter is off" is only readable with this.
 local function describeArmedBy(kind)
     if isFilterOn(FILTER_KEY_BY_POPUP[kind] or kind) == true then return "filter" end
     return "blocked_list"
-end
-
--- The log's `keyword` column means "the pattern that matched", nothing else. An
--- exact blocked name is not a pattern and must not be exported as one.
-local function keywordOf(reason, detail)
-    if reason == "keyword" then return detail end
-    return nil
 end
 
 -- PARTY_INVITE_REQUEST: classify the inviter, synchronize with the secure
@@ -4851,174 +4919,89 @@ function handlers.CHAT_MSG_SYSTEM(msg, ...)
     end
 end
 
--- Same order as the interaction handlers: the always-blocked list first, then
--- the filter flag, then the trust decision. `reason == "filter_off"` is what the
--- caller reads to know nothing was decided at all.
-local function decideChat(filterKey, sender)
-    local blocked, reason, detail = isAlwaysBlocked(sender)
-    local filterOn = isFilterOn(filterKey) == true
-    if blocked then return true, reason, detail, filterOn end
-    if not filterOn then return false, "filter_off", nil, false end
-    local shouldBlock, decisionReason, decisionDetail = getCharacterDecision(sender)
-    return shouldBlock, decisionReason, decisionDetail, true
-end
+-- The thirteen character-message handlers, generated from the same table their
+-- filters are. `decideChat` has already answered; nothing below asks a question
+-- of its own, and the row says what to do with the answer.
+--
+-- Four handler bodies used to stand here, spelling out the order the six filter
+-- bodies had already spelt out. That is where a guard could be forgotten, and
+-- where one was: CHAT_MSG_WHISPER had no "is this me" line while its filter did,
+-- so a player who had blocked their own name saw their note journalled, counted
+-- and announced -- the line itself having been let through.
+--
+-- The debug entry is written on the allowed path too. Three expectations read an
+-- `action == "ALLOW"` entry, and a recording that only ever shows blocks cannot
+-- answer "did Sanctuary see this message at all" -- the first question asked of
+-- every report. An early return before the debug entry is a defect, not an
+-- optimisation.
+for _, row in ipairs(CHAT_KINDS) do
+    handlers[row.event] = function(msg, sender, ...)
+        local block, reason, detail, gateOpen = decideChat(row.kind, sender)
 
--- Whisper event handler for logging + exact-tab closing
-function handlers.CHAT_MSG_WHISPER(msg, sender, ...)
-    if not isEnabled() then return end
+        -- Nothing at all, not even a debug entry: the add-on is off, or the
+        -- player is talking to themselves. Neither decides anything about
+        -- anybody, and neither ever did.
+        if reason == "disabled" or reason == "self" then return end
 
-    local shouldBlock, reason, detail, filterEnabled = decideChat("whisper", sender)
-    if reason == "filter_off" then
-        debugLogChatDecision("whisper", sender, msg, "PASS_FILTER_DISABLED", reason, nil, {
-            filterEnabled = false,
-        })
-        return
-    end
-    debugLogChatDecision("whisper", sender, msg,
-        describeBlockAction(shouldBlock, reason), reason, detail, {
-            filterEnabled = filterEnabled,
-        })
-    if not shouldBlock then return end
-
-    logBlock("whisper", sender, msg, nil, keywordOf(reason, detail))
-    closeBlockedWhisperTabs(sender, false)
-end
-
-function handlers.CHAT_MSG_BN_WHISPER(msg, sender, ...)
-    if not isEnabled() then return end
-
-    local bnetSender = resolveBNetWhisperSender(sender, ...)
-    local decisionName = bnetSender.accountName or sender
-    local filterEnabled = isFilterOn("whisper") == true
-    -- No always-blocked branch here, and none in the filter either: see the
-    -- Battle.net invariant next to `bnetWhisperFilter`. With the whisper filter
-    -- unticked this path decides nothing at all.
-    if not filterEnabled then
-        debugLogChatDecision("bn_whisper", decisionName, msg, "PASS_FILTER_DISABLED", "filter_disabled", nil, {
-            filterEnabled = false,
-            rawSender = bnetSender.rawSenderText,
-            bnetSenderID = bnetSender.bnSenderIDState,
-            bnetResolvedByID = bnetSender.resolvedByID,
-        })
-        return
-    end
-
-    local action = "BLOCK_NOT_WHITELISTED"
-    local reason = "not_whitelisted"
-    local detail = nil
-    local bnetWhitelisted = isBNetWhitelisted(decisionName)
-    local bnetGroup = false
-    if bnetWhitelisted then
-        action = "ALLOW"
-        reason = "bnet_whitelist"
-    else
-        bnetGroup = isBNetSenderInGroup(decisionName) and true or false
-        if bnetGroup then
-            action = "ALLOW"
-            reason = "bnet_group"
+        local extra = { filterEnabled = gateOpen }
+        if row.debugExtra == "channelMode" then
+            extra.channelMode = isFilterOn("channelMode") or "none"
         end
+
+        if reason == "filter_off" then
+            -- Group chat stays quiet on a pass: seven events, every line of a
+            -- dungeon run, and the gate it never consults is what "filter_off"
+            -- means there. This is what the old group handler already did.
+            if row.quietPass then return end
+            debugLogChatDecision(row.logType, sender, msg,
+                "PASS_FILTER_DISABLED", reason, nil, extra)
+            return
+        end
+
+        debugLogChatDecision(row.logType, sender, msg,
+            describeBlockAction(block, reason), reason, detail, extra)
+        if not block then return end
+
+        logBlock(row.logType, sender, msg, nil, keywordOf(reason, detail))
+        if row.closesTab then closeBlockedWhisperTabs(sender, false) end
     end
-
-    debugLogChatDecision("bn_whisper", decisionName, msg, action, reason, detail, {
-        filterEnabled = filterEnabled,
-        bnetWhitelisted = bnetWhitelisted and true or false,
-        inGroup = bnetGroup,
-        bnetCache = ns.getBNetWhitelistCacheSize and ns.getBNetWhitelistCacheSize() or "?",
-        rawSender = bnetSender.rawSenderText,
-        bnetSenderID = bnetSender.bnSenderIDState,
-        bnetResolvedByID = bnetSender.resolvedByID,
-    })
-    if action == "ALLOW" then return end
-
-    logBlock("whisper", decisionName, msg, nil, keywordOf(reason, detail))
-    closeBlockedWhisperTabs(sender, true)
 end
 
--- The three public-speech handlers share one body: same order, same debug
--- shape, only the filter key and the log type change.
-local function handlePublicSpeech(kind, msg, sender)
-    if not isEnabled() or isSelf(sender) then return end
-    local shouldBlock, reason, detail, filterEnabled = decideChat(kind, sender)
+-- The second consumer of `decideBNetWhisper`, the filter being the first. The
+-- decision, the invariant and every field published here come from that one
+-- function; nothing is asked again.
+function handlers.CHAT_MSG_BN_WHISPER(msg, sender, ...)
+    local block, reason, info = decideBNetWhisper(sender, ...)
+    if reason == "disabled" then return end
+
     if reason == "filter_off" then
-        debugLogChatDecision(kind, sender, msg, "PASS_FILTER_DISABLED", reason, nil, {
+        debugLogChatDecision("bn_whisper", info.accountName, msg, "PASS_FILTER_DISABLED", reason, nil, {
             filterEnabled = false,
-        })
-        return
-    end
-    debugLogChatDecision(kind, sender, msg,
-        describeBlockAction(shouldBlock, reason), reason, detail, {
-            filterEnabled = filterEnabled,
-        })
-    if shouldBlock then logBlock(kind, sender, msg, nil, keywordOf(reason, detail)) end
-end
-
-function handlers.CHAT_MSG_SAY(msg, sender, ...)
-    handlePublicSpeech("say", msg, sender)
-end
-
-function handlers.CHAT_MSG_YELL(msg, sender, ...)
-    handlePublicSpeech("yell", msg, sender)
-end
-
-function handlers.CHAT_MSG_EMOTE(msg, sender, ...)
-    handlePublicSpeech("emote", msg, sender)
-end
-
-handlers.CHAT_MSG_TEXT_EMOTE = handlers.CHAT_MSG_EMOTE
-
--- Group, raid and instance chat: one handler for the seven events, and the only
--- thing it ever reacts to is the always-blocked list. It exists so a hidden
--- message still lands in the Journal, in the session counters and in the
--- per-block chat line, exactly like every other blocked interaction.
-local function handleGroupChat(msg, sender)
-    if not isEnabled() or isSelf(sender) then return end
-    local blocked, reason, detail = isAlwaysBlocked(sender)
-    if not blocked then return end
-    debugLogChatDecision("group", sender, msg,
-        describeBlockAction(true, reason), reason, detail, { filterEnabled = true })
-    logBlock("group", sender, msg, nil, keywordOf(reason, detail))
-end
-
-for _, event in ipairs(GROUP_CHAT_EVENTS) do
-    handlers[event] = function(msg, sender, ...)
-        handleGroupChat(msg, sender)
-    end
-end
-
-function handlers.CHAT_MSG_CHANNEL(msg, sender, ...)
-    if not isEnabled() or isSelf(sender) then return end
-    local mode = isFilterOn("channelMode") or "none"
-
-    -- The always-blocked list is read before the mode, so a blocked name is
-    -- still blocked on a public channel when channel filtering is off.
-    local alwaysBlocked, alwaysReason, alwaysDetail = isAlwaysBlocked(sender)
-    if alwaysBlocked then
-        debugLogChatDecision("channel", sender, msg,
-            describeBlockAction(true, alwaysReason), alwaysReason, alwaysDetail, {
-                channelMode = mode,
-            })
-        logBlock("channel", sender, msg, nil, keywordOf(alwaysReason, alwaysDetail))
-        return
-    end
-
-    if mode ~= "all" then
-        debugLogChatDecision("channel", sender, msg, "PASS_MODE_NONE", "channel_none", nil, {
-            channelMode = mode,
+            rawSender = info.rawSender,
+            bnetSenderID = info.bnetSenderID,
+            bnetResolvedByID = info.bnetResolvedByID,
         })
         return
     end
 
-    local shouldBlock, reason = getCharacterDecision(sender)
-    if shouldBlock then
-        debugLogChatDecision("channel", sender, msg, "BLOCK_NOT_WHITELISTED", reason, nil, {
-            channelMode = mode,
+    debugLogChatDecision("bn_whisper", info.accountName, msg,
+        describeBlockAction(block, reason), reason, nil, {
+            filterEnabled = true,
+            bnetWhitelisted = info.bnetWhitelisted,
+            inGroup = info.inGroup,
+            bnetCache = ns.getBNetWhitelistCacheSize and ns.getBNetWhitelistCacheSize() or "?",
+            rawSender = info.rawSender,
+            bnetSenderID = info.bnetSenderID,
+            bnetResolvedByID = info.bnetResolvedByID,
         })
-        logBlock("channel", sender, msg, nil)
-    else
-        debugLogChatDecision("channel", sender, msg, "ALLOW", reason, nil, {
-            channelMode = mode,
-        })
-    end
+    if not block then return end
+
+    -- Journalled under `whisper`, not `bn_whisper`: the Journal shows the person
+    -- what was hidden from them, and "a whisper" is what it was. The raw sender
+    -- is what closes the tab -- Blizzard keys a Battle.net tab on the token it
+    -- handed over, not on the account name we resolved from it.
+    logBlock("whisper", info.accountName, msg, nil, keywordOf(reason, nil))
+    closeBlockedWhisperTabs(sender, true)
 end
 
 -- ============================================================================
@@ -5062,6 +5045,10 @@ local function simulateInvite(name)
         target = "SanctuaryTest"
     end
 
+    -- The raw tier the name falls into, and only that: the tester's line has to
+    -- read "blocked, but the filter is off" rather than a single merged answer,
+    -- so this deliberately asks the question the gate does not enter into. It is
+    -- a report, never a decision -- the decision is `wouldBlock`, below.
     local shouldBlock, reason, keyword = getCharacterDecision(target)
     local normalMessage = buildInviteSystemMessage(target, false)
     local alreadyGroupMessage = buildInviteSystemMessage(target, true)
@@ -5070,8 +5057,10 @@ local function simulateInvite(name)
     -- masked even when the group-invite filter is off, and a simulation that
     -- answered "pass" there would describe a screen nobody will see.
     local popupProtectionActive = isPopupProtectionActive("PARTY_INVITE")
-    local wouldBlock = isAlwaysBlocked(target)
-        or (groupInviteFilterEnabled and shouldBlock) or false
+    -- What would actually happen, from the one function that decides it. Spelt
+    -- out here, the simulation could describe a screen the add-on would not
+    -- produce -- which is the one thing a simulation may not do.
+    local wouldBlock = (decideInteraction("groupInvite", target))
     local popupAction = "pass"
     if popupProtectionActive then
         popupAction = wouldBlock and "mask" or "show"
@@ -5344,9 +5333,17 @@ local function runChatDiagnostic(kind)
     local target = "SanctuaryDiagnosticBlocked"
     local message = buildInviteSystemMessage(target, true)
     local inviterName = extractInviterFromSystemMessage(message)
-    local shouldBlock, reason = getCharacterDecision(inviterName or target)
-    local filterEnabled = isEnabled() and isFilterOn("groupInvite") == true
-    local expectedGuarded = filterEnabled and shouldBlock
+    -- The whole decision, gate included, from the one function that takes it.
+    -- It used to read the trust decision and the flag separately and multiply
+    -- them, which left the always-blocked gate out: a name on the blocked list,
+    -- with the group-invite filter unticked, was reported "visible" whether the
+    -- envelope had caught it or not -- the diagnostic said nothing was wrong on
+    -- exactly the path the blocked list exists for.
+    local shouldBlock, reason, _, filterEnabled = false, "disabled", nil, false
+    if isEnabled() then
+        shouldBlock, reason, _, filterEnabled = decideInteraction("groupInvite", inviterName or target)
+    end
+    local expectedGuarded = shouldBlock
 
     local probe = { message = message }
     local addMessageOk, addMessageErr = false, "missing_default_chat_frame"
@@ -6145,20 +6142,15 @@ local events = {
     "BN_FRIEND_INFO_CHANGED",
     "BN_FRIEND_LIST_SIZE_CHANGED",
     "GROUP_ROSTER_UPDATE",
+    -- The two chat events whose sender is not a character. Every other one is
+    -- registered from `CHAT_KINDS` just below, so a kind can never end up with
+    -- a filter, a handler and no event to fire it.
     "CHAT_MSG_SYSTEM",
-    "CHAT_MSG_WHISPER",
     "CHAT_MSG_BN_WHISPER",
-    "CHAT_MSG_SAY",
-    "CHAT_MSG_YELL",
-    "CHAT_MSG_EMOTE",
-    "CHAT_MSG_TEXT_EMOTE",
-    "CHAT_MSG_CHANNEL",
 }
 
--- The seven group/raid/instance events, registered next to the others so the
--- always-blocked list can log what its filter hides.
-for _, event in ipairs(GROUP_CHAT_EVENTS) do
-    events[#events + 1] = event
+for _, row in ipairs(CHAT_KINDS) do
+    events[#events + 1] = row.event
 end
 
 for _, event in ipairs(events) do

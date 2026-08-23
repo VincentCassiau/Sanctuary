@@ -6112,6 +6112,388 @@ equal(#chatMessages, 0, "an unknown command prints nothing and just opens the wi
 ns.resetDebugLog()
 
 
+-- ===========================================================================
+-- SECTION: one decision per message
+-- ===========================================================================
+
+-- Every chat message used to be judged twice: once by the filter, deciding
+-- whether the line shows, once by the event handler, deciding what is journalled,
+-- counted, announced and closed. The two spelt the same order out, so a fix
+-- landed on one of them had one chance in two of landing on the right one -- and
+-- three fixes in this mission landed on one side only.
+--
+-- What follows is the guard against that, and it is written as a parity claim
+-- rather than as a list of expected verdicts: whatever the add-on decides, the
+-- two halves have to decide it together. `discard` is the filter's answer; the
+-- journal entry, the session counter, the chat line and the closed whisper tab
+-- are the handler's. They rise together or not at all.
+--
+-- The first block uses nothing but the API the harness already had, so it can be
+-- run against the tree before this change: it fails there on the self-whisper
+-- lines, on the open defect below and on the chat diagnostic, and nowhere else.
+-- The second block reads the new API and only exists after it.
+--
+-- Each one is a scope of its own rather than a `do ... end`: the enclosing
+-- function is at Lua's ceiling of 200 live locals, which is the same reason the
+-- section below it is written this way.
+;(function()
+
+-- The thirteen character-message events, written out rather than read from
+-- `ns.CHAT_KINDS`: this block has to be runnable against a tree that has no such
+-- table, and a test that reads its subject's own table proves nothing about it.
+local ROWS = {
+    { event = "CHAT_MSG_WHISPER",    kind = "whisper", closesTab = true },
+    { event = "CHAT_MSG_SAY",        kind = "say" },
+    { event = "CHAT_MSG_YELL",       kind = "yell" },
+    { event = "CHAT_MSG_EMOTE",      kind = "emote" },
+    { event = "CHAT_MSG_TEXT_EMOTE", kind = "emote" },
+    { event = "CHAT_MSG_CHANNEL",    kind = "channel" },
+}
+for _, event in ipairs(ns.GROUP_CHAT_EVENTS) do
+    ROWS[#ROWS + 1] = { event = event, kind = "group" }
+end
+
+local SENDERS = {
+    { label = "the player, bare",            name = "Victim" },
+    { label = "the player, realm-qualified", name = "Victim-TestRealm" },
+    { label = "a namesake on another realm", name = "Victim-Ysondre" },
+    { label = "a name on the blocked list",  name = "Harasser-TestRealm" },
+    { label = "a name a pattern catches",    name = "Nastyone-TestRealm" },
+    { label = "a name allowed by hand",      name = "Trusted-TestRealm" },
+    { label = "a guild member",              name = "Guildie-TestRealm" },
+    { label = "a group member",              name = "Teammate-TestRealm" },
+    { label = "a stranger",                  name = "Stranger-TestRealm" },
+}
+
+-- What "the filter is ticked" means is not the same question for every kind, and
+-- the three answers are exactly the three gates the core knows about.
+local function setGate(kind, on)
+    if kind == "channel" then
+        SanctuaryDB.filters.channelMode = on and "all" or "none"
+    elseif kind ~= "group" then
+        SanctuaryDB.filters[kind] = on
+    end
+end
+
+-- Chat frames of our own, so the whisper-tab half can be counted. ChatFrame1
+-- stays DEFAULT_CHAT_FRAME: it carries the AddMessage envelope the system-line
+-- part needs, and it has no `chatType`, so the tab sweep walks past it.
+local savedFrames = {}
+for i = 1, 20 do savedFrames[i] = _G["ChatFrame" .. i] end
+for i = 2, 20 do _G["ChatFrame" .. i] = nil end
+local whisperTab = { chatType = "WHISPER", chatTarget = "" }
+local bnetTab = { chatType = "BN_WHISPER", chatTarget = "" }
+ChatFrame5 = whisperTab
+ChatFrame6 = bnetTab
+ns.hookChatOutputDiagnostics()
+
+local function prepare()
+    resetModelState()
+    SanctuaryDB.debugEnabled = false
+    SanctuaryDB.logging.enabled = true
+    SanctuaryDB.logging.maxEntries = 5000
+    SanctuaryDB.notifications.mode = "verbose"
+    SanctuaryCharDB.sessionStats = { blockedCount = 0, blockedByType = {} }
+    runTimers(3)
+end
+
+prepare()
+ns.addBlocked("Harasser")
+ns.addPattern("nasty")
+ns.addAllowed("Trusted")
+guildMembers = { "Guildie-TestRealm" }
+inGuild = true
+groupMembers = { "Teammate-TestRealm" }
+inGroup = true
+ns.invalidateWhitelist()
+
+local STATES = {
+    { label = "filter ticked",   gate = true,  enabled = true },
+    { label = "filter unticked", gate = false, enabled = true },
+    { label = "add-on off",      gate = true,  enabled = false },
+}
+
+for _, state in ipairs(STATES) do
+    -- Written straight into the override rather than through `ns.setEnabled`,
+    -- which prints a line: the chat line is one of the four things counted here.
+    if state.enabled then
+        SanctuaryCharDB.overrides.enabled = nil
+    else
+        SanctuaryCharDB.overrides.enabled = false
+    end
+    for _, row in ipairs(ROWS) do
+        setGate(row.kind, state.gate)
+        for _, sender in ipairs(SENDERS) do
+            -- `logBlock` drops a repeat of the same type and sender inside one
+            -- second, so the clock has to move between two cases.
+            now = now + 2
+            whisperTab.chatTarget = sender.name
+            local label = row.event .. ", " .. sender.label .. ", " .. state.label
+            local beforeLog = #SanctuaryDB.log
+            local beforeCount = SanctuaryCharDB.sessionStats.blockedCount
+            local beforeLines = #chatMessages
+            local beforeClosed = #closedChatFrames
+
+            local discard = dispatchChatFilter(row.event, "hello", sender.name)
+            fire(row.event, "hello", sender.name)
+            runTimers(3)
+
+            local expected = discard and 1 or 0
+            equal(#SanctuaryDB.log - beforeLog, expected,
+                label .. ": the journal follows the filter")
+            equal(SanctuaryCharDB.sessionStats.blockedCount - beforeCount, expected,
+                label .. ": the session counter follows the filter")
+            equal(#chatMessages - beforeLines, expected,
+                label .. ": the chat line follows the filter")
+            if row.closesTab then
+                equal(#closedChatFrames - beforeClosed, expected,
+                    label .. ": the whisper tab follows the filter")
+            end
+        end
+    end
+end
+SanctuaryCharDB.overrides.enabled = nil
+
+-- The open defect this release was sent back to the plan for. A player writing
+-- themselves a note gets a CHAT_MSG_WHISPER whose sender is the player; the
+-- filter let it through and the handler did not, so the note showed on screen
+-- while the Journal recorded it, the session counted it, the chat announced it
+-- and the whisper tab was closed under the person's fingers. Nothing Sanctuary
+-- does may touch what the player says to themselves -- their own blocked list
+-- and their own patterns included.
+prepare()
+SanctuaryDB.filters.whisper = true
+local OWN_LISTS = {
+    { label = "with empty lists", apply = function() end },
+    { label = "with their own name in their own blocked list",
+      apply = function() ns.addBlocked("Victim") end },
+    { label = "under one of their own patterns",
+      apply = function() ns.addPattern("victi") end },
+}
+for _, spelling in ipairs({ "Victim", "Victim-TestRealm" }) do
+    for _, listState in ipairs(OWN_LISTS) do
+        wipe(SanctuaryDB.blockedNames)
+        SanctuaryDB.keywords = {}
+        listState.apply()
+        ns.invalidateWhitelist()
+        now = now + 2
+        whisperTab.chatTarget = spelling
+        local label = "a whisper to oneself as " .. spelling .. ", " .. listState.label
+        local beforeLog = #SanctuaryDB.log
+        local beforeCount = SanctuaryCharDB.sessionStats.blockedCount
+        local beforeLines = #chatMessages
+        local beforeClosed = #closedChatFrames
+
+        local discard = dispatchChatFilter("CHAT_MSG_WHISPER", "note to self", spelling)
+        fire("CHAT_MSG_WHISPER", "note to self", spelling)
+        runTimers(3)
+
+        equal(discard, false, label .. ": the line shows")
+        equal(#SanctuaryDB.log, beforeLog, label .. ": nothing is journalled")
+        equal(SanctuaryCharDB.sessionStats.blockedCount, beforeCount,
+            label .. ": nothing is counted")
+        equal(#chatMessages, beforeLines, label .. ": nothing is announced")
+        equal(#closedChatFrames, beforeClosed, label .. ": the tab stays open")
+    end
+end
+
+-- Battle.net. Sanctuary blocks nobody there, so the only question is the
+-- whitelist one -- and the filter and the handler have to answer it together,
+-- tab included.
+prepare()
+SanctuaryDB.filters.whisper = true
+bnetFriends = {
+    { bnetAccountID = 501, accountName = "Battle Friend",
+      gameAccountInfo = { characterName = "Onlinechar" } },
+}
+ns.invalidateWhitelist()
+local BNET_CASES = {
+    { label = "a Battle.net friend", account = "Battle Friend", filter = true },
+    { label = "a Battle.net friend whose character is in the group",
+      account = "Battle Friend", filter = true, group = true },
+    { label = "an unknown account", account = "Unknown Battle", filter = true },
+    { label = "an unknown account, whisper filter unticked",
+      account = "Unknown Battle", filter = false },
+}
+for _, case in ipairs(BNET_CASES) do
+    SanctuaryDB.filters.whisper = case.filter
+    inGroup = case.group and true or false
+    groupMembers = case.group and { "Onlinechar-TestRealm" } or {}
+    ns.invalidateWhitelist()
+    now = now + 2
+    bnetTab.chatTarget = case.account
+    local label = "a Battle.net whisper from " .. case.label
+    local beforeLog = #SanctuaryDB.log
+    local beforeClosed = #closedChatFrames
+
+    local discard = dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hello", case.account)
+    fire("CHAT_MSG_BN_WHISPER", "hello", case.account)
+    runTimers(3)
+
+    local expected = discard and 1 or 0
+    equal(#SanctuaryDB.log - beforeLog, expected, label .. ": the journal follows the filter")
+    equal(#closedChatFrames - beforeClosed, expected, label .. ": the tab follows the filter")
+end
+inGroup = false
+groupMembers = {}
+bnetFriends = {}
+ns.invalidateWhitelist()
+
+-- The invite system line. Three readers of one decision: the registry filter,
+-- the event handler, and the AddMessage envelope of last resort.
+prepare()
+ns.addBlocked("Harasser")
+ns.addAllowed("Trusted")
+ns.invalidateWhitelist()
+local SYSTEM_CASES = {
+    { label = "a blocked name",                 name = "Harasser", filter = true },
+    { label = "a blocked name, filter unticked", name = "Harasser", filter = false },
+    { label = "a stranger",                     name = "Stranger", filter = true },
+    { label = "a stranger, filter unticked",    name = "Stranger", filter = false },
+    { label = "a friend",                       name = "Trusted",  filter = true },
+    { label = "a stranger, in a group",         name = "Stranger", filter = true, group = true },
+}
+for _, case in ipairs(SYSTEM_CASES) do
+    SanctuaryDB.filters.groupInvite = case.filter
+    inGroup = case.group and true or false
+    groupMembers = case.group and { "Teammate-TestRealm" } or {}
+    ns.invalidateWhitelist()
+    now = now + 2
+    local label = "an already-group invite line from " .. case.label
+    local message = string.format(ERR_INVITED_ALREADY_IN_GROUP_SS, case.name, case.name)
+
+    local discard = dispatchChatFilter("CHAT_MSG_SYSTEM", message)
+    local beforeLog = #SanctuaryDB.log
+    fire("CHAT_MSG_SYSTEM", message)
+    equal(#SanctuaryDB.log - beforeLog, discard and 1 or 0,
+        label .. ": the journal follows the filter")
+
+    local beforeLines = #chatMessages
+    DEFAULT_CHAT_FRAME:AddMessage(message)
+    equal(#chatMessages - beforeLines, discard and 0 or 1,
+        label .. ": the envelope withholds exactly what the filter discards")
+
+    local simulated = ns.simulateInvite(case.name)
+    equal(simulated.alreadyGroupSuppressed, discard,
+        label .. ": the tester describes the same screen")
+end
+inGroup = false
+groupMembers = {}
+
+-- The chat diagnostic. It answers "would a blocked invite line have been
+-- stopped", and it used to read the trust decision and the checkbox separately
+-- and multiply them -- which left the always-blocked gate out of its answer. A
+-- name on the blocked list, with the group-invite filter unticked and no
+-- envelope in place, was reported "visible": the diagnostic said nothing was
+-- wrong on exactly the path the blocked list exists for.
+for _, case in ipairs({
+    { label = "a name on the blocked list",
+      apply = function() ns.addBlocked("SanctuaryDiagnosticBlocked") end },
+    { label = "a name a pattern catches",
+      apply = function() ns.addPattern("sanctuarydiagnostic") end },
+}) do
+    prepare()
+    case.apply()
+    SanctuaryDB.filters.groupInvite = false
+    ns.invalidateWhitelist()
+    local savedDefaultFrame = DEFAULT_CHAT_FRAME
+    local rawLines = {}
+    DEFAULT_CHAT_FRAME = {
+        AddMessage = function(_, message) rawLines[#rawLines + 1] = message end,
+    }
+    local diagnostic = ns.runChatDiagnostic("invite")
+    DEFAULT_CHAT_FRAME = savedDefaultFrame
+    equal(diagnostic.output, "unguarded",
+        "the chat diagnostic reports an unguarded line for " .. case.label
+            .. " with the group-invite filter unticked")
+    equal(#rawLines, 1, "and the probe line did reach the unwrapped frame for " .. case.label)
+end
+
+-- Same scope, the other way round: with the filter unticked and nobody blocked,
+-- there is nothing to guard and the diagnostic must not cry wolf.
+prepare()
+SanctuaryDB.filters.groupInvite = false
+local savedDefaultFrame = DEFAULT_CHAT_FRAME
+DEFAULT_CHAT_FRAME = { AddMessage = function() end }
+equal(ns.runChatDiagnostic("invite").output, "visible",
+    "and reports a visible line when nothing would have been stopped")
+DEFAULT_CHAT_FRAME = savedDefaultFrame
+
+for i = 1, 20 do _G["ChatFrame" .. i] = savedFrames[i] end
+ns.hookChatOutputDiagnostics()
+prepare()
+
+end)()
+
+-- ---------------------------------------------------------------------------
+-- ... and the structure that makes it true
+-- ---------------------------------------------------------------------------
+
+-- The block above proves the two halves agree. This one proves why they cannot
+-- disagree: there is one decision function, and the filters and handlers are
+-- generated from one table rather than written out.
+
+;(function()
+
+check(type(ns.decideChat) == "function", "the core publishes one decision for chat messages")
+check(type(ns.CHAT_KINDS) == "table", "and the table its filters and handlers are generated from")
+
+resetModelState()
+SanctuaryDB.debugEnabled = true
+SanctuaryDB.filters.whisper = true
+SanctuaryDB.filters.say = true
+SanctuaryDB.filters.yell = true
+SanctuaryDB.filters.emote = true
+SanctuaryDB.filters.channelMode = "all"
+ns.addBlocked("Harasser")
+ns.invalidateWhitelist()
+
+for _, row in ipairs(ns.CHAT_KINDS) do
+    check(type(chatFilters[row.event]) == "function", "a filter is registered for " .. row.event)
+    ns.resetDebugLog()
+    now = now + 2
+    fire(row.event, "hello", "Harasser-TestRealm")
+    local entry = lastDebug("CHAT_DECISION")
+    check(entry ~= nil and entry.data.kind == row.logType,
+        "and a handler answers for " .. row.event)
+end
+
+-- The two whose sender is not a character keep a filter and a handler of their
+-- own, because neither goes through `decideChat`.
+for _, event in ipairs({ "CHAT_MSG_SYSTEM", "CHAT_MSG_BN_WHISPER" }) do
+    check(type(chatFilters[event]) == "function", "a filter is registered for " .. event)
+    check(eventFrames[event] ~= nil, "and " .. event .. " is registered as an event")
+end
+
+-- The filter's answer is the decision, with nothing added and nothing lost.
+SanctuaryDB.debugEnabled = false
+ns.addPattern("nasty")
+ns.addAllowed("Trusted")
+guildMembers = { "Guildie-TestRealm" }
+inGuild = true
+groupMembers = { "Teammate-TestRealm" }
+inGroup = true
+ns.invalidateWhitelist()
+for _, row in ipairs(ns.CHAT_KINDS) do
+    for _, sender in ipairs({
+        "Victim", "Victim-TestRealm", "Victim-Ysondre", "Harasser-TestRealm",
+        "Nastyone-TestRealm", "Trusted-TestRealm", "Guildie-TestRealm",
+        "Teammate-TestRealm", "Stranger-TestRealm",
+    }) do
+        equal((ns.decideChat(row.kind, sender)),
+            dispatchChatFilter(row.event, "hello", sender),
+            "the decision and the registered filter agree on " .. row.event
+                .. " from " .. sender)
+    end
+end
+inGuild = false
+inGroup = false
+guildMembers = {}
+groupMembers = {}
+resetModelState()
+
+end)()
+
 end)()
 
 if failures > 0 then
