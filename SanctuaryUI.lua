@@ -1195,6 +1195,22 @@ local function buildJournalText()
     return table.concat(lines, "\n") .. "\n"
 end
 
+-- The Journal's two boxes, and where the second one goes. `showMsg` sat at a
+-- fixed PAD + 320 whatever the window measured, and `newCheck` gives a label no
+-- width of its own: at the 500 px bound the room is 464, the box starts 320 in
+-- and its label 346 in, which leaves 118 px for a sentence that needs some two
+-- hundred and seventy. The right half simply left the ScrollFrame, which cut it
+-- -- and nothing here scrolls sideways to go and read it. So the row is decided
+-- from the width the window has NOW, in `applyTabWidth.journal`, and the list
+-- below gives back what the second row takes so the three buttons under it never
+-- move.
+local SHOW_MSG_X = 320
+-- The box, then the gap `newCheck` leaves between a box and its label.
+local CHECK_LABEL_GAP = 18 + 8
+local JOURNAL_ROW_ONE, JOURNAL_ROW_TWO = -30, -52
+local JOURNAL_LIST_TOP, JOURNAL_LIST_HEIGHT = -60, 300
+local JOURNAL_ROW_DROP = JOURNAL_ROW_ONE - JOURNAL_ROW_TWO
+
 local function buildJournalTab(parent)
     journal.frame = parent
     local width = innerWidth()
@@ -1207,15 +1223,15 @@ local function buildJournalTab(parent)
         L["TIP_LOGS_ENABLE"],
         function() return SanctuaryDB and SanctuaryDB.logging.enabled == true end,
         function(value) SanctuaryDB.logging.enabled = value end)
-    journal.enable:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, -30)
+    journal.enable:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, JOURNAL_ROW_ONE)
 
     journal.showMsg = newCheck(parent, "SanctuaryJournalShowMessages", L["LOGS_SHOW_MSG"], nil,
         function() return SanctuaryDB and SanctuaryDB.uiSettings.showMessageColumn == true end,
         function(value) SanctuaryDB.uiSettings.showMessageColumn = value end)
-    journal.showMsg:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + 320, -30)
+    journal.showMsg:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + SHOW_MSG_X, JOURNAL_ROW_ONE)
 
-    journal.scroll = newScroll(parent, "SanctuaryJournalScroll", width, 300)
-    journal.scroll:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, -60)
+    journal.scroll = newScroll(parent, "SanctuaryJournalScroll", width, JOURNAL_LIST_HEIGHT)
+    journal.scroll:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, JOURNAL_LIST_TOP)
     journal.rows = {}
     journal.rowPool = {}
 
@@ -1257,7 +1273,22 @@ end
 applyTabWidth.journal = function()
     if not journal.scroll then return end
     local width = innerWidth()
-    journal.scroll:SetViewportSize(width, journal.scroll:GetHeight())
+    -- One row or two, from the room there is. The label is measured rather than
+    -- guessed: the two locales do not write the same sentence, and the bound
+    -- that matters is the one the window is at.
+    local labelWidth = journal.showMsg.label:GetStringWidth() or 0
+    local sameRow = SHOW_MSG_X + CHECK_LABEL_GAP + labelWidth <= width
+    journal.showMsg:ClearAllPoints()
+    journal.showMsg:SetPoint("TOPLEFT", journal.frame, "TOPLEFT",
+        sameRow and (PAD + SHOW_MSG_X) or PAD,
+        sameRow and JOURNAL_ROW_ONE or JOURNAL_ROW_TWO)
+    -- What the second row takes, the list gives back: it starts lower AND ends
+    -- at the same place, so the Clear / Copy / Expand row anchored under it stays
+    -- where it is and the screen keeps the height it reports.
+    local drop = sameRow and 0 or JOURNAL_ROW_DROP
+    journal.scroll:ClearAllPoints()
+    journal.scroll:SetPoint("TOPLEFT", journal.frame, "TOPLEFT", PAD, JOURNAL_LIST_TOP - drop)
+    journal.scroll:SetViewportSize(width, JOURNAL_LIST_HEIGHT - drop)
     -- The pool as well as the live rows: a pooled row is handed out with the
     -- current width, but it is still a frame carrying a size, and leaving stale
     -- ones behind would make "no row is wider than the screen" true only for the

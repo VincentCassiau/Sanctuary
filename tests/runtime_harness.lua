@@ -6816,6 +6816,70 @@ do
         "the About paragraph keeps its reading width at both bounds")
 end
 
+-- What a posted width cannot see: a widget that is small enough and anchored too
+-- far to the right. The sweep above reads sizes, and the Journal's second box is
+-- 18 px wide wherever it sits, while the label beside it carries no width at all
+-- -- `newCheck` never sets one. Anchored at a fixed PAD + 320, at the 500 px
+-- bound it started its sentence 346 px into a 464 px screen, and the half that
+-- did not fit was cut off by the ScrollFrame with no sideways scrolling to reach
+-- it. Read off the anchors the widgets actually carry, now that the stand-in
+-- keeps them.
+do
+    local content = _G.SanctuaryContentScroll
+    local enable, showMsg = _G.SanctuaryJournalEnable, _G.SanctuaryJournalShowMessages
+    local list = _G.SanctuaryJournalScroll
+    check(enable ~= nil and showMsg ~= nil, "the Journal's two boxes are reachable")
+
+    -- Measured from the screen's own left margin, which is where `innerWidth`
+    -- starts counting.
+    local function inset(box)
+        local _, _, _, x = box:GetPoint()
+        return (x or 0) - 18
+    end
+    local function row(box)
+        local _, _, _, _, y = box:GetPoint()
+        return y
+    end
+    -- Where the label ends: the box, the 8 px gap `newCheck` leaves, the text.
+    local function labelEnd(box)
+        return inset(box) + box:GetWidth() + 8 + box.label:GetStringWidth()
+    end
+    local function listEnd()
+        local _, _, _, _, y = list:GetPoint()
+        return y - list:GetHeight()
+    end
+
+    now = now + 5
+    gripDown(grip)
+    mainFrame:SetSize(500, 560)
+    gripUp(grip)
+    local narrowRoom = 500 - 18 * 2
+    check(labelEnd(enable) <= narrowRoom,
+        "at 500 the first Journal label stays inside the window")
+    check(labelEnd(showMsg) <= narrowRoom,
+        "and so does the second, which used to run off the right edge")
+    check(row(showMsg) < row(enable),
+        "because at that width the second box has moved under the first")
+    equal(listEnd(), -360,
+        "the list gives back what the second row took, so the buttons under it do not move")
+
+    -- And it only moves when it has to: at the design width and at the wide
+    -- bound the two boxes read as one row, which is what the screen is drawn as.
+    for _, width in ipairs({ 780, 900 }) do
+        now = now + 5
+        gripDown(grip)
+        mainFrame:SetSize(width, 560)
+        gripUp(grip)
+        equal(row(showMsg), row(enable),
+            "at " .. width .. " the two Journal boxes share one row")
+        equal(inset(showMsg), 320,
+            "the second one back at its designed column at " .. width)
+        check(labelEnd(showMsg) <= width - 18 * 2,
+            "and its label fits there at " .. width)
+        equal(listEnd(), -360, "the list is back at its full height at " .. width)
+    end
+end
+
 now = now + 5
 gripDown(grip)
 mainFrame:SetSize(860, 560)
