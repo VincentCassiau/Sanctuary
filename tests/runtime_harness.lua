@@ -4371,6 +4371,7 @@ local function newWidget(kind, name, parent, template)
     -- it was rounded, is exactly what "the box is invisible" and "the radio is a
     -- square" are made of.
     function w:SetColorTexture(r, g, b, a) self.__colorTexture = { r, g, b, a or 1 } end
+    function w:EnableMouse(value) self.__mouseEnabled = value and true or false end
     function w:AddMaskTexture(mask) self.__mask = mask end
     function w:SetChecked(value) self.__checked = value and true or false end
     function w:GetChecked() return self.__checked and true or false end
@@ -4875,6 +4876,40 @@ check(overriddenAnswer:find("RealFriend#1234", 1, true) ~= nil,
     "and the answer still names the Battle.net account it overrides")
 ns.removeBlocked(ns.normalizeBlockedKey("Bnetchar"))
 equal(ns.describeAccessDecision("").valid, false, "an empty field asks nothing")
+
+-- The tester answers a question about the lists, so it has to be re-asked every
+-- time a list moves. Decision 101: "quand on agit dans un des drawers de gerer,
+-- le pseudo teste n'est pas re-teste, on est oblige d'enlever ou ajouter une
+-- lettre". The name stays in the field; the answer follows the lists.
+testAnswerFor("Freshname")
+check(_G.SanctuaryTestAnswer:GetText():find(
+    string.format(ns.L["TEST_UNKNOWN_BLOCKED"], "Freshname"), 1, true) ~= nil,
+    "an unknown name is answered as unknown")
+ns.addAllowed("Freshname")
+ns.refreshUI()
+equal(_G.SanctuaryTestInput:GetText(), "Freshname", "adding a name leaves the field alone")
+check(_G.SanctuaryTestAnswer:GetText():find(ns.L["LIST_MANUAL"], 1, true) ~= nil,
+    "and the answer is recomputed without a keystroke")
+ns.removeAllowed("freshname")
+ns.refreshUI()
+check(_G.SanctuaryTestAnswer:GetText():find(
+    string.format(ns.L["TEST_UNKNOWN_BLOCKED"], "Freshname"), 1, true) ~= nil,
+    "and removing it puts the answer back")
+
+-- The cross inside the field, decision 101. It shows only when there is
+-- something to clear, and clearing it takes the answer with it.
+do
+    local testBox = _G.SanctuaryTestInput
+    check(testBox.clear ~= nil, "the tester carries a cross of its own")
+    equal(testBox.clear:IsShown(), true, "which is offered while the field holds a name")
+    testBox.clear:Click()
+    equal(testBox:GetText(), "", "clicking it empties the field")
+    equal(testBox.clear:IsShown(), false, "and the cross goes with the name")
+    equal(_G.SanctuaryTestAnswer:GetText(), "", "and the answer with it")
+    -- The three list fields do not get one: they empty themselves on Enter, and
+    -- a cross there would answer a question nobody asked.
+    equal(_G.SanctuaryBlockedAddInput.clear, nil, "a list field carries no cross")
+end
 
 -- ---------------------------------------------------------------------------
 -- The allowed panel
@@ -5450,6 +5485,24 @@ do
     equal(blockedPanelFrame:IsShown(), false, "and leaves no other panel standing behind it")
     equal(veil:IsShown(), false, "and takes the veil down with it")
     equal(_G["SanctuaryTabContent_journal"]:IsShown(), true, "leaving the Journal alone on screen")
+
+    -- And the veil itself closes it, decision 101: a click anywhere on the
+    -- window beside the drawer is the gesture a modal overlay already promises,
+    -- and the cross was the only way out of it.
+    ns.OpenPanel("blocked")
+    equal(blockedPanelFrame:IsShown(), true, "the drawer is open")
+    veil:GetScript("OnMouseDown")(veil)
+    equal(blockedPanelFrame:IsShown(), false, "clicking the window beside it closes the drawer")
+    equal(veil:IsShown(), false, "and the veil goes down with it")
+
+    -- What must NOT close it: a click on the drawer itself. The panel had no
+    -- mouse of its own, so every click on an empty part of it fell through to
+    -- the veil underneath -- which, now that the veil closes, would shut the
+    -- very list the person is reading.
+    ns.OpenPanel("blocked")
+    equal(blockedPanelFrame.__mouseEnabled, true, "the drawer eats its own clicks")
+    equal(blockedPanelFrame:IsShown(), true, "so it stays open under one")
+    ns.ClosePanel()
 
     SanctuaryDB.uiSize = nil
     _G["SanctuaryTab_protection"]:Click()

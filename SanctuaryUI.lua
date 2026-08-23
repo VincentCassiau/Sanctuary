@@ -373,7 +373,13 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
 
     function box:RefreshHint()
         local text = self:GetText()
-        if text and text ~= "" then self.hint:Hide() else self.hint:Show() end
+        local empty = (text == nil or text == "")
+        if empty then self.hint:Show() else self.hint:Hide() end
+        -- The cross answers to the same thing the hint does: there is nothing to
+        -- clear in an empty field, and a cross offering to do it says otherwise.
+        if self.clear then
+            if empty then self.clear:Hide() else self.clear:Show() end
+        end
     end
 
     function box:ClearNote()
@@ -394,6 +400,40 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
         C_Timer.After(UNDO_SECONDS, function()
             if self.noteToken == mine then self:ClearNote() end
         end)
+    end
+
+    -- An opt-in cross inside the field, for the one box that carries a question
+    -- rather than an entry: the tester. It is a read of the lists, so emptying
+    -- it is the way out of it, and re-typing over a name to be rid of an answer
+    -- is not a way out. Opt-in because the three list fields empty themselves on
+    -- Enter and a cross there would answer a question nobody asked.
+    function box:MakeClearable()
+        if self.clear then return self end
+        -- Room for the cross taken off the text itself, so a long name is
+        -- scrolled by the client rather than written under the button.
+        self:SetTextInsets(6, 22, 0, 0)
+        self.hint:SetWidth((width or 220) - 30)
+        local clear = CreateFrame("Button", nil, self)
+        clear:SetSize(16, 16)
+        clear:SetPoint("RIGHT", self, "RIGHT", -4, 0)
+        clear.label = newLabel(clear, "x", FONT_BODY, C.dim, "CENTER")
+        clear.label:SetPoint("CENTER")
+        clear:SetScript("OnEnter", function() clear.label:SetTextColor(unpack(C.ink)) end)
+        clear:SetScript("OnLeave", function() clear.label:SetTextColor(unpack(C.dim)) end)
+        clear:SetScript("OnClick", function()
+            self:SetText("")
+            self:RefreshHint()
+            self:ClearFocus()
+            -- Emptying the field is a text change like any other, and what it
+            -- means for this box is the box's own business. Called rather than
+            -- left to the client's own OnTextChanged: the cross must clear the
+            -- answer under it, not hope something else notices.
+            local changed = self:GetScript("OnTextChanged")
+            if changed then changed(self) end
+        end)
+        clear:Hide()
+        self.clear = clear
+        return self
     end
 
     box:SetScript("OnTextChanged", function(self) self:RefreshHint() end)
@@ -812,6 +852,7 @@ local function buildProtectionTab(parent)
 
     protection.testLabel = newLabel(parent, L["TEST_LABEL"], FONT_DESC, C.soft)
     protection.testInput = newInput(parent, "SanctuaryTestInput", 220, L["TEST_LABEL"])
+    protection.testInput:MakeClearable()
     protection.testAnswer = parent:CreateFontString("SanctuaryTestAnswer", "OVERLAY", "GameFontNormal")
     do
         local fontFile = protection.testAnswer:GetFont()
@@ -986,6 +1027,15 @@ refreshTab.protection = function()
     protection.testAnswer:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD + 360, y)
     protection.testAnswer:SetWidth(width - 360)
     y = y - 40
+
+    -- Read again, from the name still in the field. The answer is a read of the
+    -- two lists and this is the pass every write ends on -- adding a name,
+    -- removing one, undoing, closing the drawer -- so a tested pseudo used to
+    -- keep an answer the lists had stopped agreeing with, and the only way to
+    -- see the new one was to add or remove a letter.
+    if protection.testInput and ns.RefreshTestAnswer then
+        ns.RefreshTestAnswer(protection.testInput:GetText())
+    end
 
     return -y + PAD
 end
@@ -1583,6 +1633,11 @@ local function newPanelFrame(name, titleText)
     panel:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", 0, -HEADER_HEIGHT)
     panel:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 0)
     panel:SetFrameLevel(LEVEL_PANEL)
+    -- The panel has to eat its own clicks now that the veil closes on one:
+    -- without this, a click on any empty part of the drawer falls through to the
+    -- veil below it and shuts the very list the person is reading.
+    panel:EnableMouse(true)
+    panel:EnableMouseWheel(true)
     applyBackdrop(panel, C.panel, C.border, 2)
     panel:Hide()
 
@@ -2036,6 +2091,7 @@ function ns.OpenPanel(which)
 end
 
 function ns.ClosePanel()
+    local wasOpen = openPanel ~= nil
     if listTicker then
         listTicker:Cancel()
         listTicker = nil
@@ -2047,6 +2103,9 @@ function ns.ClosePanel()
     openPanel = nil
     if refreshStateButton then refreshStateButton() end
     releaseChips()
+    -- The screen underneath has just had its lists changed under it: the tiles
+    -- count, and the tester answers, from what the drawer left behind.
+    if wasOpen and ns.refreshUI then ns.refreshUI() end
 end
 
 -- ============================================================================
@@ -2466,9 +2525,11 @@ local function createMainFrame()
         applyViewport(self:GetHeight(), self:GetWidth())
     end)
 
-    -- The veil takes the mouse and the wheel and does nothing with them. That is
-    -- the point: the Cards and Checks behind an open panel must not be settings a
-    -- person changes without seeing what they are doing.
+    -- The veil takes the mouse and the wheel: the Cards and Checks behind an
+    -- open panel must not be settings a person changes without seeing what they
+    -- are doing. What it does with a click is close the panel -- decision 101,
+    -- "fermer le drawer en cliquant sur l'ui principal" -- which is the one
+    -- gesture everything else about a modal overlay already promises.
     panelVeil = CreateFrame("Frame", "SanctuaryPanelVeil", mainFrame, "BackdropTemplate")
     panelVeil:SetSize(frameWidth, MIN_FRAME_HEIGHT - HEADER_HEIGHT)
     panelVeil:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -HEADER_HEIGHT)
@@ -2477,7 +2538,10 @@ local function createMainFrame()
     applyBackdrop(panelVeil, C.veil, nil)
     panelVeil:EnableMouse(true)
     panelVeil:EnableMouseWheel(true)
-    panelVeil:SetScript("OnMouseDown", function() end)
+    panelVeil:SetScript("OnMouseDown", function()
+        PlaySound(SOUNDKIT.IG_MAINMENU_CLOSE)
+        ns.ClosePanel()
+    end)
     panelVeil:SetScript("OnMouseUp", function() end)
     panelVeil:SetScript("OnMouseWheel", function() end)
     panelVeil:Hide()
