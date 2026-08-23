@@ -1918,6 +1918,15 @@ end
 -- All six return (ok, key, data): "Undo" needs the exact record back to put it
 -- where it was, and a caller that only wants to know whether anything changed
 -- reads the first value.
+--
+-- The three writers answer a FOURTH value on the refusals that can be explained
+-- in a sentence: "name", "account", "pattern". The rule of what is refused, and
+-- why, lives here and only here -- the panel picks its wording from this code
+-- and never works the answer out a second time.
+--
+-- Two refusals stay silent on purpose. An empty or blank field: nothing was
+-- typed, so there is nothing to say about it. A duplicate: it answers
+-- (false, key, data), and the label is already on screen a few pixels away.
 
 function ns.addAllowed(name, source)
     if not SanctuaryDB then return false end
@@ -1939,7 +1948,8 @@ function ns.addAllowed(name, source)
     -- menu reads too: the key this writes and the key the menu looks up are one
     -- piece of code, not two that have to agree.
     local key = ns.findAllowedKey(clean)
-    if not key then return false end
+    -- Something was typed and nothing usable is left of it -- "-", " - ".
+    if not key then return false, nil, nil, "name" end
     SanctuaryDB.manualWhitelist = SanctuaryDB.manualWhitelist or {}
     if SanctuaryDB.manualWhitelist[key] then
         return false, key, SanctuaryDB.manualWhitelist[key]
@@ -2023,9 +2033,9 @@ function ns.addBlocked(name, source)
     -- test used to be spelled out again here, so "what counts as a BattleTag"
     -- had two answers to keep in step -- while the allowed field, sixty lines
     -- up, was already asking the question the other way round.
-    if isAccountName(clean) then return false end
+    if isAccountName(clean) then return false, nil, nil, "account" end
     local key = normalizeBlockedKey(clean)
-    if not key then return false end
+    if not key then return false, nil, nil, "name" end
     SanctuaryDB.blockedNames = SanctuaryDB.blockedNames or {}
     if SanctuaryDB.blockedNames[key] then
         return false, key, SanctuaryDB.blockedNames[key]
@@ -2087,7 +2097,7 @@ function ns.addPattern(text)
     if not SanctuaryDB then return false end
     local clean = normalizePatternText(text)
     if not clean then return false end
-    if clean:find("[%p%d]") then return false end
+    if clean:find("[%p%d]") then return false, nil, nil, "pattern" end
     SanctuaryDB.keywords = SanctuaryDB.keywords or {}
     for _, existing in ipairs(SanctuaryDB.keywords) do
         if existing == clean then return false, clean, clean end

@@ -76,6 +76,9 @@ local UNDO_HEIGHT, UNDO_MARGIN = 22, 6
 local MIN_FRAME_HEIGHT = MIN_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
 local MAX_FRAME_HEIGHT = MAX_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
 local UNDO_SECONDS = 6
+-- Room kept under each of the three add fields for the sentence a refused entry
+-- gets, showing or not.
+local NOTE_ROOM = 16
 local LIST_REFRESH_SECONDS = 10
 
 local function applyBackdrop(frame, bg, border, edgeSize)
@@ -274,9 +277,38 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
     box.hint = newLabel(box, hintText, FONT_BODY, C.dim)
     box.hint:SetPoint("LEFT", box, "LEFT", 7, 0)
 
+    -- The one line that says why an entry was refused. It lives under the box it
+    -- belongs to, so there is never a doubt which of the three fields is being
+    -- answered, and the panels keep its room reserved whether it is showing or
+    -- not: a sentence that appears must not shove the list under it downwards.
+    box.note = newLabel(box, "", FONT_BODY, C.orange)
+    box.note:SetPoint("TOPLEFT", box, "BOTTOMLEFT", 0, -4)
+    box.note:SetWidth(width or 220)
+    box.note:Hide()
+
     function box:RefreshHint()
         local text = self:GetText()
         if text and text ~= "" then self.hint:Hide() else self.hint:Show() end
+    end
+
+    function box:ClearNote()
+        self.noteToken = nil
+        self.note:SetText("")
+        self.note:Hide()
+    end
+
+    -- The generation token the undo strip uses, and for the same reason: two
+    -- refusals a second apart leave two timers running, and the older one must
+    -- not wipe the sentence the newer one has just put up. Same six seconds as
+    -- the undo strip, from the same constant -- one duration on this screen.
+    function box:SayNo(text)
+        local mine = {}
+        self.noteToken = mine
+        self.note:SetText(text)
+        self.note:Show()
+        C_Timer.After(UNDO_SECONDS, function()
+            if self.noteToken == mine then self:ClearNote() end
+        end)
     end
 
     box:SetScript("OnTextChanged", function(self) self:RefreshHint() end)
@@ -1431,6 +1463,30 @@ local function blockedSignature()
     return table.concat(names, ",") .. "|" .. table.concat(patterns, ",")
 end
 
+-- Which sentence answers which refusal. The interface picks a wording from the
+-- code the writers hand back; it never decides on its own what is refusable, so
+-- a rule can only ever change in one place.
+local REFUSAL_TEXT = {
+    name = "REFUSED_NAME",
+    account = "BNET_NOT_BLOCKED",
+    pattern = "REFUSED_PATTERN",
+}
+
+-- The one submission path for the three field-and-button pairs. There were six
+-- bodies -- one on Enter and one on the button, per pair -- doing the same
+-- things, which is this release's whole subject, in this file: two paths that
+-- have to be corrected twice. Adding the refusal line to six of them is exactly
+-- the mistake the release is about.
+local function submitEntry(box, addFn)
+    local text = box:GetText()
+    box:SetText("")
+    box:RefreshHint()
+    local ok, _, _, refusal = addFn(text)
+    local key = refusal and REFUSAL_TEXT[refusal]
+    if key then box:SayNo(L[key]) else box:ClearNote() end
+    if ok and ns.refreshUI then ns.refreshUI() end
+end
+
 local function buildAllowedPanel()
     local panel = newPanelFrame("SanctuaryPanelAllowed", L["TILE_ALLOWED"])
     panels.allowed = panel
@@ -1441,14 +1497,9 @@ local function buildAllowedPanel()
     panel.addedSection:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0)
 
     panel.addInput = newInput(child, "SanctuaryAllowedAddInput", 250, L["PANEL_ADD_NAME_HINT"],
-        function(text)
-            if ns.addAllowed(text) and ns.refreshUI then ns.refreshUI() end
-        end)
+        function() submitEntry(panel.addInput, ns.addAllowed) end)
     panel.addBtn = newButton(child, nil, L["PANEL_ADD_BTN"], 90, 24, function()
-        local text = panel.addInput:GetText()
-        panel.addInput:SetText("")
-        panel.addInput:RefreshHint()
-        if ns.addAllowed(text) and ns.refreshUI then ns.refreshUI() end
+        submitEntry(panel.addInput, ns.addAllowed)
     end)
 
     panel.autoSection = newSection(child, L["PANEL_AUTO_TITLE"], nil, PANEL_WIDTH - 40)
@@ -1543,7 +1594,10 @@ local function refreshAllowedPanel(force)
     panel.addInput:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
     panel.addBtn:ClearAllPoints()
     panel.addBtn:SetPoint("LEFT", panel.addInput, "RIGHT", 8, 0)
-    y = y - 40
+    -- NOTE_ROOM is kept whether a sentence is showing or not, the same choice the
+    -- undo strip made: a line that appears must not push the list down under the
+    -- fingers of somebody about to click a cross.
+    y = y - 40 - NOTE_ROOM
 
     panel.autoSection:ClearAllPoints()
     panel.autoSection:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
@@ -1674,27 +1728,17 @@ local function buildBlockedPanel()
 
     panel.namesSection = newSection(child, L["PANEL_BLOCKED_NAMES"], nil, PANEL_WIDTH - 40)
     panel.nameInput = newInput(child, "SanctuaryBlockedAddInput", 250, L["PANEL_ADD_NAME_HINT"],
-        function(text)
-            if ns.addBlocked(text) and ns.refreshUI then ns.refreshUI() end
-        end)
+        function() submitEntry(panel.nameInput, ns.addBlocked) end)
     panel.nameBtn = newButton(child, nil, L["PANEL_ADD_BTN"], 90, 24, function()
-        local text = panel.nameInput:GetText()
-        panel.nameInput:SetText("")
-        panel.nameInput:RefreshHint()
-        if ns.addBlocked(text) and ns.refreshUI then ns.refreshUI() end
+        submitEntry(panel.nameInput, ns.addBlocked)
     end)
 
     panel.patternsSection = newSection(child, L["PANEL_BLOCKED_PATTERNS"],
         L["PANEL_PATTERNS_DESC"], PANEL_WIDTH - 40)
     panel.patternInput = newInput(child, "SanctuaryPatternAddInput", 250, L["PANEL_PATTERN_HINT"],
-        function(text)
-            if ns.addPattern(text) and ns.refreshUI then ns.refreshUI() end
-        end)
+        function() submitEntry(panel.patternInput, ns.addPattern) end)
     panel.patternBtn = newButton(child, nil, L["PANEL_ADD_BTN"], 90, 24, function()
-        local text = panel.patternInput:GetText()
-        panel.patternInput:SetText("")
-        panel.patternInput:RefreshHint()
-        if ns.addPattern(text) and ns.refreshUI then ns.refreshUI() end
+        submitEntry(panel.patternInput, ns.addPattern)
     end)
     panel.signature = nil
     return panel
@@ -1723,7 +1767,7 @@ local function refreshBlockedPanel(force)
     panel.nameInput:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
     panel.nameBtn:ClearAllPoints()
     panel.nameBtn:SetPoint("LEFT", panel.nameInput, "RIGHT", 8, 0)
-    y = y - 34
+    y = y - 34 - NOTE_ROOM
 
     local names = {}
     for key, data in pairs(SanctuaryDB.blockedNames or {}) do
@@ -1751,7 +1795,7 @@ local function refreshBlockedPanel(force)
     panel.patternInput:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
     panel.patternBtn:ClearAllPoints()
     panel.patternBtn:SetPoint("LEFT", panel.patternInput, "RIGHT", 8, 0)
-    y = y - 34
+    y = y - 34 - NOTE_ROOM
 
     local patterns = {}
     for _, value in ipairs(SanctuaryDB.keywords or {}) do
@@ -2105,6 +2149,9 @@ local function clearTransientFields()
                 if box and box.SetText then
                     box:SetText("")
                     box:RefreshHint()
+                    -- The sentence goes with the text it was about: reopening the
+                    -- window on a refusal from a minute ago explains nothing.
+                    if box.ClearNote then box:ClearNote() end
                 end
             end
         end

@@ -4990,6 +4990,143 @@ equal(ns.addPattern("SPSPAM"), false, "and a duplicate is a no-op")
 ns.ClosePanel()
 
 -- ---------------------------------------------------------------------------
+-- Saying no, and saying why
+-- ---------------------------------------------------------------------------
+
+-- A refused entry used to be refused in silence: the field emptied itself and
+-- nothing appeared, so the only reading available was "the add-on is broken".
+-- The rule of what is refused lives in the three writers, which hand back a
+-- fourth value naming the refusal; the panel picks a sentence from that code and
+-- never works the answer out a second time.
+--
+-- A scope of its own: the enclosing function is at Lua's ceiling of 200 locals.
+;(function()
+
+-- The three writers, first. Only the refusals that can be explained get a fourth
+-- value.
+local ok, key, data, refusal = ns.addAllowed("-")
+equal(ok, false, "the allowed field refuses a name with nothing left of it")
+equal(refusal, "name", "and says which sentence answers it")
+
+ok, key, data, refusal = ns.addBlocked("-")
+equal(ok, false, "the blocked field refuses it too")
+equal(refusal, "name", "with the same sentence")
+
+ok, key, data, refusal = ns.addBlocked("Real Friend#1234")
+equal(ok, false, "the blocked field refuses a BattleTag")
+equal(refusal, "account", "with the Battle.net sentence, not the pseudo one")
+
+ok, key, data, refusal = ns.addPattern("to.to")
+equal(ok, false, "the pattern field refuses punctuation")
+equal(refusal, "pattern", "with the pattern sentence")
+
+-- A BattleTag pasted into the PATTERN field gets the pattern sentence, not the
+-- Battle.net one: what is wrong there is the shape of the pattern.
+ok, key, data, refusal = ns.addPattern("Toto-Ysondre")
+equal(ok, false, "and a name with a realm, which would match nobody")
+equal(refusal, "pattern", "with the same sentence")
+ok, key, data, refusal = ns.addPattern("Truc#1234")
+equal(refusal, "pattern", "and a BattleTag in the pattern field is a pattern problem")
+
+-- The two silent refusals. A duplicate hands the existing record back, the way
+-- it always did, and says nothing: the label is already on screen.
+ok = ns.addBlocked("Dupprobe")
+equal(ok, true, "a name goes in once")
+ok, key, data, refusal = ns.addBlocked("Dupprobe")
+equal(ok, false, "and not twice")
+check(key ~= nil and data ~= nil, "the duplicate still hands back the record it found")
+equal(refusal, nil, "and says nothing, the label being on screen already")
+ns.removeBlocked(key)
+
+-- A field with nothing in it: nothing was typed, so there is nothing to answer.
+ok, key, data, refusal = ns.addBlocked("   ")
+equal(ok, false, "a blank field writes nothing")
+equal(refusal, nil, "and is answered with silence")
+equal(select(4, ns.addAllowed("")), nil, "an empty allowed field too")
+equal(select(4, ns.addPattern("   ")), nil, "and an empty pattern field")
+
+-- ... and now the screen. Both ways in: the button and the Enter key. Six
+-- bodies used to do this, two per field, which is precisely the shape this
+-- release went after.
+ns.OpenPanel("blocked")
+local panel = _G.SanctuaryPanelBlocked
+local nameBox = _G.SanctuaryBlockedAddInput
+local patternBox = _G.SanctuaryPatternAddInput
+local beforeNames = ns.getListCounts().blocked.names
+
+nameBox:SetText("-")
+panel.nameBtn:Click()
+equal(nameBox.note:GetText(), ns.L["REFUSED_NAME"], "the button says why a name was refused")
+equal(nameBox.note:IsShown(), true, "the sentence is on screen")
+equal(nameBox:GetText(), "", "the field is emptied all the same")
+equal(ns.getListCounts().blocked.names, beforeNames, "and nothing was written to the list")
+check(panelRowTexts(panel):find(ns.L["REFUSED_NAME"], 1, true) ~= nil,
+    "and the sentence is under the field it answers")
+
+nameBox:SetText("Real Friend#1234")
+nameBox:GetScript("OnEnterPressed")(nameBox)
+equal(nameBox.note:GetText(), ns.L["BNET_NOT_BLOCKED"],
+    "the Enter key says why a BattleTag was refused")
+equal(nameBox:GetText(), "", "and empties the field")
+equal(ns.getListCounts().blocked.names, beforeNames, "still writing nothing")
+
+patternBox:SetText("to.to")
+panel.patternBtn:Click()
+equal(patternBox.note:GetText(), ns.L["REFUSED_PATTERN"], "the pattern field answers on the button")
+patternBox:SetText("to.to")
+patternBox:GetScript("OnEnterPressed")(patternBox)
+equal(patternBox.note:GetText(), ns.L["REFUSED_PATTERN"], "and on the Enter key")
+
+-- It goes on its own, after the same six seconds the undo strip keeps.
+runTimers(3)
+equal(nameBox.note:GetText(), "", "the sentence goes on its own")
+equal(nameBox.note:IsShown(), false, "and takes its room back")
+equal(patternBox.note:GetText(), "", "both of them")
+
+-- Two refusals a second apart leave two timers running, and the older one must
+-- not wipe the sentence the newer one just put up. Timers are caught here rather
+-- than run, because running them all at once cannot tell the two apart.
+local savedAfter = C_Timer.After
+local queued = {}
+C_Timer.After = function(_, callback) queued[#queued + 1] = callback end
+nameBox:SetText("-")
+panel.nameBtn:Click()
+nameBox:SetText("Real Friend#1234")
+panel.nameBtn:Click()
+C_Timer.After = savedAfter
+equal(#queued, 2, "two refusals leave two timers behind")
+queued[1]()
+equal(nameBox.note:GetText(), ns.L["BNET_NOT_BLOCKED"],
+    "the older timer leaves the newer sentence alone")
+queued[2]()
+equal(nameBox.note:GetText(), "", "and its own timer is what clears it")
+
+-- An entry that goes in says nothing at all, and clears whatever was there.
+nameBox:SetText("-")
+panel.nameBtn:Click()
+check(nameBox.note:IsShown(), "a refusal is showing")
+nameBox:SetText("Acceptedname")
+panel.nameBtn:Click()
+equal(nameBox.note:GetText(), "", "an accepted entry says nothing")
+equal(nameBox.note:IsShown(), false, "and takes the refusal off the screen")
+equal(ns.getListCounts().blocked.names, beforeNames + 1, "having written the name")
+
+-- Closing the window drops the sentence with the text it was about.
+nameBox:SetText("-")
+panel.nameBtn:Click()
+check(nameBox.note:IsShown(), "a refusal is showing again")
+mainFrame:Hide()
+equal(nameBox.note:GetText(), "", "closing the window clears the refusal")
+equal(nameBox.note:IsShown(), false, "sentence and room together")
+mainFrame:Show()
+
+ns.removeBlocked(ns.normalizeBlockedKey("Acceptedname"))
+ns.ClosePanel()
+runTimers(3)
+
+end)()
+
+-- ---------------------------------------------------------------------------
 -- The panels are modal, and as tall as the window
 -- ---------------------------------------------------------------------------
 
