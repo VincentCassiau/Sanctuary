@@ -2066,10 +2066,11 @@ do
     equal(SanctuaryCharDB.groupTracker["Cross-Hyjal"], nil,
         "the tracker drops him rather than weighing him again every 30 s")
 
+    -- Back to the group the section was playing with, and without a roster
+    -- update: the ticker already emptied the tracker, and firing one here would
+    -- start tracking a member the cases below never asked about.
     ns.removeBlocked("cross-hyjal")
-    inGroup = false
-    groupMembers = {}
-    fire("GROUP_ROSTER_UPDATE")
+    groupMembers = { "Dungeonmate-TestRealm" }
     ns.invalidateWhitelist()
 end
 
