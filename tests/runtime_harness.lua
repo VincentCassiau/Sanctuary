@@ -3712,7 +3712,16 @@ end
 
 -- The friend the roster names without a realm: a bare pseudo is all it ever
 -- gave, so the bare pseudo is what a refusal can honestly answer on -- the case
--- step 2 of the attribution lookup exists for, kept exactly as it was.
+-- step 2 of the attribution lookup exists for.
+--
+-- And that map is asked about a bare name only. Restricting it to the realm-less
+-- characters was half the rule; the other half is the question. Asked through
+-- `normalizeName`, which throws away whatever realm the person typed, one such
+-- friend made his namesake unblockable on every realm at once: the add-on
+-- refused "Norealmchar-Hyjal" with the Battle.net sentence, naming somebody the
+-- player has never met, and left no spelling that would take. That is the way
+-- out the realm-qualified key exists to keep open, closed again one function
+-- later.
 do
     local savedFriends = bnetFriends
     bnetFriends = {
@@ -3722,8 +3731,12 @@ do
     ns.invalidateWhitelist()
     equal(select(4, ns.addBlocked("Norealmchar")), "account",
         "a friend the roster gave no realm for is refused on his bare pseudo")
-    equal(select(4, ns.addBlocked("Norealmchar-Hyjal")), "account",
-        "and on whatever realm somebody spells after it")
+    local ok, key, _, refusal = ns.addBlocked("Norealmchar-Hyjal")
+    equal(ok, true, "while a realm typed after it names a character the roster never claimed")
+    equal(refusal, nil, "so no Battle.net sentence stands in the way")
+    equal(ns.classifyName("Norealmchar-Hyjal").verdict, "always_blocked",
+        "and the entry does block him")
+    equal(select(1, ns.removeBlocked(key)), true, "removed again")
     bnetFriends = savedFriends
     ns.invalidateWhitelist()
 end

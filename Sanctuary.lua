@@ -1087,10 +1087,18 @@ end
 -- way out of it, and closing that door left no way out at all.
 --
 -- So the realm-qualified key first and always -- the one shape that tells two
--- namesakes apart -- and the bare pseudo only when the roster never gave a realm
--- for that character, which is exactly what step 2 above exists to cover (an
--- offline friend, a name handed over without its realm). Still failing open: a
--- roster that has not answered yet knows nobody and refuses nobody.
+-- namesakes apart -- and the bare pseudo only when neither side named a realm:
+-- not the roster, which is what the second map holds, and not the person typing,
+-- which is what `splitCharacterName` answers. Both halves are needed. Restricting
+-- the map alone left the question tolerant: asked through `normalizeName`, which
+-- drops whatever realm was typed, one friend the roster had named without a
+-- realm made his namesake unblockable everywhere -- "Norealmchar-Hyjal" refused
+-- with the Battle.net sentence, naming a person the player has never met, and no
+-- spelling left that would take. That is the same door the realm-qualified key
+-- was put here to keep open.
+--
+-- Still failing open: a roster that has not answered yet knows nobody and
+-- refuses nobody.
 local function bnetAccountBlockingCharacter(name)
     local map = Sanctuary.bnetAccountByCharacter
     if map then
@@ -1103,8 +1111,10 @@ local function bnetAccountBlockingCharacter(name)
 
     local unrealmed = Sanctuary.bnetAccountByCharacterNoRealm
     if unrealmed then
-        local bareKey = normalizeName(name)
-        if bareKey then
+        -- Both halves from the one rule, and a realm read the way the key reads
+        -- it: "Toto-" and "Toto " carry no realm any more than "Toto" does.
+        local bareKey, realmPart = splitCharacterName(name)
+        if bareKey and not normalizeRealm(realmPart) then
             local account = unrealmed[bareKey]
             if account then return account end
         end
@@ -2165,8 +2175,9 @@ function ns.addBlocked(name, source)
     -- the same breath.
     --
     -- Asked of `bnetAccountBlockingCharacter`, not of the tolerant attribution
-    -- lookup: on the realm-qualified key, and on the bare pseudo only when the
-    -- roster never gave that character a realm. See the comment there. It fails
+    -- lookup: on the realm-qualified key, and on the bare pseudo only when
+    -- neither the roster nor the person typing named a realm. See the comment
+    -- there -- restricting the map was only half of that rule. It fails
     -- open: a roster that has not answered yet knows nobody, so nothing
     -- legitimate is refused on a stale cache -- the wrong way round would be an
     -- add-on that will not let somebody block their harasser.
