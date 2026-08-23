@@ -54,7 +54,13 @@ local C = {
 -- 16 / 14 / 13 / 12, the hierarchy Vincent asked for.
 local FONT_TITLE, FONT_SECTION, FONT_DESC, FONT_BODY = 16, 14, 13, 12
 
-local FRAME_WIDTH = 780
+-- The width the window opens at, and what the grip may take it to. Both axes
+-- move now: the bounds are the brief's own, 500x380 to 900x700, measured on the
+-- whole window. Nothing scrolls sideways -- what a wider window buys is wider
+-- columns, not a wider canvas to pan over -- so every screen is laid out from
+-- `innerWidth()` and never from the number it was built at.
+local DEFAULT_WIDTH = 780
+local MIN_FRAME_WIDTH, MAX_FRAME_WIDTH = 500, 900
 local MIN_HEIGHT, MAX_HEIGHT = 380, 700
 local HEADER_HEIGHT = 40
 local TAB_HEIGHT = 22
@@ -79,10 +85,7 @@ local CONTENT_BOTTOM = 30
 -- is an overlay pinned this far above the bottom edge of the frame, and it sits
 -- OVER the panels rather than inside them.
 local UNDO_HEIGHT, UNDO_MARGIN = 22, 6
--- What the whole window may measure, header and bottom strip included. Only the
--- height is negotiable: the scroll area and every tab frame are built at
--- FRAME_WIDTH and nothing in the window scrolls sideways, so any other width
--- either truncates the content or leaves it floating in the void.
+-- What the whole window may measure in height, header and bottom strip included.
 local MIN_FRAME_HEIGHT = MIN_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
 local MAX_FRAME_HEIGHT = MAX_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
 local UNDO_SECONDS = 6
@@ -92,14 +95,23 @@ local UNDO_SECONDS = 6
 -- characters in French, which no latin face fits into 250 px at FONT_BODY, so at
 -- the box's width it would fold onto three lines and lie over the first row of
 -- chips.
-local NOTE_WIDTH = PANEL_WIDTH - 40
+-- The width the window is at right now, and what everything measures itself
+-- against. `DEFAULT_WIDTH` is only where the window opens; a screen or a panel
+-- that reads it instead of these is a screen that stops following the grip.
+local frameWidth = DEFAULT_WIDTH
+local function innerWidth() return frameWidth - PAD * 2 end
+-- The drawer keeps the mock-up's 540 px while there is room for it, and never
+-- takes so much that nothing of the window is left beside it: the strip of veil
+-- next to the panel is what a person clicks to close it.
+local function panelWidth() return math.min(PANEL_WIDTH, frameWidth - 60) end
+local function noteWidth() return panelWidth() - 40 end
 local NOTE_GAP = 4
 -- One line of FONT_BODY, rounded up: the client draws a 12 px face on about
 -- 14 px of line.
 local NOTE_LINE = 15
 -- Room kept under an add field for its sentence, showing or not, so nothing on
 -- screen moves when one appears. One line covers the two name sentences and the
--- pattern one at NOTE_WIDTH; the blocked names field is the only one that can
+-- pattern one at the note width; the blocked names field is the only one that can
 -- answer with the Battle.net sentence, which still takes two lines there, so it
 -- keeps two. The harness measures the six strings against these two values.
 local NOTE_ROOM = NOTE_GAP + NOTE_LINE
@@ -340,6 +352,13 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
 
     box.hint = newLabel(box, hintText, FONT_BODY, C.dim)
     box.hint:SetPoint("LEFT", box, "LEFT", 7, 0)
+    -- Cut at the field's own edge, never past it. The hint used to be a
+    -- FontString with no width at all: "Texte à chercher dans les pseudos,
+    -- ex. « test »" ran out of the box and under the Add button, which is what
+    -- "le placeholder de patterns dépasse" describes. One line, and the wording
+    -- itself is short enough to fit -- a hint nobody can read whole says nothing.
+    box.hint:SetWidth((width or 220) - 14)
+    box.hint:SetWordWrap(false)
 
     -- The line that says why an entry was refused. It starts at the box's left
     -- edge, so there is never a doubt which of the three fields is being
@@ -349,7 +368,7 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
     -- shove the list under it downwards, nor lie over it.
     box.note = newLabel(box, "", FONT_BODY, C.orange)
     box.note:SetPoint("TOPLEFT", box, "BOTTOMLEFT", 0, -NOTE_GAP)
-    box.note:SetWidth(NOTE_WIDTH)
+    box.note:SetWidth(noteWidth())
     box.note:Hide()
 
     function box:RefreshHint()
@@ -413,6 +432,9 @@ local function newChip(parent)
     applyBackdrop(chip, C.tile, C.border)
     chip.label = newLabel(chip, "", FONT_BODY, C.soft)
     chip.label:SetPoint("LEFT", chip, "LEFT", 8, 0)
+    -- One line, cut at the width `layoutChips` gives it. A name too long for the
+    -- row used to be written past the end of its own chip, under the cross.
+    chip.label:SetWordWrap(false)
     chip.remove = CreateFrame("Button", nil, chip)
     chip.remove:SetSize(16, 16)
     chip.remove:SetPoint("RIGHT", chip, "RIGHT", -4, 0)
@@ -451,13 +473,16 @@ local function newScroll(parent, name, width, height)
         if range > 1 then self.bar:Show() else self.bar:Hide() end
     end
 
-    -- A viewport that follows its container. The width never moves -- nothing in
-    -- this window scrolls sideways -- so only the height is handed over, and the
-    -- track is resized with it rather than keeping the height it was born with.
-    function scroll:SetViewportHeight(newHeight)
-        local bounded = math.max(40, newHeight or height)
-        self:SetSize(width, bounded)
-        self.bar:SetHeight(bounded)
+    -- A viewport that follows its container, on both axes: nothing in this
+    -- window scrolls sideways, so a narrower window is a narrower viewport and
+    -- not a canvas to pan over. The track is resized with it rather than keeping
+    -- the size it was born with.
+    function scroll:SetViewportSize(newWidth, newHeight)
+        local boundedWidth = math.max(120, newWidth or width)
+        local boundedHeight = math.max(40, newHeight or height)
+        self:SetSize(boundedWidth, boundedHeight)
+        self.child:SetWidth(boundedWidth)
+        self.bar:SetHeight(boundedHeight)
         self:RefreshBar()
     end
     return scroll
@@ -583,7 +608,7 @@ local ROW_HEIGHT = 24
 
 local function buildProtectionTab(parent)
     protection.frame = parent
-    local width = FRAME_WIDTH - PAD * 2
+    local width = innerWidth()
     local y = 0
 
     -- `.qt` is two pieces, not one string: a small accent number and a 16 px
@@ -861,7 +886,7 @@ end
 
 -- Lays the screen out for the mode it is in, and returns the height it needs.
 refreshTab.protection = function()
-    local width = FRAME_WIDTH - PAD * 2
+    local width = innerWidth()
     local blockedOnly = ns.getScope() == "blockedOnly"
     local custom = ns.getPreset() == "custom"
 
@@ -1019,7 +1044,7 @@ end
 
 local function buildJournalTab(parent)
     journal.frame = parent
-    local width = FRAME_WIDTH - PAD * 2
+    local width = innerWidth()
     journal.header = newLabel(parent, L["LOGS_HEADER"], FONT_SECTION, C.ink)
     journal.header:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, 0)
     journal.count = newLabel(parent, "", FONT_BODY, C.dim)
@@ -1058,7 +1083,7 @@ local function acquireJournalRow(parent)
     local row = table.remove(journal.rowPool)
     if not row then
         row = CreateFrame("Button", nil, parent)
-        row:SetSize(FRAME_WIDTH - PAD * 2 - 10, 18)
+        row:SetSize(innerWidth() - 10, 18)
         row.label = newLabel(row, "", FONT_BODY, C.soft)
         row.label:SetPoint("LEFT", row, "LEFT", 0, 0)
     end
@@ -1153,7 +1178,7 @@ local advanced = {}
 -- left for the home screen -- it says who is allowed, which is the one question
 -- the first screen exists to answer.
 local function buildAdvancedTab(parent)
-    local width = FRAME_WIDTH - PAD * 2
+    local width = innerWidth()
     local y = 0
 
     advanced.diagSection = newSection(parent, L["ADV_DIAG_TITLE"], nil, width)
@@ -1370,7 +1395,7 @@ local function appendDiagnosticResult(result)
 end
 
 local function buildDiagnosticsTab(parent)
-    local width = FRAME_WIDTH - PAD * 2
+    local width = innerWidth()
     diagnostics.header = newLabel(parent, L["DIAG_PANEL_HEADER"], FONT_SECTION, C.ink)
     diagnostics.header:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, 0)
 
@@ -1455,14 +1480,31 @@ local function releaseChips()
     activeChips = {}
 end
 
+-- What a chip spends on anything that is not its name: 8 px of left inset, a
+-- 4 px gap, the 16 px cross and its 4 px margin. The label gets what is left,
+-- and never a pixel of it.
+local CHIP_CHROME = 32
+
 local function layoutChips(parent, entries, startY, onRemove)
     local x, y = 0, startY
-    local maxWidth = PANEL_WIDTH - 40
+    local maxWidth = panelWidth() - 40
     for _, item in ipairs(entries) do
         local chip = newChip(parent)
         activeChips[#activeChips + 1] = chip
+        -- Measured, not counted. The width used to be `24 + #label * 7`: a byte
+        -- count on a UTF-8 string, at a made-up seven pixels a character, then
+        -- clamped to the row -- so a long pseudo got a chip too narrow for its
+        -- own text and the cross, pinned to the right edge, sat on the letters.
+        -- Asking the FontString how wide it renders is the only measure that
+        -- cannot disagree with what is drawn; the cross keeps its room whatever
+        -- the answer, and the label is cut to what is left.
+        chip.label:SetWidth(0)
         chip.label:SetText(item.label)
-        local width = math.min(maxWidth, 24 + (#item.label * 7))
+        local textWidth = math.ceil(chip.label:GetStringWidth() or 0)
+        local roomForText = math.max(20, maxWidth - CHIP_CHROME)
+        local shown = math.min(textWidth, roomForText)
+        chip.label:SetWidth(shown)
+        local width = shown + CHIP_CHROME
         chip:SetSize(width, 22)
         if x + width > maxWidth then
             x = 0
@@ -1512,20 +1554,27 @@ local PANEL_SCROLL_BOTTOM = UNDO_HEIGHT + UNDO_MARGIN + 6
 -- read it back without a screenshot.
 local function applyPanelViewport(frameHeight)
     local height = math.max(120, (frameHeight or MIN_FRAME_HEIGHT) - HEADER_HEIGHT)
-    if panelVeil then panelVeil:SetSize(FRAME_WIDTH, height) end
+    if panelVeil then panelVeil:SetSize(frameWidth, height) end
     for _, panel in pairs(panels) do
         if type(panel) == "table" and panel.SetHeight then
             panel:SetHeight(height)
-            if panel.scroll and panel.scroll.SetViewportHeight then
-                panel.scroll:SetViewportHeight(height - PANEL_SCROLL_TOP - PANEL_SCROLL_BOTTOM)
+            panel:SetWidth(panelWidth())
+            if panel.scroll and panel.scroll.SetViewportSize then
+                panel.scroll:SetViewportSize(panelWidth() - 24,
+                    height - PANEL_SCROLL_TOP - PANEL_SCROLL_BOTTOM)
             end
+            -- What the panel drew was measured against the old width. Forcing a
+            -- redraw is the whole of the width change for a list: the chips
+            -- rewrap, the sentences rewrap, and the signature is what would
+            -- otherwise decide nothing had happened.
+            panel.signature = nil
         end
     end
 end
 
 local function newPanelFrame(name, titleText)
     local panel = CreateFrame("Frame", name, mainFrame, "BackdropTemplate")
-    panel:SetWidth(PANEL_WIDTH)
+    panel:SetWidth(panelWidth())
     panel:SetHeight(MIN_FRAME_HEIGHT - HEADER_HEIGHT)
     -- Two anchors, not a size: the panel runs from the bottom of the header to
     -- the bottom of the frame. Anchored on the top corner alone it kept the 400
@@ -1544,7 +1593,7 @@ local function newPanelFrame(name, titleText)
     panel.count = newLabel(panel, "", FONT_DESC, C.accent)
     panel.count:SetPoint("LEFT", panel.title, "RIGHT", 10, 0)
 
-    panel.scroll = newScroll(panel, name .. "Scroll", PANEL_WIDTH - 24,
+    panel.scroll = newScroll(panel, name .. "Scroll", panelWidth() - 24,
         MIN_FRAME_HEIGHT - HEADER_HEIGHT - PANEL_SCROLL_TOP - PANEL_SCROLL_BOTTOM)
     panel.scroll:SetPoint("TOPLEFT", panel, "TOPLEFT", 12, -PANEL_SCROLL_TOP)
     return panel
@@ -1628,7 +1677,7 @@ local function buildAllowedPanel()
     panels.allowedExpanded = {}
 
     local child = panel.scroll.child
-    panel.addedSection = newSection(child, L["PANEL_ADDED_BY_YOU"], nil, PANEL_WIDTH - 40)
+    panel.addedSection = newSection(child, L["PANEL_ADDED_BY_YOU"], nil, panelWidth() - 40)
     panel.addedSection:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0)
 
     panel.addInput = newInput(child, "SanctuaryAllowedAddInput", 250, L["PANEL_ADD_NAME_HINT"],
@@ -1637,9 +1686,9 @@ local function buildAllowedPanel()
         submitEntry(panel.addInput, ns.addAllowed)
     end)
 
-    panel.autoSection = newSection(child, L["PANEL_AUTO_TITLE"], nil, PANEL_WIDTH - 40)
+    panel.autoSection = newSection(child, L["PANEL_AUTO_TITLE"], nil, panelWidth() - 40)
     panel.groupNote = newLabel(child, L["WL_GROUP_NOTE"], FONT_BODY, C.dim)
-    panel.groupNote:SetWidth(PANEL_WIDTH - 40)
+    panel.groupNote:SetWidth(panelWidth() - 40)
     panel.autoRows = {}
     panel.autoRowPool = {}
     panel.signature = nil
@@ -1650,7 +1699,7 @@ local function acquireAutoRow(parent, panel)
     local row = table.remove(panel.autoRowPool)
     if not row then
         row = CreateFrame("Button", nil, parent)
-        row:SetSize(PANEL_WIDTH - 44, 18)
+        row:SetSize(panelWidth() - 44, 18)
         row.label = newLabel(row, "", FONT_BODY, C.soft)
         row.label:SetPoint("LEFT", row, "LEFT", 0, 0)
     end
@@ -1732,7 +1781,7 @@ local function refreshAllowedPanel(force)
     -- NOTE_ROOM is kept whether a sentence is showing or not, the same choice the
     -- undo strip made: a line that appears must not push the list down under the
     -- fingers of somebody about to click a cross. One line here: this field only
-    -- ever answers REFUSED_NAME, which fits a line at NOTE_WIDTH in both
+    -- ever answers REFUSED_NAME, which fits a line at the note width in both
     -- languages.
     y = y - 40 - NOTE_ROOM
 
@@ -1794,7 +1843,7 @@ local function refreshAllowedPanel(force)
             -- Wrapped, and two lines of room for it: both hints are full
             -- sentences and both ran past the right edge of the panel on one
             -- line, in French first.
-            hint.label:SetWidth(PANEL_WIDTH - 76)
+            hint.label:SetWidth(panelWidth() - 76)
             hint.label:SetText(L[hintKey])
             y = y - 38
         end
@@ -1854,16 +1903,16 @@ local function buildBlockedPanel()
     local child = panel.scroll.child
     panel.desc = newLabel(child, L["PANEL_BLOCKED_DESC"], FONT_BODY, C.dim)
     panel.desc:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0)
-    panel.desc:SetWidth(PANEL_WIDTH - 40)
+    panel.desc:SetWidth(panelWidth() - 40)
 
     -- Said here, where somebody types a name in: the blocked list holds WoW
     -- characters, and Battle.net is cut in Battle.net. Without the line the only
     -- way to learn it is to add a friend's account and watch nothing happen.
     panel.bnetNote = newLabel(child, L["BNET_NOT_BLOCKED"], FONT_BODY, C.dim)
     panel.bnetNote:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -32)
-    panel.bnetNote:SetWidth(PANEL_WIDTH - 40)
+    panel.bnetNote:SetWidth(panelWidth() - 40)
 
-    panel.namesSection = newSection(child, L["PANEL_BLOCKED_NAMES"], nil, PANEL_WIDTH - 40)
+    panel.namesSection = newSection(child, L["PANEL_BLOCKED_NAMES"], nil, panelWidth() - 40)
     panel.nameInput = newInput(child, "SanctuaryBlockedAddInput", 250, L["PANEL_ADD_NAME_HINT"],
         function() submitEntry(panel.nameInput, ns.addBlocked) end)
     panel.nameBtn = newButton(child, nil, L["PANEL_ADD_BTN"], 90, 24, function()
@@ -1871,7 +1920,7 @@ local function buildBlockedPanel()
     end)
 
     panel.patternsSection = newSection(child, L["PANEL_BLOCKED_PATTERNS"],
-        L["PANEL_PATTERNS_DESC"], PANEL_WIDTH - 40)
+        L["PANEL_PATTERNS_DESC"], panelWidth() - 40)
     panel.patternInput = newInput(child, "SanctuaryPatternAddInput", 250, L["PANEL_PATTERN_HINT"],
         function() submitEntry(panel.patternInput, ns.addPattern) end)
     panel.patternBtn = newButton(child, nil, L["PANEL_ADD_BTN"], 90, 24, function()
@@ -1905,7 +1954,7 @@ local function refreshBlockedPanel(force)
     panel.nameBtn:ClearAllPoints()
     panel.nameBtn:SetPoint("LEFT", panel.nameInput, "RIGHT", 8, 0)
     -- Two lines here, and only here: this is the one field that can answer with
-    -- the Battle.net sentence, which is longer than a line at NOTE_WIDTH in both
+    -- the Battle.net sentence, which is longer than a line at the note width in both
     -- languages. What sits at the y below is the first row of chips, which a
     -- second line would lie over.
     y = y - 34 - NOTE_ROOM_TWO_LINES
@@ -1937,7 +1986,7 @@ local function refreshBlockedPanel(force)
     panel.patternBtn:ClearAllPoints()
     panel.patternBtn:SetPoint("LEFT", panel.patternInput, "RIGHT", 8, 0)
     -- One line: this field only ever answers REFUSED_PATTERN, a BattleTag pasted
-    -- here included, and that sentence fits a line at NOTE_WIDTH in both
+    -- here included, and that sentence fits a line at the note width in both
     -- languages.
     y = y - 34 - NOTE_ROOM
 
@@ -2215,14 +2264,22 @@ local fittedNeed = MIN_HEIGHT
 -- height here. `applyHeight` does it after its own SetSize, and the window's
 -- OnSizeChanged does it while the grip is being dragged. It never resizes the
 -- window itself, so calling it from OnSizeChanged cannot loop.
-local function applyViewport(frameHeight)
+local function applyViewport(frameHeight, width)
     if not contentScroll or not contentFrame then return end
+    -- The live width, taken before anything measures itself: `innerWidth` and
+    -- `panelWidth` read it, and the whole point of the pass is that they answer
+    -- for the window as it is now, not as it opened.
+    frameWidth = math.min(MAX_FRAME_WIDTH,
+        math.max(MIN_FRAME_WIDTH, width or frameWidth))
     local viewport = math.max(120, (frameHeight or MIN_FRAME_HEIGHT) - HEADER_HEIGHT - CONTENT_BOTTOM)
-    contentScroll:SetSize(FRAME_WIDTH, viewport)
+    contentScroll:SetSize(frameWidth, viewport)
     local contentHeight = math.max(fittedNeed, viewport)
+    contentFrame:SetWidth(frameWidth)
     contentFrame:SetHeight(contentHeight)
+    for _, frame in pairs(tabFrames) do frame:SetWidth(frameWidth) end
     local active = tabFrames[activeTab]
     if active then active:SetHeight(contentHeight) end
+    if undoLine then undoLine:SetWidth(innerWidth()) end
     contentScroll:RefreshBar()
     -- The panels are not inside the content area, so nothing above resizes them:
     -- they answer to the window itself, on the same pass.
@@ -2237,19 +2294,21 @@ local function applyHeight(height)
     manualSize = SanctuaryDB and SanctuaryDB.uiSize or nil
     local needed = math.max(MIN_HEIGHT, height or MIN_HEIGHT)
     fittedNeed = needed
-    local frameHeight
+    local frameHeight, width
     if manualSize then
-        -- The stored width is never read back. Slot 1 stays in the record for
-        -- the shape's sake, and a settings file written before the bounds
-        -- existed can carry any height at all, so it is clamped here too.
+        -- Both slots are read back now. A settings file written before the
+        -- bounds existed -- or before the width was ever applied -- can carry
+        -- anything at all, so both are clamped here.
+        width = math.min(MAX_FRAME_WIDTH, math.max(MIN_FRAME_WIDTH, manualSize[1] or DEFAULT_WIDTH))
         frameHeight = manualSize[2] or MIN_FRAME_HEIGHT
         frameHeight = math.min(MAX_FRAME_HEIGHT, math.max(MIN_FRAME_HEIGHT, frameHeight))
     else
+        width = DEFAULT_WIDTH
         local bounded = math.min(MAX_HEIGHT, needed)
         frameHeight = bounded + HEADER_HEIGHT + CONTENT_BOTTOM
     end
-    mainFrame:SetSize(FRAME_WIDTH, frameHeight)
-    applyViewport(frameHeight)
+    mainFrame:SetSize(width, frameHeight)
+    applyViewport(frameHeight, width)
 end
 
 local function selectTab(key)
@@ -2322,18 +2381,17 @@ local function createMainFrame()
     if mainFrame then return mainFrame end
 
     mainFrame = CreateFrame("Frame", "SanctuaryMainFrame", UIParent, "BackdropTemplate")
-    mainFrame:SetSize(FRAME_WIDTH, MIN_HEIGHT + HEADER_HEIGHT)
+    mainFrame:SetSize(frameWidth, MIN_HEIGHT + HEADER_HEIGHT)
     mainFrame:SetPoint("CENTER")
     mainFrame:SetFrameStrata("DIALOG")
     mainFrame:SetFrameLevel(100)
     mainFrame:EnableMouse(true)
     mainFrame:SetMovable(true)
     mainFrame:SetResizable(true)
-    -- Same value on both sides for the width: the grip may only change the
-    -- height. Under pcall because SetResizeBounds is the Retail spelling and a
-    -- missing method must not take the window down with it.
+    -- Both axes now, decision 98. Under pcall because SetResizeBounds is the
+    -- Retail spelling and a missing method must not take the window down with it.
     pcall(mainFrame.SetResizeBounds, mainFrame,
-        FRAME_WIDTH, MIN_FRAME_HEIGHT, FRAME_WIDTH, MAX_FRAME_HEIGHT)
+        MIN_FRAME_WIDTH, MIN_FRAME_HEIGHT, MAX_FRAME_WIDTH, MAX_FRAME_HEIGHT)
     mainFrame:SetClampedToScreen(true)
     mainFrame:Hide()
     applyBackdrop(mainFrame, C.panel, C.border, 2)
@@ -2397,7 +2455,7 @@ local function createMainFrame()
         mainFrame:Hide()
     end)
 
-    contentScroll = newScroll(mainFrame, "SanctuaryContentScroll", FRAME_WIDTH, MIN_HEIGHT)
+    contentScroll = newScroll(mainFrame, "SanctuaryContentScroll", frameWidth, MIN_HEIGHT)
     contentScroll:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -HEADER_HEIGHT)
     contentFrame = contentScroll.child
 
@@ -2405,14 +2463,14 @@ local function createMainFrame()
     -- once it is released. `applyViewport` never resizes the window, so this
     -- cannot feed back into itself.
     mainFrame:SetScript("OnSizeChanged", function(self)
-        applyViewport(self:GetHeight())
+        applyViewport(self:GetHeight(), self:GetWidth())
     end)
 
     -- The veil takes the mouse and the wheel and does nothing with them. That is
     -- the point: the Cards and Checks behind an open panel must not be settings a
     -- person changes without seeing what they are doing.
     panelVeil = CreateFrame("Frame", "SanctuaryPanelVeil", mainFrame, "BackdropTemplate")
-    panelVeil:SetSize(FRAME_WIDTH, MIN_FRAME_HEIGHT - HEADER_HEIGHT)
+    panelVeil:SetSize(frameWidth, MIN_FRAME_HEIGHT - HEADER_HEIGHT)
     panelVeil:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -HEADER_HEIGHT)
     panelVeil:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", 0, 0)
     panelVeil:SetFrameLevel(LEVEL_VEIL)
@@ -2426,7 +2484,7 @@ local function createMainFrame()
 
     for _, def in ipairs(TAB_DEFS) do
         local frame = CreateFrame("Frame", "SanctuaryTabContent_" .. def.key, contentFrame)
-        frame:SetSize(FRAME_WIDTH, MIN_HEIGHT)
+        frame:SetSize(frameWidth, MIN_HEIGHT)
         -- `.content { padding:18px }`, once, for the five screens. Every screen
         -- used to start at the very top of the content area, so the first line
         -- of each -- "1 Qui peut vous contacter ?" among them -- was glued to
@@ -2466,7 +2524,7 @@ local function createMainFrame()
 
     -- The undo line sits above the tabs so it is visible whichever screen is up.
     undoLine = CreateFrame("Frame", "SanctuaryUndoLine", mainFrame, "BackdropTemplate")
-    undoLine:SetSize(FRAME_WIDTH - PAD * 2, UNDO_HEIGHT)
+    undoLine:SetSize(innerWidth(), UNDO_HEIGHT)
     undoLine:SetPoint("BOTTOMLEFT", mainFrame, "BOTTOMLEFT", PAD, UNDO_MARGIN)
     undoLine:SetFrameLevel(LEVEL_OVER_PANEL)
     applyBackdrop(undoLine, C.tile, C.border)
@@ -2512,9 +2570,7 @@ local function createMainFrame()
         -- release, so the way back to the fitted mode did not survive the click.
         if not resizeGrip.sizing then return end
         resizeGrip.sizing = false
-        -- Height only: the width is fixed by the resize bounds and by every
-        -- frame the window is built from.
-        manualSize = { FRAME_WIDTH, mainFrame:GetHeight() }
+        manualSize = { mainFrame:GetWidth(), mainFrame:GetHeight() }
         if SanctuaryDB then SanctuaryDB.uiSize = { manualSize[1], manualSize[2] } end
         -- Recording the size is not applying it. The content area keeps the
         -- height it was given by the last refresh until something hands it the

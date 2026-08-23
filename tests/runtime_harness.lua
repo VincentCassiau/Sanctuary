@@ -4361,6 +4361,11 @@ local function newWidget(kind, name, parent, template)
     function w:GetText() return self.__text end
     function w:Insert(text) self.__text = (self.__text or "") .. tostring(text) end
     function w:GetStringHeight() return 12 end
+    -- A stand-in with one property that matters: it grows with the text. The
+    -- chips measure themselves through it, so a name too long for its row is a
+    -- case a check can set up rather than a screenshot somebody has to read.
+    function w:GetStringWidth() return #(self.__text or "") * 7 end
+    function w:SetWordWrap(value) self.__wordWrap = value and true or false end
     function w:GetFont() return "Fonts\\FRIZQT__.TTF", 12, "" end
     -- Recorded rather than stubbed: what a texture is filled with, and whether
     -- it was rounded, is exactly what "the box is invisible" and "the radio is a
@@ -5126,6 +5131,87 @@ end
 check(normalisedPattern, "spaces and case are stripped")
 equal(ns.addPattern("SPSPAM"), false, "and a duplicate is a no-op")
 ns.ClosePanel()
+
+-- ---------------------------------------------------------------------------
+-- A label never runs under the cross, and a hint never runs out of its field
+-- ---------------------------------------------------------------------------
+
+-- Decision 99, both halves. The chip width was `24 + #label * 7` clamped to the
+-- row: a byte count on a UTF-8 string at a made-up seven pixels a character, so
+-- a long pseudo got a chip narrower than its own text and the cross, pinned to
+-- the right edge, sat on the letters. The hint was a FontString with no width at
+-- all and ran past the field, under the Add button.
+--
+-- A scope of its own: the enclosing function is at Lua's ceiling of 200 locals.
+;(function()
+
+ns.OpenPanel("blocked")
+local panel = _G.SanctuaryPanelBlocked
+
+-- Room for the cross is not negotiable, whatever the name measures. The label
+-- must be BOUNDED -- a FontString left at width 0 draws at its natural size,
+-- which is precisely how a long pseudo ended up written under the cross -- and
+-- what it is bounded to must leave the chrome alone.
+local function checkChip(label, note)
+    local chip = findRow(panel, label)
+    check(chip ~= nil, note .. " has a chip")
+    if not chip then return end
+    local room = chip:GetWidth() - 32
+    check((chip.label:GetWidth() or 0) > 0, note .. " gives its label a width of its own")
+    check((chip.label:GetWidth() or 0) <= room,
+        note .. " keeps the cross's room outside its label")
+    check((chip.label:GetWidth() or 0) >= math.min(chip.label:GetStringWidth(), room),
+        note .. " still shows as much of itself as the chip can hold")
+    check(chip:GetWidth() <= panel:GetWidth() - 40,
+        note .. " stays inside the row it is laid out on")
+    equal(chip.label.__wordWrap, false, note .. " is written on one line")
+end
+
+ns.addBlocked("Ana")
+ns.addBlocked("Averylongpseudonameindeed")
+ns.refreshUI()
+checkChip("Ana", "a short name")
+checkChip("Averylongpseudonameindeed", "a long name")
+
+local shortChip = findRow(panel, "Ana")
+local longChip = findRow(panel, "Averylongpseudonameindeed")
+check(longChip:GetWidth() > shortChip:GetWidth(), "a longer name gets a wider chip")
+
+-- Longer than the row itself: the label is cut, the chip is not overrun.
+ns.removeBlocked(ns.normalizeBlockedKey("Averylongpseudonameindeed"))
+local huge = string.rep("Verylongname", 12)
+ns.addBlocked(huge)
+ns.refreshUI()
+local hugeChip = findRow(panel, huge)
+check(hugeChip ~= nil, "a name longer than the row still gets a chip")
+check(hugeChip:GetWidth() <= panel:GetWidth() - 40,
+    "and the chip is no wider than the row")
+check((hugeChip.label:GetWidth() or 0) > 0
+    and hugeChip.label:GetWidth() <= hugeChip:GetWidth() - 32,
+    "and the cross still has its room, which is the overlap that was reported")
+check(hugeChip.label:GetWidth() < hugeChip.label:GetStringWidth(),
+    "the name itself is cut rather than written past the chip")
+ns.removeBlocked(ns.normalizeBlockedKey(huge))
+ns.removeBlocked(ns.normalizeBlockedKey("Ana"))
+ns.refreshUI()
+
+-- The hints. Both fields, both panels: a hint is bounded by the box it sits in.
+for _, name in ipairs({ "SanctuaryBlockedAddInput", "SanctuaryPatternAddInput",
+    "SanctuaryAllowedAddInput" }) do
+    local box = _G[name]
+    check(box.hint:GetWidth() > 0 and box.hint:GetWidth() <= box:GetWidth(),
+        name .. " keeps its hint inside the field")
+    equal(box.hint.__wordWrap, false, name .. " keeps its hint on one line")
+end
+
+-- And the pattern hint is short enough to be read whole rather than cut, which
+-- is what decision 99 actually asked for.
+check(#ns.L["PANEL_PATTERN_HINT"] * 7 <= _G.SanctuaryPatternAddInput.hint:GetWidth(),
+    "the pattern hint fits the field it is written in")
+
+ns.ClosePanel()
+
+end)()
 
 -- ---------------------------------------------------------------------------
 -- Saying no, and saying why
@@ -5917,23 +6003,26 @@ check((chooseScroll:GetScrollChild():GetHeight() or 0) > (chooseScroll:GetHeight
     "and it is taller than the window when the detailed boxes are unfolded")
 SanctuaryDB.filters.preset = "all"
 ns.refreshUI()
-equal(mainFrame:GetWidth(), 780, "the width is fixed")
+equal(mainFrame:GetWidth(), 780, "the window opens at its design width")
 
 -- Dragging the grip switches to a remembered size; double-clicking goes back.
-SanctuaryDB.uiSize = { 780, 520 }
+-- Both slots are read back now, decision 98.
+SanctuaryDB.uiSize = { 640, 520 }
 mainFrame:Hide()
 mainFrame:Show()
 equal(mainFrame:GetHeight(), 520, "a remembered size is applied on opening")
+equal(mainFrame:GetWidth(), 640, "its width included")
 SanctuaryDB.uiSize = nil
 mainFrame:Hide()
 mainFrame:Show()
 
 do
 
--- The grip drives one dimension. The window has no horizontal scrolling at all:
--- the content area and every tab frame are built at 780, so a width remembered
--- from a diagonal drag either truncates the screen or leaves it floating -- and
--- it came back on every refresh and every reopening.
+-- The grip drives both dimensions, decision 98: "le redimensionnement de la
+-- fenetre ne marche qu'a la vertical, pas l'horizontal". There is still no
+-- horizontal SCROLLING -- a wider window is wider columns, never a canvas to pan
+-- over -- so the content area, the tab frames and the drawer all have to follow
+-- the width rather than keep the one they were built at.
 local grip = _G.SanctuaryResizeGrip
 check(grip ~= nil, "the resize grip is reachable")
 local gripDown = grip:GetScript("OnMouseDown")
@@ -5946,17 +6035,43 @@ local gripUp = grip:GetScript("OnMouseUp")
 -- spilling under a shrunken window, over the tab strip, with no bar. This case
 -- used to call ns.refreshUI() by hand right after gripUp and hid it.
 local viewportOf = function() return _G.SanctuaryContentScroll:GetHeight() end
+local widthOf = function() return _G.SanctuaryContentScroll:GetWidth() end
 local expectedViewport = function() return mainFrame:GetHeight() - 40 - 30 end
 
 now = now + 5
 gripDown(grip)
+mainFrame:SetSize(860, 560)
+gripUp(grip)
+equal(SanctuaryDB.uiSize[1], 860, "a diagonal drag records the width it was dragged to")
+equal(SanctuaryDB.uiSize[2], 560, "and the height")
+equal(viewportOf(), expectedViewport(), "and the content area follows on release")
+equal(widthOf(), 860, "the content area is as wide as the window")
+equal(mainFrame:GetWidth(), 860, "which keeps the width that was asked for")
+equal(mainFrame:GetHeight(), 560, "and the height that was asked for")
+-- The columns share the extra pixels: "les colonnes se repartissent".
+equal(_G.SanctuaryTabContent_protection:GetWidth(), 860, "and so does the screen on show")
+
+-- Out of bounds in either direction is clamped, not obeyed: 500x380 to 900x700.
+now = now + 5
+gripDown(grip)
 mainFrame:SetSize(1240, 560)
 gripUp(grip)
-equal(SanctuaryDB.uiSize[1], 780, "a diagonal drag records the one width there is")
-equal(SanctuaryDB.uiSize[2], 560, "and the height it was actually dragged to")
-equal(viewportOf(), expectedViewport(), "and the content area follows on release")
-equal(mainFrame:GetWidth(), 780, "releasing puts the window back on that width")
-equal(mainFrame:GetHeight(), 560, "while keeping the height that was asked for")
+equal(widthOf(), 900, "a drag past the right bound stops at 900")
+now = now + 5
+gripDown(grip)
+mainFrame:SetSize(320, 560)
+gripUp(grip)
+equal(widthOf(), 500, "and a drag past the left bound stops at 500")
+-- The drawer never takes the whole window with it: the strip of veil beside it
+-- is what closes it.
+ns.OpenPanel("blocked")
+check(_G.SanctuaryPanelBlocked:GetWidth() < widthOf(),
+    "the drawer leaves something of the window beside it at the narrowest width")
+ns.ClosePanel()
+now = now + 5
+gripDown(grip)
+mainFrame:SetSize(860, 560)
+gripUp(grip)
 
 -- Downwards too: shrinking is the direction that spilled content off-screen.
 now = now + 5
@@ -5973,11 +6088,11 @@ mainFrame:GetScript("OnSizeChanged")(mainFrame)
 equal(viewportOf(), expectedViewport(), "the content follows while the grip is still down")
 now = now + 5
 gripDown(grip)
-mainFrame:SetSize(780, 560)
+mainFrame:SetSize(700, 560)
 gripUp(grip)
 mainFrame:Hide()
 mainFrame:Show()
-equal(mainFrame:GetWidth(), 780, "and reopening does not bring the dragged width back")
+equal(mainFrame:GetWidth(), 700, "and reopening brings the dragged width back with it")
 
 -- Double-click: two press/release pairs less than 0.4 s apart. The second
 -- OnMouseDown cleared the remembered size -- and the OnMouseUp of that very same
@@ -5991,9 +6106,11 @@ gripDown(grip)
 gripUp(grip)
 equal(SanctuaryDB.uiSize, nil, "a double-click forgets the remembered size for good")
 
--- And the fitted mode is really back: the height follows the screen again.
+-- And the fitted mode is really back: the height follows the screen again, and
+-- the width goes back to the one the window is designed at.
 _G["SanctuaryTab_about"]:Click()
 equal(mainFrame:GetHeight(), 380 + 40 + 30, "the shortest screen is back to its fitted height")
+equal(mainFrame:GetWidth(), 780, "and to the design width")
 _G["SanctuaryTab_protection"]:Click()
 check(mainFrame:GetHeight() > 380 + 40 + 30, "and a taller screen makes the window taller again")
 
