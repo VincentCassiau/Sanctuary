@@ -6404,8 +6404,30 @@ equal(viewportOf(), expectedViewport(), "and the content area follows on release
 equal(widthOf(), 860, "the content area is as wide as the window")
 equal(mainFrame:GetWidth(), 860, "which keeps the width that was asked for")
 equal(mainFrame:GetHeight(), 560, "and the height that was asked for")
--- The columns share the extra pixels: "les colonnes se repartissent".
+-- The columns share the extra pixels: "les colonnes se repartissent". Every
+-- frame in this window was BUILT at 780 and none of them read a live width, so
+-- what the grip moved was the frame alone -- the screen inside it stayed the
+-- size it had opened at.
 equal(_G.SanctuaryTabContent_protection:GetWidth(), 860, "and so does the screen on show")
+do
+    local pad, gutter = 18, 10
+    local expected = (860 - pad * 2 - gutter) / 2
+    for _, name in ipairs({ "SanctuaryQ1_strangers", "SanctuaryQ1_blockedOnly",
+        "SanctuaryQ2_all", "SanctuaryQ2_custom",
+        "SanctuaryTileAllowed", "SanctuaryTileBlocked" }) do
+        equal(_G[name]:GetWidth(), expected, name .. " shares the width the window gained")
+    end
+    -- And the drawer, which is not inside the content area and answers to the
+    -- window on its own pass.
+    ns.OpenPanel("blocked")
+    local drawer = _G.SanctuaryPanelBlocked
+    local drawerWidth = drawer:GetWidth()
+    check(_G.SanctuaryPanelBlockedScroll:GetWidth() <= drawerWidth,
+        "the drawer's list is no wider than the drawer")
+    equal(_G.SanctuaryPanelBlocked.namesSection:GetWidth(), drawerWidth - 40,
+        "and its rules span the drawer as it is now, not as it opened")
+    ns.ClosePanel()
+end
 
 -- Out of bounds in either direction is clamped, not obeyed: 500x380 to 900x700.
 now = now + 5

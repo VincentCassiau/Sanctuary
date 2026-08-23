@@ -328,6 +328,14 @@ local function newCard(parent, name, titleText, descText, width, isOn, select)
         self:Refresh()
     end
 
+    -- The card and the wrapping width of its description are one measurement,
+    -- so they are set together: a card widened on its own leaves its own text
+    -- folded to the width it was built at.
+    function card:SetCardWidth(newWidth)
+        self:SetWidth(newWidth)
+        self.desc:SetWidth(newWidth - 24)
+    end
+
     card:SetScript("OnClick", function(self)
         if not self.enabled then return end
         select()
@@ -545,6 +553,12 @@ local function newSection(parent, titleText, descText, width)
         section.desc = newLabel(section, descText, FONT_BODY, C.dim)
         section.desc:SetPoint("TOPLEFT", section.rule, "BOTTOMLEFT", 0, -6)
         section.desc:SetWidth(width)
+    end
+    -- The rule spans the section, so widening the section widens the rule; the
+    -- description has to be told separately.
+    function section:SetSectionWidth(newWidth)
+        self:SetWidth(newWidth)
+        if self.desc then self.desc:SetWidth(newWidth) end
     end
     return section
 end
@@ -912,15 +926,14 @@ function ns.RefreshTestAnswer(text)
         if info.list == "keyword" then
             reason = string.format(L["LIST_PATTERN"], tostring(info.detail or "?"))
         elseif info.overriddenList then
+            -- A guild mate, a realm friend, somebody in the group. Never
+            -- Battle.net: `describeAccessDecision` stopped answering that, and
+            -- the branch that formatted it went with it -- it is the sentence
+            -- decision 100 called false, and leaving it here would keep it one
+            -- edit away from coming back.
             local overKey = LIST_KEYS[info.overriddenList]
-            local overText
-            if info.overriddenList == "bnet" then
-                overText = string.format(L["LIST_BNET"],
-                    tostring(info.overriddenDetail or info.input))
-            else
-                overText = overKey and L[overKey] or tostring(info.overriddenList)
-            end
-            reason = string.format(L["LIST_BLOCKED_OVER"], overText)
+            reason = string.format(L["LIST_BLOCKED_OVER"],
+                overKey and L[overKey] or tostring(info.overriddenList))
         else
             reason = L["LIST_BLOCKED"]
         end
@@ -963,6 +976,17 @@ refreshTab.protection = function()
         card:SetEnabledState(not blockedOnly)
     end
     protection.strict:SetEnabledState(not blockedOnly)
+    -- Questions 1 and 2 are laid out at build time -- what sits above them never
+    -- folds -- but their width is the window's, so it is handed over on every
+    -- refresh. Without this the two pairs of cards kept the width the window
+    -- opened at and floated in a wider one.
+    local cardWidth = (width - CARD_GUTTER) / 2
+    for _, card in ipairs({ protection.q1Strangers, protection.q1Blocked,
+        protection.q2All, protection.q2Custom }) do
+        card:SetCardWidth(cardWidth)
+    end
+    protection.tileAllowed:SetWidth(cardWidth)
+    protection.tileBlocked:SetWidth(cardWidth)
     protection.q1Strangers:Refresh()
     protection.q1Blocked:Refresh()
 
@@ -1017,7 +1041,7 @@ refreshTab.protection = function()
         card:ClearAllPoints()
         card:SetPoint("TOPLEFT", protection.frame, "TOPLEFT",
             PAD + index * (thirdWidth + CARD_GUTTER), y)
-        card:SetWidth(thirdWidth)
+        card:SetCardWidth(thirdWidth)
         card:Refresh()
         index = index + 1
     end
@@ -1842,6 +1866,14 @@ local function refreshAllowedPanel(force)
     local counts = ns.getListCounts()
     panel.count:SetText(tostring(counts.allowed.total))
 
+    -- The drawer follows the window, so everything measured against it is handed
+    -- the current width on every redraw. Built once at the opening width, the
+    -- rules and the wrapped sentences kept it.
+    panel.addedSection:SetSectionWidth(panelWidth() - 40)
+    panel.autoSection:SetSectionWidth(panelWidth() - 40)
+    panel.groupNote:SetWidth(panelWidth() - 40)
+    panel.addInput.note:SetWidth(noteWidth())
+
     -- "Added by you": the manual entries, as chips. Automatically trusted
     -- contacts sit in the same table with source = "trust" and get their own
     -- group further down, so they are excluded here: listing them twice would
@@ -2044,6 +2076,13 @@ local function refreshBlockedPanel(force)
     local child = panel.scroll.child
     local counts = ns.getListCounts()
     panel.count:SetText(tostring(counts.blocked.total))
+
+    panel.desc:SetWidth(panelWidth() - 40)
+    panel.bnetNote:SetWidth(panelWidth() - 40)
+    panel.namesSection:SetSectionWidth(panelWidth() - 40)
+    panel.patternsSection:SetSectionWidth(panelWidth() - 40)
+    panel.nameInput.note:SetWidth(noteWidth())
+    panel.patternInput.note:SetWidth(noteWidth())
 
     -- -40 before the Battle.net line was added under the description.
     local y = -72
@@ -2371,6 +2410,21 @@ local fittedNeed = MIN_HEIGHT
 -- height here. `applyHeight` does it after its own SetSize, and the window's
 -- OnSizeChanged does it while the grip is being dragged. It never resizes the
 -- window itself, so calling it from OnSizeChanged cannot loop.
+-- The width the window should be at right now: the remembered one or the design
+-- default, clamped to the bounds. Resolved on its own, and BEFORE anything
+-- measures itself against it -- a screen laid out before the window has taken
+-- its new width is a screen laid out at the old one, which then floats in a
+-- wider frame or spills out of a narrower one.
+--
+-- SavedVariables is the source of truth, not a copy made at build time: the
+-- schema reset clears it, and a stale copy would keep applying a size the
+-- settings no longer hold.
+local function resolveWidth()
+    manualSize = SanctuaryDB and SanctuaryDB.uiSize or nil
+    local width = (manualSize and manualSize[1]) or DEFAULT_WIDTH
+    return math.min(MAX_FRAME_WIDTH, math.max(MIN_FRAME_WIDTH, width))
+end
+
 local function applyViewport(frameHeight, width)
     if not contentScroll or not contentFrame then return end
     -- The live width, taken before anything measures itself: `innerWidth` and
@@ -2395,22 +2449,19 @@ end
 
 local function applyHeight(height)
     if not mainFrame then return end
-    -- SavedVariables is the source of truth for the manual size, not a copy made
-    -- at build time: the schema reset clears it, and a stale copy would keep
-    -- applying a size the settings no longer hold.
-    manualSize = SanctuaryDB and SanctuaryDB.uiSize or nil
+    -- `resolveWidth` refreshes `manualSize` from SavedVariables on the way past,
+    -- which is what the height below reads too.
+    local width = resolveWidth()
     local needed = math.max(MIN_HEIGHT, height or MIN_HEIGHT)
     fittedNeed = needed
-    local frameHeight, width
+    local frameHeight
     if manualSize then
-        -- Both slots are read back now. A settings file written before the
-        -- bounds existed -- or before the width was ever applied -- can carry
-        -- anything at all, so both are clamped here.
-        width = math.min(MAX_FRAME_WIDTH, math.max(MIN_FRAME_WIDTH, manualSize[1] or DEFAULT_WIDTH))
+        -- A settings file written before the bounds existed -- or before the
+        -- width was ever applied -- can carry anything at all, so this is
+        -- clamped exactly like the width.
         frameHeight = manualSize[2] or MIN_FRAME_HEIGHT
         frameHeight = math.min(MAX_FRAME_HEIGHT, math.max(MIN_FRAME_HEIGHT, frameHeight))
     else
-        width = DEFAULT_WIDTH
         local bounded = math.min(MAX_HEIGHT, needed)
         frameHeight = bounded + HEADER_HEIGHT + CONTENT_BOTTOM
     end
@@ -2450,6 +2501,9 @@ function ns.refreshUI()
     if not mainFrame or not mainFrame:IsShown() then return end
     refreshStateButton()
     layoutTabs()
+    -- The width first, before a single screen measures itself: `applyHeight`
+    -- applies it further down, but by then the screen has already been drawn.
+    frameWidth = resolveWidth()
     local height = MIN_HEIGHT
     local refresh = refreshTab[activeTab]
     if refresh then height = refresh() or MIN_HEIGHT end
