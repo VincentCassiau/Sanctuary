@@ -104,7 +104,10 @@ local function innerWidth() return frameWidth - PAD * 2 end
 -- takes so much that nothing of the window is left beside it: the strip of veil
 -- next to the panel is what a person clicks to close it.
 local function panelWidth() return math.min(PANEL_WIDTH, frameWidth - 60) end
-local function noteWidth() return panelWidth() - 40 end
+-- The sentence under an add field runs the drawer's text column. Bounded by the
+-- window as well, and not by the drawer alone: the drawer is the one thing here
+-- allowed to be wider than the screen behind it, and a sentence is not.
+local function noteWidth() return math.min(panelWidth() - 40, innerWidth()) end
 local NOTE_GAP = 4
 -- One line of FONT_BODY, rounded up: the client draws a 12 px face on about
 -- 14 px of line.
@@ -376,8 +379,14 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
     -- shove the list under it downwards, nor lie over it.
     box.note = newLabel(box, "", FONT_BODY, C.orange)
     box.note:SetPoint("TOPLEFT", box, "BOTTOMLEFT", 0, -NOTE_GAP)
-    box.note:SetWidth(noteWidth())
     box.note:Hide()
+
+    -- `noteWidth()` reads the window as it is now, and a field built at 780 kept
+    -- the 500 px column it was given then for ever -- inside a window that can be
+    -- 500 px wide in total. The panels ask on every redraw; the fields that live
+    -- on a screen are asked by their screen's width pass.
+    function box:RefreshNoteWidth() self.note:SetWidth(noteWidth()) end
+    box:RefreshNoteWidth()
 
     function box:RefreshHint()
         local text = self:GetText()
@@ -579,6 +588,23 @@ local tabFrames, tabButtons = {}, {}
 local activeTab = "protection"
 local manualSize = nil
 local refreshTab = {}
+-- What each screen has to redo when the window changes width, and nothing else.
+--
+-- A screen derives a dozen widths from `innerWidth()` while it is being built,
+-- at whatever the window measured then, and a frame keeps a posted width for
+-- ever. `applyViewport` handed the new width to the frame, the content area, the
+-- five screens, the drawer and the undo strip -- and stopped there, so
+-- everything INSIDE a screen still measured 780's 744: at 500 px a section rule,
+-- a paragraph and a Journal row hung two hundred and eighty pixels outside a
+-- window that has no horizontal scrolling by design, and at 900 they left the
+-- room they had been given empty. A6 asks the columns to share the width between
+-- 500x380 and 900x700.
+--
+-- One entry per screen, called on every pass -- not only for the screen on show:
+-- a hidden screen is one tab click away and nothing else would ever tell it.
+-- Each entry guards itself, because `applyViewport` runs from the window's own
+-- OnSizeChanged, which is installed before the screens are built.
+local applyTabWidth = {}
 local undoState = nil
 local undoLine
 local listTicker = nil
@@ -964,9 +990,38 @@ function ns.RefreshTestAnswer(text)
     end
 end
 
+-- Everything on this screen whose size comes from the window's width. Questions
+-- 1, 2 and 3 and the two tiles are laid out at build time -- what sits above
+-- them never folds -- and the fold itself is measured from the same number, so
+-- all of it has to be handed the live width again whenever the window changes.
+applyTabWidth.protection = function()
+    -- The last widget the builder makes: the guard means "this screen is
+    -- finished", not "it has been started".
+    if not protection.testAnswer then return end
+    local width = innerWidth()
+    local cardWidth = (width - CARD_GUTTER) / 2
+    for _, card in ipairs({ protection.q1Strangers, protection.q1Blocked,
+        protection.q2All, protection.q2Custom }) do
+        card:SetCardWidth(cardWidth)
+    end
+    protection.tileAllowed:SetWidth(cardWidth)
+    protection.tileBlocked:SetWidth(cardWidth)
+    local thirdWidth = (width - CARD_GUTTER * 2) / 3
+    for _, key in ipairs({ "silent", "minimal", "verbose" }) do
+        protection.q3[key]:SetCardWidth(thirdWidth)
+    end
+    -- The invisible frame question 3 hangs from, and the two columns of "I
+    -- choose": `layoutChoose` is what shares the width between them, and it
+    -- answers the height the fold needs, which the refresh below reads.
+    protection.q3Anchor:SetWidth(width)
+    protection.layoutChoose(width)
+    -- The tester's sentence starts at PAD + 360 and runs to the right margin.
+    protection.testAnswer:SetWidth(math.max(60, width - 360))
+    protection.testInput:RefreshNoteWidth()
+end
+
 -- Lays the screen out for the mode it is in, and returns the height it needs.
 refreshTab.protection = function()
-    local width = innerWidth()
     local blockedOnly = ns.getScope() == "blockedOnly"
     local custom = ns.getPreset() == "custom"
 
@@ -976,17 +1031,9 @@ refreshTab.protection = function()
         card:SetEnabledState(not blockedOnly)
     end
     protection.strict:SetEnabledState(not blockedOnly)
-    -- Questions 1 and 2 are laid out at build time -- what sits above them never
-    -- folds -- but their width is the window's, so it is handed over on every
-    -- refresh. Without this the two pairs of cards kept the width the window
-    -- opened at and floated in a wider one.
-    local cardWidth = (width - CARD_GUTTER) / 2
-    for _, card in ipairs({ protection.q1Strangers, protection.q1Blocked,
-        protection.q2All, protection.q2Custom }) do
-        card:SetCardWidth(cardWidth)
-    end
-    protection.tileAllowed:SetWidth(cardWidth)
-    protection.tileBlocked:SetWidth(cardWidth)
+    -- The widths first, and through the one function that knows them: a screen
+    -- laid out against a width it no longer has is the whole of this defect.
+    applyTabWidth.protection()
     protection.q1Strangers:Refresh()
     protection.q1Blocked:Refresh()
 
@@ -1007,7 +1054,6 @@ refreshTab.protection = function()
         protection.choose:Show()
         protection.choose:ClearAllPoints()
         protection.choose:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
-        protection.layoutChoose(width)
         protection.strict:ClearAllPoints()
         protection.strict:SetPoint("TOPLEFT", protection.choose, "TOPLEFT", 26, protection.strictSlot)
         protection.strictNote:Hide()
@@ -1034,16 +1080,24 @@ refreshTab.protection = function()
     protection.q3Number:ClearAllPoints()
     protection.q3Number:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y - 4)
     y = y - Q_TITLE_ROW
-    local thirdWidth = (width - CARD_GUTTER * 2) / 3
-    local index = 0
+    -- The first card is placed against the screen, the two others against the
+    -- card before them -- the shape questions 1 and 2 already have. Placed at
+    -- `PAD + index * (thirdWidth + CARD_GUTTER)` they carried a copy of the
+    -- width inside their own position, so the width pass could not widen them
+    -- without moving them too, and the same layout would have been written a
+    -- second time. Chained, widening a card carries the next one along, and the
+    -- width itself is `applyTabWidth.protection`'s, above, for every screen.
+    local previous = nil
     for _, key in ipairs({ "silent", "minimal", "verbose" }) do
         local card = protection.q3[key]
         card:ClearAllPoints()
-        card:SetPoint("TOPLEFT", protection.frame, "TOPLEFT",
-            PAD + index * (thirdWidth + CARD_GUTTER), y)
-        card:SetCardWidth(thirdWidth)
+        if previous then
+            card:SetPoint("TOPLEFT", previous, "TOPRIGHT", CARD_GUTTER, 0)
+        else
+            card:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
+        end
         card:Refresh()
-        index = index + 1
+        previous = card
     end
     y = y - CARD_HEIGHT - BLOCK_GAP
 
@@ -1075,7 +1129,6 @@ refreshTab.protection = function()
     protection.testInput:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD + 130, y + 4)
     protection.testAnswer:ClearAllPoints()
     protection.testAnswer:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD + 360, y)
-    protection.testAnswer:SetWidth(width - 360)
     y = y - 40
 
     -- Read again, from the name still in the field. The answer is a read of the
@@ -1195,6 +1248,23 @@ local function acquireJournalRow(parent)
     row:Show()
     journal.rows[#journal.rows + 1] = row
     return row
+end
+
+-- The list and the rows already drawn in it. `acquireJournalRow` covers the rows
+-- the factory hands out AFTER a resize; the ones already on screen are the ones
+-- a person is looking at while the grip moves, and they kept the width of the
+-- window they were drawn in -- 734 px of clickable strip inside a 464 px screen.
+applyTabWidth.journal = function()
+    if not journal.scroll then return end
+    local width = innerWidth()
+    journal.scroll:SetViewportSize(width, journal.scroll:GetHeight())
+    -- The pool as well as the live rows: a pooled row is handed out with the
+    -- current width, but it is still a frame carrying a size, and leaving stale
+    -- ones behind would make "no row is wider than the screen" true only for the
+    -- rows that happen to be visible.
+    for _, list in ipairs({ journal.rows, journal.rowPool }) do
+        for _, row in ipairs(list) do row:SetWidth(width - 10) end
+    end
 end
 
 refreshTab.journal = function()
@@ -1363,6 +1433,24 @@ local function buildAdvancedTab(parent)
     advanced.statusY = y
 end
 
+-- The three section rules, the debug paragraph and the technical line: all five
+-- were measured once, at build time, against a 780 px window. A section rule is
+-- the widest thing on the screen and the paragraph is the one that wraps, so at
+-- 500 px they were what hung outside the window, and at 900 what left a strip of
+-- it empty. The 26 px indent is the debug paragraph's own -- it sits under the
+-- checkbox's label, not at the margin.
+applyTabWidth.advanced = function()
+    if not advanced.status then return end
+    local width = innerWidth()
+    for _, section in ipairs({ advanced.diagSection, advanced.journalSection,
+        advanced.minimapSection }) do
+        section:SetSectionWidth(width)
+    end
+    advanced.debugDesc:SetWidth(math.max(60, width - 26))
+    advanced.status:SetWidth(width)
+    advanced.maxInput:RefreshNoteWidth()
+end
+
 refreshTab.advanced = function()
     advanced.debug:Refresh()
     advanced.minimap:Refresh()
@@ -1388,6 +1476,15 @@ end
 
 local about = {}
 
+-- The column the presentation paragraph is set in, centred. It is a reading
+-- width and not a share of the window -- a centred sentence running the whole of
+-- a 900 px window reads worse, not better -- so it is a constant, capped by
+-- whatever the window actually has: at the narrowest width the two are four
+-- pixels apart, and nothing but the cap says which of them wins.
+local ABOUT_TEXT_WIDTH = 460
+
+local function aboutTextWidth() return math.min(ABOUT_TEXT_WIDTH, innerWidth()) end
+
 local function buildAboutTab(parent)
     local y = -30
     about.title = newLabel(parent, "Sanctuary", 22, C.accent, "CENTER")
@@ -1399,7 +1496,7 @@ local function buildAboutTab(parent)
     y = y - 40
     about.desc = newLabel(parent, L["ABOUT_DESC"], FONT_BODY, C.ink, "CENTER")
     about.desc:SetPoint("TOP", parent, "TOP", 0, y)
-    about.desc:SetWidth(460)
+    about.desc:SetWidth(aboutTextWidth())
     y = y - 60
     about.author = newLabel(parent, string.format(L["ABOUT_AUTHOR"], "Zephos"),
         FONT_BODY, C.dim, "CENTER")
@@ -1410,6 +1507,11 @@ local function buildAboutTab(parent)
         FONT_BODY, C.dim, "CENTER")
     about.github:SetPoint("TOP", parent, "TOP", 0, y)
     about.height = -y + 24
+end
+
+applyTabWidth.about = function()
+    if not about.desc then return end
+    about.desc:SetWidth(aboutTextWidth())
 end
 
 -- What it drew, like every other screen, rather than the floor: the floor is
@@ -1500,6 +1602,7 @@ end
 
 local function buildDiagnosticsTab(parent)
     local width = innerWidth()
+    diagnostics.argInputs = {}
     diagnostics.header = newLabel(parent, L["DIAG_PANEL_HEADER"], FONT_SECTION, C.ink)
     diagnostics.header:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, 0)
 
@@ -1539,6 +1642,9 @@ local function buildDiagnosticsTab(parent)
             input:SetPoint("RIGHT", row, "RIGHT", 0, 0)
             input:SetText(entry.argDefault or "")
             input:RefreshHint()
+            -- Kept so the width pass can reach them: they are made in a loop and
+            -- nothing else on the screen holds a reference.
+            diagnostics.argInputs[#diagnostics.argInputs + 1] = input
         end
         local btn = newButton(row, nil, L[entry.labelKey], input and 200 or 300, 22, function()
             appendDiagnosticResult(ns.runDiagnosticById(id, input and input:GetText() or entry.argDefault))
@@ -1558,6 +1664,25 @@ local function buildDiagnosticsTab(parent)
     diagnostics.resultText = newLabel(resultScroll.child, L["DIAG_RESULT_EMPTY"], FONT_BODY, C.soft)
     diagnostics.resultText:SetPoint("TOPLEFT", resultScroll.child, "TOPLEFT", 0, 0)
     diagnostics.resultText:SetWidth(width - 350)
+    resizeDiagnosticResults()
+end
+
+-- The results column keeps its distance from the list beside it: the list starts
+-- at PAD and is 320 wide, the column at PAD + 330, so the column gets the inner
+-- width less 340, and the text inside it 10 less again -- the same two numbers
+-- the screen was built with.
+applyTabWidth.diagnostics = function()
+    if not diagnostics.resultScroll then return end
+    local width = innerWidth()
+    diagnostics.resultScroll:SetViewportSize(width - 340,
+        diagnostics.resultScroll:GetHeight())
+    if diagnostics.resultText then
+        diagnostics.resultText:SetWidth(math.max(60, width - 350))
+    end
+    for _, input in ipairs(diagnostics.argInputs or {}) do input:RefreshNoteWidth() end
+    -- What the child measured was measured against the old width: a result that
+    -- wrapped over two lines at 540 wraps over four at 124, and the bar and the
+    -- wheel read that height.
     resizeDiagnosticResults()
 end
 
@@ -1876,7 +2001,7 @@ local function refreshAllowedPanel(force)
     panel.addedSection:SetSectionWidth(panelWidth() - 40)
     panel.autoSection:SetSectionWidth(panelWidth() - 40)
     panel.groupNote:SetWidth(panelWidth() - 40)
-    panel.addInput.note:SetWidth(noteWidth())
+    panel.addInput:RefreshNoteWidth()
 
     -- "Added by you": the manual entries, as chips. Automatically trusted
     -- contacts sit in the same table with source = "trust" and get their own
@@ -2085,8 +2210,8 @@ local function refreshBlockedPanel(force)
     panel.bnetNote:SetWidth(panelWidth() - 40)
     panel.namesSection:SetSectionWidth(panelWidth() - 40)
     panel.patternsSection:SetSectionWidth(panelWidth() - 40)
-    panel.nameInput.note:SetWidth(noteWidth())
-    panel.patternInput.note:SetWidth(noteWidth())
+    panel.nameInput:RefreshNoteWidth()
+    panel.patternInput:RefreshNoteWidth()
 
     -- -40 before the Battle.net line was added under the description.
     local y = -72
@@ -2445,37 +2570,21 @@ local function applyViewport(frameHeight, width)
     local active = tabFrames[activeTab]
     if active then active:SetHeight(contentHeight) end
     if undoLine then undoLine:SetWidth(innerWidth()) end
-    -- The two scrolling areas that live inside a screen. Nothing above reaches
-    -- them: this pass hands the live width to the frame, the content area, the
-    -- five screens, the drawer and the undo strip, and stopped there -- so the
-    -- Journal and the Diagnostics results kept the width they were built at.
-    -- Dragged down to 500, they still measured 744 and 404 and hung a couple of
-    -- hundred pixels outside the window, with nothing to scroll sideways to
-    -- reach them (there is no horizontal scrolling here, by design); dragged out
-    -- to 900, they left the room they had been given empty. Two screens out of
-    -- five, and A6 asks the columns to share the width between 500x380 and
+    -- And what lives INSIDE a screen. Nothing above reaches it: this pass hands
+    -- the live width to the frame, the content area, the five screens, the
+    -- drawer and the undo strip, and stopped there -- so every width a screen
+    -- derived at build time stayed at the 744 px of a 780 px window. Dragged
+    -- down to 500, a section rule, a paragraph, a Journal row and the results
+    -- column hung up to two hundred and eighty pixels outside the window, with
+    -- nothing to scroll sideways to reach them (there is no horizontal scrolling
+    -- here, by design); dragged out to 900, they left the room they had been
+    -- given empty. A6 asks the columns to share the width between 500x380 and
     -- 900x700.
     --
-    -- Guarded because this runs from the window's own OnSizeChanged, which is
-    -- installed before the screens are built.
-    if journal.scroll then
-        journal.scroll:SetViewportSize(innerWidth(), journal.scroll:GetHeight())
-    end
-    if diagnostics.resultScroll then
-        -- The results column keeps its distance from the list beside it: the
-        -- list starts at PAD and is 320 wide, the column at PAD + 330, so the
-        -- column gets the inner width less 340, and the text inside it 10 less
-        -- again -- the same two numbers the screen was built with.
-        diagnostics.resultScroll:SetViewportSize(innerWidth() - 340,
-            diagnostics.resultScroll:GetHeight())
-        if diagnostics.resultText then
-            diagnostics.resultText:SetWidth(innerWidth() - 350)
-        end
-        -- What the child measured was measured against the old width: a result
-        -- that wrapped over two lines at 540 wraps over four at 124, and the bar
-        -- and the wheel read that height.
-        resizeDiagnosticResults()
-    end
+    -- Every screen, not the one on show: a hidden screen is one tab click away,
+    -- and neither a tab change nor a refresh would have caught it -- the widths
+    -- below are posted once, at build time, and nothing else ever revisits them.
+    for _, applyWidth in pairs(applyTabWidth) do applyWidth() end
     contentScroll:RefreshBar()
     -- The panels are not inside the content area, so nothing above resizes them:
     -- they answer to the window itself, on the same pass.

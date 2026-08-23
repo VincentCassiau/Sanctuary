@@ -4682,8 +4682,19 @@ local function newWidget(kind, name, parent, template)
     function w:GetParent() return self.__parent end
     function w:SetParent(p) self.__parent = p end
     function w:GetName() return self.__name end
-    function w:SetSize(width, height) self.__width, self.__height = width, height end
-    function w:SetWidth(width) self.__width = width end
+    -- `__widthPosted` marks a width the interface actually asked for. Every
+    -- widget answers 620 before anyone sets one, so a sweep that reads
+    -- `GetWidth` alone cannot tell "the interface sized this" from "nobody ever
+    -- did" -- and 620 happens to fit inside a 780 px window, which is how a
+    -- screen full of widths nobody had touched could look measured.
+    function w:SetSize(width, height)
+        self.__width, self.__height = width, height
+        self.__widthPosted = true
+    end
+    function w:SetWidth(width)
+        self.__width = width
+        self.__widthPosted = true
+    end
     function w:SetHeight(height) self.__height = height end
     function w:GetWidth() return self.__width end
     function w:GetHeight() return self.__height end
@@ -6674,6 +6685,102 @@ do
         "the journal still fits at 900")
     check(resultInset + resultScroll:GetWidth() <= content:GetWidth(),
         "and so do the results")
+end
+
+-- The other three screens, and everything inside all five. The pass above
+-- reached the two scrolling areas by name; every other width a screen derived
+-- from the window at build time -- a section rule, a wrapped paragraph, the
+-- technical line, a Journal row, the fold's two columns -- stayed at the 744 px
+-- of a 780 px window for ever. At 500 the room is 464, so those widgets hung up
+-- to 280 px outside a window with no horizontal scrolling; at 900 they left
+-- 156 px of it empty. Neither a tab change nor a refresh caught them: they are
+-- posted once, at build time, and nothing revisited them.
+do
+    local content = _G.SanctuaryContentScroll
+    local SCREEN_KEYS = { "protection", "journal", "advanced", "about", "diagnostics" }
+
+    -- Only the widths the interface actually posted. The stand-in answers 620
+    -- for a widget nobody ever sized, and 620 fits inside a 780 px window, so a
+    -- sweep reading GetWidth alone would take "never measured" for "measured".
+    local function postedWidths(frame, into)
+        into = into or {}
+        for _, child in ipairs(frame.__children or {}) do
+            if child.__widthPosted then into[#into + 1] = child:GetWidth() end
+            postedWidths(child, into)
+        end
+        return into
+    end
+
+    -- A section is recognised by the one method only `newSection` gives out,
+    -- rather than by its position among the children: what is being checked is
+    -- "the rules span the screen", and a rule is what that method resizes.
+    -- Read with `rawget`, and that is not a detail: every capitalised name is
+    -- auto-stubbed on first access, so asking a widget for the method would
+    -- install one and turn all of them into sections -- including the check that
+    -- there are exactly three.
+    local function sectionsOf(frame, into)
+        into = into or {}
+        for _, child in ipairs(frame.__children or {}) do
+            if rawget(child, "SetSectionWidth") then into[#into + 1] = child end
+            sectionsOf(child, into)
+        end
+        return into
+    end
+
+    local function sweep()
+        local room = content:GetWidth()
+        local report = {}
+        for _, key in ipairs(SCREEN_KEYS) do
+            local frame = _G["SanctuaryTabContent_" .. key]
+            check(frame ~= nil, "the " .. key .. " screen is reachable")
+            local widest, overflow = 0, nil
+            for _, width in ipairs(postedWidths(frame)) do
+                widest = math.max(widest, width)
+                -- The screens start at PAD, so PAD plus a posted width is the
+                -- earliest right edge it can have: anything past the content
+                -- area is cut off with nowhere to scroll to.
+                if 18 + width > room then overflow = math.max(overflow or 0, width) end
+            end
+            equal(overflow, nil, "nothing on the " .. key
+                .. " screen is posted wider than the window at " .. tostring(room))
+            report[key] = widest
+        end
+        report.sections = sectionsOf(_G.SanctuaryTabContent_advanced)
+        return report
+    end
+
+    now = now + 5
+    gripDown(grip)
+    mainFrame:SetSize(500, 560)
+    gripUp(grip)
+    equal(content:GetWidth(), 500, "the window is at its narrowest bound")
+    local narrow = sweep()
+    equal(#narrow.sections, 3, "the Advanced screen has its three section rules")
+    for _, section in ipairs(narrow.sections) do
+        equal(section:GetWidth(), 500 - 18 * 2, "and each spans the narrow window")
+    end
+
+    now = now + 5
+    gripDown(grip)
+    mainFrame:SetSize(900, 560)
+    gripUp(grip)
+    equal(content:GetWidth(), 900, "and then at its widest")
+    local wide = sweep()
+    for _, section in ipairs(wide.sections) do
+        equal(section:GetWidth(), 900 - 18 * 2, "the section rules span the wide window too")
+    end
+    -- The columns share the width in both directions: growing the window has to
+    -- grow what is in it, or a correction that merely clamped everything to the
+    -- narrow width would pass the check above and leave 156 px of the wide one
+    -- empty.
+    for _, key in ipairs({ "protection", "journal", "advanced", "diagnostics" }) do
+        check(wide[key] > narrow[key],
+            "the " .. key .. " screen takes the width the window gained")
+    end
+    -- Except the presentation paragraph, which is a reading column and says so:
+    -- it stops at its own width instead of running the whole of a 900 px window.
+    equal(wide.about, narrow.about,
+        "the About paragraph keeps its reading width at both bounds")
 end
 
 now = now + 5
