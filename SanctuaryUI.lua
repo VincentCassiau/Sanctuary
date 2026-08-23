@@ -1705,10 +1705,20 @@ end
 -- Which sentence answers which refusal. The interface picks a wording from the
 -- code the writers hand back; it never decides on its own what is refusable, so
 -- a rule can only ever change in one place.
+-- The Battle.net sentence has two halves and two audiences. Where somebody is
+-- being told they cannot block an account, both are said: the second half is the
+-- way out, and a refusal with no way out is half an answer. Where the list of
+-- Battle.net friends is merely being labelled -- the allowed panel -- the first
+-- half is the whole of it: "vu que c'est pas pour bloquer ici", decision 102.
+-- One wording, split at the sentence, rather than two strings to keep in step.
+local function bnetNotBlockedFull()
+    return L["BNET_NOT_BLOCKED"] .. " " .. L["BNET_NOT_BLOCKED_HOW"]
+end
+
 local REFUSAL_TEXT = {
-    name = "REFUSED_NAME",
-    account = "BNET_NOT_BLOCKED",
-    pattern = "REFUSED_PATTERN",
+    name = function() return L["REFUSED_NAME"] end,
+    account = bnetNotBlockedFull,
+    pattern = function() return L["REFUSED_PATTERN"] end,
 }
 
 -- The one submission path for the three field-and-button pairs. There were six
@@ -1721,8 +1731,8 @@ local function submitEntry(box, addFn)
     box:SetText("")
     box:RefreshHint()
     local ok, _, _, refusal = addFn(text)
-    local key = refusal and REFUSAL_TEXT[refusal]
-    if key then box:SayNo(L[key]) else box:ClearNote() end
+    local sentence = refusal and REFUSAL_TEXT[refusal]
+    if sentence then box:SayNo(sentence()) else box:ClearNote() end
     if ok and ns.refreshUI then ns.refreshUI() end
 end
 
@@ -1777,6 +1787,10 @@ local AUTO_GROUP_LABELS = {
 -- One line under the group header, for the two groups whose rule is not obvious
 -- from their name: automatic trust has a condition, and Battle.net has a limit
 -- that has to be said where somebody would go looking to block one of them.
+-- Shown only while the group is unfolded, decision 102: four headers with two
+-- paragraphs wedged between them is not a list of four counts, which is what the
+-- folded state exists to be. The Battle.net one is the short half of the
+-- sentence here -- nothing on this panel blocks anybody.
 local AUTO_GROUP_HINTS = {
     trust = "WL_TRUST_HINT",
     bnet = "BNET_NOT_BLOCKED",
@@ -1888,19 +1902,21 @@ local function refreshAllowedPanel(force)
         end)
         y = y - 20
 
-        local hintKey = AUTO_GROUP_HINTS[source]
+        local hintKey = expanded and AUTO_GROUP_HINTS[source]
         if hintKey then
             local hint = acquireAutoRow(child, panel)
             hint:ClearAllPoints()
             hint:SetPoint("TOPLEFT", child, "TOPLEFT", 16, y)
-            hint:SetHeight(34)
             hint.label:SetTextColor(unpack(C.dim))
-            -- Wrapped, and two lines of room for it: both hints are full
-            -- sentences and both ran past the right edge of the panel on one
-            -- line, in French first.
+            -- Wrapped, then measured. Both hints ran past the right edge of the
+            -- panel on one line, in French first, so they wrap; how many lines
+            -- that takes is the client's answer and not a constant here -- the
+            -- Battle.net one is a single sentence now and the trust one is not.
             hint.label:SetWidth(panelWidth() - 76)
             hint.label:SetText(L[hintKey])
-            y = y - 38
+            local hintHeight = math.max(18, math.ceil(hint.label:GetStringHeight() or 18))
+            hint:SetHeight(hintHeight)
+            y = y - hintHeight - 6
         end
 
         if expanded then
@@ -1926,10 +1942,15 @@ local function refreshAllowedPanel(force)
                     row.label:SetTextColor(unpack(C.soft))
                     if source == "bnet" then
                         if entry.character then
+                            -- The add-on's own "active" green, the one the
+                            -- header wears when protection is on: these are the
+                            -- friends who are there right now.
+                            row.label:SetTextColor(unpack(C.green))
                             row.label:SetText(string.format(L["WL_BNET_ROW"],
                                 entry.characterDisplay or entry.character,
                                 entry.account or entry.label))
                         else
+                            row.label:SetTextColor(unpack(C.dim))
                             row.label:SetText(string.format(L["WL_BNET_OFFLINE"],
                                 entry.account or entry.label))
                         end
@@ -1963,7 +1984,7 @@ local function buildBlockedPanel()
     -- Said here, where somebody types a name in: the blocked list holds WoW
     -- characters, and Battle.net is cut in Battle.net. Without the line the only
     -- way to learn it is to add a friend's account and watch nothing happen.
-    panel.bnetNote = newLabel(child, L["BNET_NOT_BLOCKED"], FONT_BODY, C.dim)
+    panel.bnetNote = newLabel(child, bnetNotBlockedFull(), FONT_BODY, C.dim)
     panel.bnetNote:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -32)
     panel.bnetNote:SetWidth(panelWidth() - 40)
 

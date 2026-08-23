@@ -138,7 +138,8 @@ L["WL_GROUP_NOTE"] = "Your current group or raid is allowed too, for as long as 
 L["WL_BNET_ROW"] = "%s \194\183 %s"
 L["WL_BNET_OFFLINE"] = "%s (offline)"
 L["PANEL_BLOCKED_DESC"] = "Blocked for everything, even if they are friends or in your group -- their group messages too."
-L["BNET_NOT_BLOCKED"] = "Sanctuary does not block Battle.net friends. Do it directly on Battle.net."
+L["BNET_NOT_BLOCKED"] = "Sanctuary does not block Battle.net friends."
+L["BNET_NOT_BLOCKED_HOW"] = "Do it directly on Battle.net."
 -- What a refused entry is told, under the field it was typed in. The three
 -- sentences say how to write the thing, not that something went wrong: a person
 -- who has just been harassed does not need to be told off.
@@ -389,7 +390,8 @@ L["WL_GROUP_NOTE"] = "Votre groupe ou raid du moment est aussi autoris\195\169, 
 L["WL_BNET_ROW"] = "%s \194\183 %s"
 L["WL_BNET_OFFLINE"] = "%s (hors ligne)"
 L["PANEL_BLOCKED_DESC"] = "Bloqu\195\169s pour tout, m\195\170me s'ils sont amis ou dans votre groupe \226\128\148 leurs messages de groupe aussi."
-L["BNET_NOT_BLOCKED"] = "Sanctuary ne bloque pas les amis Battle.net. Faites-le directement sur Battle.net."
+L["BNET_NOT_BLOCKED"] = "Sanctuary ne bloque pas les amis Battle.net."
+L["BNET_NOT_BLOCKED_HOW"] = "Faites-le directement sur Battle.net."
 L["REFUSED_NAME"] = "Un pseudo s'\195\169crit Pseudo ou Pseudo-Royaume"
 L["REFUSED_PATTERN"] = "Un pattern est un texte : des lettres seulement"
 L["PANEL_BLOCKED_NAMES"] = "Pseudos"

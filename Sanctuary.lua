@@ -1763,8 +1763,17 @@ function ns.getAutoWhitelistGroups(filterText)
     collect(Sanctuary.whitelistSources, Sanctuary.whitelistLabels, "group")
     collect(Sanctuary.bnetWhitelistSources, Sanctuary.bnetWhitelistLabels, "bnet")
 
+    -- Online first, then alphabetically. A Battle.net friend the roster can name
+    -- a character for is online right now; one it cannot is offline and has no
+    -- character at all -- the gap stated in the release notes. Sorted here
+    -- rather than in the panel because "who is online" is a property of the data
+    -- and not of pixels, and because the panel's own signature reads this order
+    -- back. Decision 110: the people you could actually talk to are the ones
+    -- worth putting at the top of fifty-six lines.
     for _, group in ipairs(groups) do
         table.sort(group.entries, function(a, b)
+            local onlineA, onlineB = a.character ~= nil, b.character ~= nil
+            if onlineA ~= onlineB then return onlineA end
             local la, lb = tostring(a.label):lower(), tostring(b.label):lower()
             if la == lb then return a.key < b.key end
             return la < lb

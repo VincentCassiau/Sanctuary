@@ -4372,6 +4372,12 @@ local function newWidget(kind, name, parent, template)
     -- square" are made of.
     function w:SetColorTexture(r, g, b, a) self.__colorTexture = { r, g, b, a or 1 } end
     function w:EnableMouse(value) self.__mouseEnabled = value and true or false end
+    -- Kept as four numbers rather than a table: a colour is read back one
+    -- component at a time, and "is this line green" is a check the panel's
+    -- online / offline split now rests on.
+    function w:SetTextColor(r, g, b, a)
+        self.__colorR, self.__colorG, self.__colorB, self.__colorA = r, g, b, a
+    end
     function w:AddMaskTexture(mask) self.__mask = mask end
     function w:SetChecked(value) self.__checked = value and true or false end
     function w:GetChecked() return self.__checked and true or false end
@@ -4947,10 +4953,12 @@ check(rendered:find("RealFriend#1234", 1, true) == nil,
     "the automatic groups stay folded, so the panel does not spill a friends list")
 check(rendered:find(ns.L["WL_GROUP_NOTE"], 1, true) ~= nil,
     "and the current group is a line, not a list")
--- The Battle.net rule is on screen where somebody would look for a way to cut
--- one of them off, folded group or not.
-check(rendered:find(ns.L["BNET_NOT_BLOCKED"], 1, true) ~= nil,
-    "the Battle.net group says Sanctuary never blocks on Battle.net")
+-- Folded, the groups are four counts and nothing else: decision 102 took the
+-- two paragraphs out from between the headers, and they come back on unfolding.
+check(rendered:find(ns.L["BNET_NOT_BLOCKED"], 1, true) == nil,
+    "a folded Battle.net group is a count, not a paragraph")
+check(rendered:find(ns.L["WL_TRUST_HINT"], 1, true) == nil,
+    "and neither is the automatic trust group")
 
 -- Unfolding shows "Character . Account" for a connected friend, and the account
 -- alone for one who is offline.
@@ -4980,6 +4988,32 @@ check(rendered:find("Bnetchar-Ysondre", 1, true) == nil,
     "the realm stays in the lookup key and off the line")
 check(rendered:find(string.format(ns.L["WL_BNET_OFFLINE"], "OfflineFriend#5678"), 1, true) ~= nil,
     "and an offline friend by account alone")
+-- And the sentence comes back with the list it is about.
+check(rendered:find(ns.L["BNET_NOT_BLOCKED"], 1, true) ~= nil,
+    "unfolding the group says Sanctuary never blocks on Battle.net")
+check(rendered:find(ns.L["BNET_NOT_BLOCKED_HOW"], 1, true) == nil,
+    "in its short form: nothing on this panel blocks anybody")
+
+-- Decision 110: the friends who are there right now come first, and in the
+-- add-on's own green; the offline ones after, in grey. "OfflineFriend#5678"
+-- sorts before "RealFriend#1234" alphabetically, so a list still in name order
+-- is a list this check catches.
+do
+    local group
+    for _, candidate in ipairs(ns.getAutoWhitelistGroups()) do
+        if candidate.source == "bnet" then group = candidate end
+    end
+    check(group ~= nil and #group.entries >= 2, "the Battle.net group has both kinds")
+    check(group.entries[1].character ~= nil, "an online friend is at the top of the group")
+    check(group.entries[#group.entries].character == nil, "and an offline one at the bottom")
+
+    local onlineRow = findRow(allowedPanel, "Bnetchar")
+    local offlineRow = findRow(allowedPanel, "OfflineFriend#5678")
+    check(onlineRow ~= nil and offlineRow ~= nil, "both lines are on screen")
+    equal(onlineRow.label.__colorR, 0.4, "the online line wears the active green")
+    equal(onlineRow.label.__colorG, 0.902, "the online line wears the active green")
+    check(offlineRow.label.__colorG ~= 0.902, "and the offline line does not")
+end
 
 -- Adding through the field, removing through the cross, and Undo.
 _G.SanctuaryAllowedAddInput:SetText("Titi")
@@ -5324,8 +5358,11 @@ check(panelRowTexts(panel):find(ns.L["REFUSED_NAME"], 1, true) ~= nil,
 
 nameBox:SetText("Real Friend#1234")
 nameBox:GetScript("OnEnterPressed")(nameBox)
-equal(nameBox.note:GetText(), ns.L["BNET_NOT_BLOCKED"],
-    "the Enter key says why a BattleTag was refused")
+-- Both halves where somebody is being refused: the second one is the way out,
+-- and a refusal with no way out is half an answer. Decision 102.
+equal(nameBox.note:GetText(),
+    ns.L["BNET_NOT_BLOCKED"] .. " " .. ns.L["BNET_NOT_BLOCKED_HOW"],
+    "the Enter key says why a BattleTag was refused, and what to do instead")
 equal(nameBox:GetText(), "", "and empties the field")
 equal(ns.getListCounts().blocked.names, beforeNames, "still writing nothing")
 
@@ -5355,7 +5392,8 @@ panel.nameBtn:Click()
 C_Timer.After = savedAfter
 equal(#queued, 2, "two refusals leave two timers behind")
 queued[1]()
-equal(nameBox.note:GetText(), ns.L["BNET_NOT_BLOCKED"],
+equal(nameBox.note:GetText(),
+    ns.L["BNET_NOT_BLOCKED"] .. " " .. ns.L["BNET_NOT_BLOCKED_HOW"],
     "the older timer leaves the newer sentence alone")
 queued[2]()
 equal(nameBox.note:GetText(), "", "and its own timer is what clears it")
