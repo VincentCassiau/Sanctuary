@@ -2001,6 +2001,33 @@ ns.invalidateWhitelist()
 block = ns.getCharacterDecision("Dungeonmate-TestRealm")
 check(not block, "auto-trusted member passes whitelist decision")
 
+-- Automatic trust never reaches over the blocked list. Staying in the group was
+-- all a harasser had to do: `ns.addAllowed` displaces whatever it finds in
+-- "Toujours bloques", the ticker prints nothing and throws the `displaced`
+-- answer away, so the entry vanished and the name came back allowed with source
+-- "trust" -- silently, and exactly against the one list that is supposed to beat
+-- every trust source.
+;(function()
+    local addedBlocked = ns.addBlocked("Stayer-TestRealm")
+    check(addedBlocked, "a name is put into the blocked list by hand")
+    equal(ns.classifyName("Stayer-TestRealm").verdict, "always_blocked",
+        "and it answers always_blocked before the group timer")
+    SanctuaryCharDB.groupTracker.stayer = now - 1000
+    runTickers()
+    check(SanctuaryDB.blockedNames["stayer-testrealm"] ~= nil,
+        "five minutes in the group do not take it out of the blocked list")
+    equal(SanctuaryDB.manualWhitelist.stayer, nil,
+        "and nothing is written on the allowed side")
+    ns.invalidateWhitelist()
+    local stayer = ns.classifyName("Stayer-TestRealm")
+    equal(stayer.verdict, "always_blocked", "the name is still blocked after the ticker")
+    equal(stayer.list, "blocked_name", "on the entry the person typed, not on trust")
+    equal(SanctuaryCharDB.groupTracker.stayer, nil,
+        "and the tracker drops it rather than weighing it again every 30 s")
+    ns.removeBlocked("stayer-testrealm")
+    ns.invalidateWhitelist()
+end)()
+
 -- Closing a blocked whisper tab must not close unrelated non-whitelisted tabs.
 ChatFrame1 = { chatType = "WHISPER", chatTarget = "Blocked" }
 ChatFrame2 = { chatType = "WHISPER", chatTarget = "OtherUnknown" }

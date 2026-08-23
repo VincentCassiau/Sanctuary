@@ -6327,11 +6327,33 @@ C_Timer.NewTicker(30, function()
 
     for name, joinTime in pairs(SanctuaryCharDB.groupTracker) do
         if (now - joinTime) >= threshold then
-            -- Goes through the same write the panel and the right-click menu
-            -- use, so an automatically trusted contact is an entry like any
-            -- other -- shown in its own group, and removable. Nothing is
-            -- printed: the panel is where it shows up.
-            ns.addAllowed(name, "trust")
+            -- Never over the blocked list. `ns.addAllowed` displaces what it
+            -- finds there -- decision 104 -- and the two hand gestures that
+            -- call it show which list the name left, with an Annuler beside
+            -- it. This ticker has no screen: it drops the `displaced` answer on
+            -- the floor and prints nothing (decision 78 took the "X ajoute"
+            -- line away). So a harasser explicitly put in "Toujours bloques"
+            -- only had to stay five minutes in the group to be taken out of it,
+            -- written back with source "trust", and let through -- invites,
+            -- whispers, sounds -- without a word to the person who blocked
+            -- them. Staying in the group was the whole exploit.
+            --
+            -- Blocked beats every trust source, in both scopes: that is what
+            -- the list is for, and `classifyName` already answers that way. The
+            -- one place that did not was this write.
+            --
+            -- Dropped from the tracker as well as skipped, so the same name is
+            -- not weighed again every thirty seconds for as long as the group
+            -- lasts. Unblocking somebody later starts their five minutes over,
+            -- which is the trust this rule is about: freshly earned, not banked
+            -- while they were blocked.
+            if not ns.findBlockedKey(name) then
+                -- Goes through the same write the panel and the right-click
+                -- menu use, so an automatically trusted contact is an entry
+                -- like any other -- shown in its own group, and removable.
+                -- Nothing is printed: the panel is where it shows up.
+                ns.addAllowed(name, "trust")
+            end
             SanctuaryCharDB.groupTracker[name] = nil
         end
     end
