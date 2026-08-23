@@ -5120,6 +5120,40 @@ equal(nameBox.note:GetText(), "", "closing the window clears the refusal")
 equal(nameBox.note:IsShown(), false, "sentence and room together")
 mainFrame:Show()
 
+-- The width the sentence gets, and the room it is given. A refusal that folds is
+-- worse than one that is cut: it comes down over the first row of chips under
+-- the field. So the note runs the panel's own text width -- PANEL_WIDTH - 40,
+-- the 500 px the descriptions above it already use -- and not the 250 px of the
+-- box it hangs from.
+ns.OpenPanel("allowed")
+local allowedBox = _G.SanctuaryAllowedAddInput
+equal(allowedBox.note:GetWidth(), 500, "the allowed field answers at the panel's width")
+equal(nameBox.note:GetWidth(), 500, "the blocked names field answers at the panel's width")
+equal(patternBox.note:GetWidth(), 500, "and the pattern field too")
+
+-- ... and the six strings measured against it, because the strings are what
+-- changes. 6.5 px is a majorant for one character of FONT_BODY in a latin face;
+-- characters are counted, not bytes, French being stored as escaped UTF-8. Each
+-- field reserves the lines its own worst case needs: one under the two name
+-- fields and the pattern field, two under the blocked names, the only field the
+-- Battle.net sentence can answer in. This check is what fails the day one of the
+-- six sentences grows past the room its field keeps.
+local NOTE_PIXELS, NOTE_CHAR_PX = 500, 6.5
+local function noteLines(text)
+    local characters = select(2, text:gsub("[^\128-\191]", ""))
+    return math.ceil(characters * NOTE_CHAR_PX / NOTE_PIXELS)
+end
+for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) do
+    local localeName, strings = entry[1], entry[2]
+    check(noteLines(strings["REFUSED_NAME"]) <= 1,
+        "REFUSED_NAME fits the one line the name fields keep (" .. localeName .. ")")
+    check(noteLines(strings["REFUSED_PATTERN"]) <= 1,
+        "REFUSED_PATTERN fits the one line the pattern field keeps (" .. localeName .. ")")
+    check(noteLines(strings["BNET_NOT_BLOCKED"]) <= 2,
+        "BNET_NOT_BLOCKED fits the two lines the blocked names field keeps ("
+        .. localeName .. ")")
+end
+
 ns.removeBlocked(ns.normalizeBlockedKey("Acceptedname"))
 ns.ClosePanel()
 runTimers(3)

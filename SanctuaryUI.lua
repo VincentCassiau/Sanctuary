@@ -76,9 +76,24 @@ local UNDO_HEIGHT, UNDO_MARGIN = 22, 6
 local MIN_FRAME_HEIGHT = MIN_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
 local MAX_FRAME_HEIGHT = MAX_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
 local UNDO_SECONDS = 6
--- Room kept under each of the three add fields for the sentence a refused entry
--- gets, showing or not.
-local NOTE_ROOM = 16
+-- The sentence a refused entry gets. It answers for the panel, not for the box,
+-- so it runs the panel's own text width -- the one the descriptions above it
+-- already use -- and not the 250 px of the field: the Battle.net sentence is 82
+-- characters in French, which no latin face fits into 250 px at FONT_BODY, so at
+-- the box's width it would fold onto three lines and lie over the first row of
+-- chips.
+local NOTE_WIDTH = PANEL_WIDTH - 40
+local NOTE_GAP = 4
+-- One line of FONT_BODY, rounded up: the client draws a 12 px face on about
+-- 14 px of line.
+local NOTE_LINE = 15
+-- Room kept under an add field for its sentence, showing or not, so nothing on
+-- screen moves when one appears. One line covers the two name sentences and the
+-- pattern one at NOTE_WIDTH; the blocked names field is the only one that can
+-- answer with the Battle.net sentence, which still takes two lines there, so it
+-- keeps two. The harness measures the six strings against these two values.
+local NOTE_ROOM = NOTE_GAP + NOTE_LINE
+local NOTE_ROOM_TWO_LINES = NOTE_GAP + 2 * NOTE_LINE
 local LIST_REFRESH_SECONDS = 10
 
 local function applyBackdrop(frame, bg, border, edgeSize)
@@ -277,13 +292,15 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
     box.hint = newLabel(box, hintText, FONT_BODY, C.dim)
     box.hint:SetPoint("LEFT", box, "LEFT", 7, 0)
 
-    -- The one line that says why an entry was refused. It lives under the box it
-    -- belongs to, so there is never a doubt which of the three fields is being
-    -- answered, and the panels keep its room reserved whether it is showing or
-    -- not: a sentence that appears must not shove the list under it downwards.
+    -- The line that says why an entry was refused. It starts at the box's left
+    -- edge, so there is never a doubt which of the three fields is being
+    -- answered, but it runs the panel's width rather than the box's: the box is
+    -- 250 px and the sentences are up to 82 characters. The panels keep its room
+    -- reserved whether it is showing or not -- a sentence that appears must not
+    -- shove the list under it downwards, nor lie over it.
     box.note = newLabel(box, "", FONT_BODY, C.orange)
-    box.note:SetPoint("TOPLEFT", box, "BOTTOMLEFT", 0, -4)
-    box.note:SetWidth(width or 220)
+    box.note:SetPoint("TOPLEFT", box, "BOTTOMLEFT", 0, -NOTE_GAP)
+    box.note:SetWidth(NOTE_WIDTH)
     box.note:Hide()
 
     function box:RefreshHint()
@@ -1596,7 +1613,9 @@ local function refreshAllowedPanel(force)
     panel.addBtn:SetPoint("LEFT", panel.addInput, "RIGHT", 8, 0)
     -- NOTE_ROOM is kept whether a sentence is showing or not, the same choice the
     -- undo strip made: a line that appears must not push the list down under the
-    -- fingers of somebody about to click a cross.
+    -- fingers of somebody about to click a cross. One line here: this field only
+    -- ever answers REFUSED_NAME, which fits a line at NOTE_WIDTH in both
+    -- languages.
     y = y - 40 - NOTE_ROOM
 
     panel.autoSection:ClearAllPoints()
@@ -1767,7 +1786,11 @@ local function refreshBlockedPanel(force)
     panel.nameInput:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
     panel.nameBtn:ClearAllPoints()
     panel.nameBtn:SetPoint("LEFT", panel.nameInput, "RIGHT", 8, 0)
-    y = y - 34 - NOTE_ROOM
+    -- Two lines here, and only here: this is the one field that can answer with
+    -- the Battle.net sentence, which is longer than a line at NOTE_WIDTH in both
+    -- languages. What sits at the y below is the first row of chips, which a
+    -- second line would lie over.
+    y = y - 34 - NOTE_ROOM_TWO_LINES
 
     local names = {}
     for key, data in pairs(SanctuaryDB.blockedNames or {}) do
@@ -1795,6 +1818,9 @@ local function refreshBlockedPanel(force)
     panel.patternInput:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
     panel.patternBtn:ClearAllPoints()
     panel.patternBtn:SetPoint("LEFT", panel.patternInput, "RIGHT", 8, 0)
+    -- One line: this field only ever answers REFUSED_PATTERN, a BattleTag pasted
+    -- here included, and that sentence fits a line at NOTE_WIDTH in both
+    -- languages.
     y = y - 34 - NOTE_ROOM
 
     local patterns = {}
