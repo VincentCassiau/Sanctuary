@@ -861,6 +861,26 @@ function splitCharacterName(name)
     return namePart, realmPart
 end
 
+-- The one shape of a pattern, at the write and at the read alike. `addPattern`
+-- stores what this answers, `removePattern` looks up what this answers, and
+-- `matchesKeyword` below compares against what this answers -- so a pattern can
+-- never be stored under one spelling and searched for under another.
+--
+-- It deliberately refuses nothing on shape: a settings file written by an
+-- earlier build can hold "toto-ysondre" or a pasted BattleTag, and the person
+-- has to be able to delete it from the panel. `ns.addPattern` is where a new one
+-- is refused.
+local function normalizePatternText(text)
+    if type(text) ~= "string" then return nil end
+    local clean = stripWoWFormatting(text)
+    if not clean then return nil end
+    clean = foldCase((clean:gsub("%s", "")))
+    if clean == "" then return nil end
+    return clean
+end
+
+ns.normalizePatternText = normalizePatternText
+
 -- Keyword blacklist: blocks names containing any suspect keyword.
 -- Private on purpose since 0.4.0: isAlwaysBlocked is the only caller, so a
 -- pattern and an exact blocked name can never be tested by different code.
@@ -881,8 +901,11 @@ local function matchesKeyword(name)
     if not nameOnly then return false, nil end
 
     for _, keyword in ipairs(SanctuaryDB.keywords) do
-        local cleanKeyword = foldCase(tostring(keyword or "")):gsub("%s", "")
-        if cleanKeyword ~= "" and nameOnly:find(cleanKeyword, 1, true) then
+        -- Read by the same rule that wrote it. The fold and the space strip used
+        -- to be copied out here, so the stored spelling and the searched
+        -- spelling were two pieces of code that had to agree by hand.
+        local cleanKeyword = normalizePatternText(keyword)
+        if cleanKeyword and nameOnly:find(cleanKeyword, 1, true) then
             return true, keyword
         end
     end
@@ -905,6 +928,43 @@ local function normalizeRealm(realm)
     if realm == "" then return nil end
     return realm
 end
+
+-- "Is this the player themselves". One rule, written here because it is made of
+-- the two rules directly above it and of nothing else: `splitCharacterName`
+-- says where the pseudo ends, `normalizeRealm` says how a realm is spelled.
+--
+-- It used to carry its own copy of both -- a hand-written pattern that cut on
+-- the hyphen alone, so "Toto Ysondre" was compared whole and never recognised,
+-- and a second realm fold. Two copies of one rule is the fault this release went
+-- looking for everywhere else.
+--
+-- A realm on the sender is honoured when there is one, so a namesake on another
+-- realm is not mistaken for the player; a bare name is the player's own realm,
+-- which is what the game hands over when both sides share it.
+--
+-- Nothing Sanctuary does may touch what the player says to themselves: this is
+-- the single site that answers that question, and `decideChat` is its only
+-- caller.
+local function isSelf(sender)
+    local senderName, senderRealm = splitCharacterName(sender)
+    if not senderName then return false end
+
+    local playerName, playerRealm
+    if UnitFullName then
+        playerName, playerRealm = UnitFullName("player")
+    end
+    playerName = playerName or UnitName("player")
+    playerRealm = playerRealm or getPlayerRealm()
+    -- Folded by the same rule the keys are built with, so an accented pseudo is
+    -- recognised as the player's own on both sides of the comparison.
+    if not playerName or senderName ~= foldCase(playerName) then return false end
+
+    local realm = normalizeRealm(senderRealm)
+    if not realm then return true end
+    return realm == normalizeRealm(playerRealm)
+end
+
+ns.isSelf = isSelf
 
 -- One key shape for the exact-name list, and it always carries a realm:
 -- "name-realm". A name typed with no realm means the realm the player is on --
@@ -1018,7 +1078,22 @@ local function isAlwaysBlocked(name)
     return false, nil, nil
 end
 
+-- The key `ns.addAllowed` would write for this text -- an account keyed whole,
+-- anything else keyed on its pseudo half -- and nil when nothing usable is left.
+--
+-- One rule, one place, exactly like the blocked side just below. The right-click
+-- menu has to ask "is this person already allowed", and it used to answer with
+-- `ns.normalizeName` alone: an account allowed by hand ("Real Friend#1234") is
+-- keyed whole, so the menu looked up "real", found nothing, and offered to allow
+-- somebody who already was.
+local function findAllowedKey(name)
+    local clean = stripWoWFormatting(name)
+    if not clean or clean:gsub("%s", "") == "" then return nil end
+    return isAccountName(clean) and normalizeBNetName(clean) or normalizeName(clean)
+end
+
 ns.normalizeBlockedKey = normalizeBlockedKey
+ns.findAllowedKey = findAllowedKey
 -- The KEY that answers, not just whether one does: the right-click menu has to
 -- remove the entry the lookup actually found, and it asks here rather than
 -- deriving the key itself so that the menu and the filters can never disagree
@@ -1732,7 +1807,11 @@ function ns.addAllowed(name, source)
     -- allowed every Real of every realm without a word, and that two accounts
     -- sharing their first word ("Manual Battle#1111", "Manual Buddy#5678")
     -- collided on, the second of them refused as a duplicate without a word.
-    local key = isAccountName(clean) and normalizeBNetName(clean) or normalizeName(clean)
+    --
+    -- Both halves of that rule live in `findAllowedKey`, which the right-click
+    -- menu reads too: the key this writes and the key the menu looks up are one
+    -- piece of code, not two that have to agree.
+    local key = findAllowedKey(clean)
     if not key then return false end
     SanctuaryDB.manualWhitelist = SanctuaryDB.manualWhitelist or {}
     if SanctuaryDB.manualWhitelist[key] then
@@ -1812,7 +1891,12 @@ function ns.addBlocked(name, source)
     -- exactly the shape of a Pseudo-Realm pair and stays indistinguishable --
     -- typed here it makes a character entry that blocks nobody. Nothing in the
     -- string tells the two apart; the panel's sentence is what covers that case.
-    if clean:find("#", 1, true) then return false end
+    --
+    -- Asked of `isAccountName`, the one place that says what an account is. The
+    -- test used to be spelled out again here, so "what counts as a BattleTag"
+    -- had two answers to keep in step -- while the allowed field, sixty lines
+    -- up, was already asking the question the other way round.
+    if isAccountName(clean) then return false end
     local key = normalizeBlockedKey(clean)
     if not key then return false end
     SanctuaryDB.blockedNames = SanctuaryDB.blockedNames or {}
@@ -1848,22 +1932,6 @@ function ns.restoreBlocked(key, data)
     invalidateBlockedLists()
     return true, key, data
 end
-
-do
--- The stored spelling of a pattern, and the one `removePattern` looks up. It
--- deliberately refuses nothing on shape: a settings file written by an earlier
--- build can hold "toto-ysondre" or a pasted BattleTag, and the person has to be
--- able to delete it from the panel. `addPattern` is where a new one is refused.
-local function normalizePatternText(text)
-    if type(text) ~= "string" then return nil end
-    local clean = stripWoWFormatting(text)
-    if not clean then return nil end
-    clean = foldCase((clean:gsub("%s", "")))
-    if clean == "" then return nil end
-    return clean
-end
-
-ns.normalizePatternText = normalizePatternText
 
 -- A pattern is looked for in the pseudo half alone (`matchesKeyword`), and a
 -- pseudo is letters: no hyphen, no digit, no "#", no dot. A pattern holding any
@@ -1915,7 +1983,6 @@ function ns.removePattern(text)
     end
     return false
 end
-end
 
 -- ============================================================================
 -- SECTION F: Logging Engine
@@ -1948,6 +2015,15 @@ logBlock = function(blockType, sourceName, message, guid, keyword)
 
     -- Extract realm from "Name-Realm" format. Character names cannot contain
     -- hyphens, so the first hyphen is the unambiguous separator.
+    --
+    -- The last hand-written cut in the file, and it stays one on purpose --
+    -- `splitCharacterName` is not what this wants. Three reasons, all of them
+    -- load-bearing: the Journal shows the two halves in two columns, so the
+    -- realm has to come back whole and not just be folded away; the pseudo is
+    -- displayed and must keep the casing the person will recognise; and this
+    -- same function is handed Battle.net account names by the Battle.net whisper
+    -- path, which carry spaces the pseudo rule would cut on. This builds a line
+    -- to read, not a key to compare.
     local n, r = cleanName:match("^([^-]+)%-(.+)$")
     if n and r then
         cleanName = n
@@ -2833,13 +2909,6 @@ local function systemMessageFilter(self, event, msg, ...)
     return shouldBlock
 end
 
--- Forward declaration: "am I the sender" is defined further down, with the realm
--- rule it shares with the blocked list, and the whisper filter needs it too.
--- `local isSelf` down there would leave this one nil and hand `whisperFilter` a
--- nil global -- the same shadowing trap `splitCharacterName` carries a note
--- about.
-local isSelf
-
 -- Whisper filter (P1 — active if setting enabled)
 local function whisperFilter(self, event, msg, sender, ...)
     if not isEnabled() then return false end
@@ -2881,43 +2950,6 @@ local function bnetWhisperFilter(self, event, msg, sender, ...)
     if isBNetWhitelisted(decisionName) then return false end
     if isBNetSenderInGroup and isBNetSenderInGroup(decisionName) then return false end
     return true
-end
-
-do
--- Never filter the player's own messages, public or whispered to themselves.
--- Realm information is honored when present so a same-named player on another
--- realm is not mistaken for self.
---
--- Assigns the forward local declared above `whisperFilter`: no `local` on this
--- line, or that filter loses it.
-isSelf = function(sender)
-    local clean = stripWoWFormatting(sender)
-    if not clean then return false end
-
-    local senderName, senderRealm = clean:match("^([^-]+)%-(.+)$")
-    senderName = senderName or clean
-
-    local playerName, playerRealm
-    if UnitFullName then
-        playerName, playerRealm = UnitFullName("player")
-    end
-    playerName = playerName or UnitName("player")
-    playerRealm = playerRealm or getPlayerRealm()
-    -- Folded by the same rule the keys are built with, so an accented pseudo is
-    -- recognised as the player's own on both sides of the comparison.
-    if not playerName or foldCase(senderName) ~= foldCase(playerName) then
-        return false
-    end
-
-    if senderRealm and senderRealm ~= "" then
-        -- The same realm rule the blocked list uses. It was written twice, and
-        -- two spellings of one realm is exactly the fault this release went
-        -- looking for; the second copy also returned gsub's replacement count
-        -- as a second value, harmless in a comparison and a trap anywhere else.
-        return normalizeRealm(senderRealm) == normalizeRealm(playerRealm)
-    end
-    return true
-end
 end
 
 -- Say filter (P2 — off by default)
