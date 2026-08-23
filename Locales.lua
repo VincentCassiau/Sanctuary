@@ -204,7 +204,6 @@ L["EXPORT_SUSPECT_TAG"] = "[pattern: %s]"
 L["DEBUG_EXPORT_TITLE"] = "Sanctuary report"
 
 -- Advanced
-L["ADV_TRUST_TITLE"] = "Automatic trust"
 L["FILTER_AUTO_TRUST"] = "Trust people who stay at least 5 minutes in my group or my raid"
 L["ADV_TRUST_DESC"] = "They are then added to \"Always allowed\", permanently. You can remove them at any time."
 L["ADV_DIAG_TITLE"] = "Diagnostics"
@@ -453,7 +452,6 @@ L["EXPORT_SUSPECT_TAG"] = "[pattern : %s]"
 L["DEBUG_EXPORT_TITLE"] = "Rapport Sanctuary"
 
 -- Advanced
-L["ADV_TRUST_TITLE"] = "Trust automatique"
 L["FILTER_AUTO_TRUST"] = "Faire confiance aux joueurs qui restent au moins 5 minutes dans mon groupe ou mon raid"
 L["ADV_TRUST_DESC"] = "Ils sont alors ajout\195\169s aux \194\171 Toujours autoris\195\169s \194\187, d\195\169finitivement. Vous pouvez les retirer \195\160 tout moment."
 L["ADV_DIAG_TITLE"] = "Diagnostics"

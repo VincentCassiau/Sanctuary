@@ -39,6 +39,12 @@ local C = {
     orange     = { 1.000, 0.600, 0.200, 1.00 },
     tile       = { 0.078, 0.078, 0.141, 0.60 },
     input      = { 0.102, 0.102, 0.149, 0.92 },
+    -- `cbBg` / `cbOn` of the mock-up, and they are NOT the input colours: a box
+    -- drawn in `input` on a panel drawn in `panel` is 0.05 of grey apart from
+    -- its background, which is exactly what "on ne voit pas les cases à cocher,
+    -- ça fait sombre sur sombre" describes. #262633 sits above both fills.
+    checkBg    = { 0.149, 0.149, 0.200, 1.00 },
+    checkOn    = { 0.302, 0.702, 1.000, 1.00 },
     button     = { 0.149, 0.149, 0.251, 1.00 },
     buttonHot  = { 0.220, 0.220, 0.345, 1.00 },
     tabOff     = { 0.047, 0.047, 0.086, 0.90 },
@@ -52,6 +58,10 @@ local FRAME_WIDTH = 780
 local MIN_HEIGHT, MAX_HEIGHT = 380, 700
 local HEADER_HEIGHT = 40
 local TAB_HEIGHT = 22
+-- How far the current tab climbs into the frame, and how thick its underline is
+-- -- `margin-top:-2px` and `inset 0 -2px 0` of the mock-up, which are the same
+-- two pixels.
+local TAB_LIFT = 2
 local PAD = 18
 local PANEL_WIDTH = 540
 -- The stacking order the modal panel needs, stated once. The content area nests
@@ -108,6 +118,30 @@ local function applyBackdrop(frame, bg, border, edgeSize)
     if border then frame:SetBackdropBorderColor(unpack(border)) end
 end
 
+-- The mask Retail ships for exactly this: a circle that scales to whatever size
+-- the texture is given. The radios of the mock-up are round (`border-radius:50%`)
+-- and the add-on draws every widget itself, so the shape has to come from
+-- somewhere; a mask is the one way to round a solid colour.
+local CIRCLE_MASK = "Interface\\Masks\\CircleMaskScalable"
+
+-- A filled disc of `color`, centred on `frame`. Should the mask fail to load,
+-- what is left is the same disc as a square -- still the right colour, still the
+-- right size, still visible, which is the property A1 is actually about.
+local function newDisc(frame, layer, size, color)
+    local tex = frame:CreateTexture(nil, layer)
+    tex:SetSize(size, size)
+    tex:SetPoint("CENTER")
+    tex:SetColorTexture(unpack(color))
+    local mask = frame.CreateMaskTexture and frame:CreateMaskTexture()
+    if mask and tex.AddMaskTexture then
+        mask:SetTexture(CIRCLE_MASK, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+        mask:SetSize(size, size)
+        mask:SetPoint("CENTER")
+        tex:AddMaskTexture(mask)
+    end
+    return tex
+end
+
 local function newLabel(parent, text, size, color, justify)
     local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     local fontFile = label:GetFont()
@@ -156,14 +190,22 @@ end
 -- from `get()` on every refresh, so a value the core resolves differently from
 -- what is stored (the recommended preset does exactly that) can never leave a
 -- stale tick on screen.
+-- "BackdropTemplate" is the whole of the empty-box defect, and it was invisible
+-- from here: `applyBackdrop` gives up in silence on a frame with no `SetBackdrop`
+-- (`if not frame.SetBackdrop then return end`), and in Retail a bare CheckButton
+-- has none -- the mixin is what adds it. So the fill and the border were never
+-- drawn, an unticked box was nothing at all and a ticked one was the bare 10 px
+-- mark: "une case décochée n'a aucun rendu, une case cochée est un simple carré
+-- bleu", word for word. The harness cannot see this: its widgets answer every
+-- capitalised method, `SetBackdrop` included, whatever the template says.
 local function newCheck(parent, name, text, tooltip, get, set)
-    local frame = CreateFrame("CheckButton", name, parent)
+    local frame = CreateFrame("CheckButton", name, parent, "BackdropTemplate")
     frame:SetSize(18, 18)
-    applyBackdrop(frame, C.input, C.border)
+    applyBackdrop(frame, C.checkBg, C.border)
     frame.mark = frame:CreateTexture(nil, "OVERLAY")
     frame.mark:SetPoint("CENTER")
     frame.mark:SetSize(10, 10)
-    frame.mark:SetColorTexture(unpack(C.accent))
+    frame.mark:SetColorTexture(unpack(C.checkOn))
 
     frame.label = newLabel(parent, text, FONT_BODY, C.soft)
     frame.label:SetPoint("LEFT", frame, "RIGHT", 8, 0)
@@ -178,7 +220,7 @@ local function newCheck(parent, name, text, tooltip, get, set)
             if on then self.mark:Show() else self.mark:Hide() end
         end
         self.label:SetTextColor(unpack(self.enabled and C.soft or C.disabled))
-        applyBackdrop(self, C.input, self.enabled and C.border or C.disabled)
+        applyBackdrop(self, C.checkBg, self.enabled and C.border or C.disabled)
     end
 
     function frame:SetEnabledState(enabled)
@@ -199,14 +241,15 @@ local function newCheck(parent, name, text, tooltip, get, set)
 end
 
 -- Radio, same contract as Check: drawn from the model, writes through `set`.
+-- Round rather than square, and the same 18 px as the check so the two read as
+-- one family: three discs stacked -- the rim, the fill, the dot -- rather than a
+-- backdrop, because a backdrop has corners and `border-radius:50%` does not.
 local function newRadio(parent, name, text, tooltip, isOn, select)
     local frame = CreateFrame("Button", name, parent)
-    frame:SetSize(16, 16)
-    applyBackdrop(frame, C.input, C.border)
-    frame.mark = frame:CreateTexture(nil, "OVERLAY")
-    frame.mark:SetPoint("CENTER")
-    frame.mark:SetSize(8, 8)
-    frame.mark:SetColorTexture(unpack(C.accent))
+    frame:SetSize(18, 18)
+    frame.rim = newDisc(frame, "BACKGROUND", 18, C.border)
+    frame.fill = newDisc(frame, "BORDER", 16, C.checkBg)
+    frame.mark = newDisc(frame, "OVERLAY", 8, C.checkOn)
 
     frame.label = newLabel(parent, text, FONT_BODY, C.soft)
     frame.label:SetPoint("LEFT", frame, "RIGHT", 8, 0)
@@ -216,6 +259,12 @@ local function newRadio(parent, name, text, tooltip, isOn, select)
         local on = isOn() and true or false
         if self.mark then
             if on then self.mark:Show() else self.mark:Hide() end
+        end
+        -- `.rd.on { border-color: accent }`: the rim answers too, so a picked
+        -- channel reads even at a glance that stops short of the 8 px dot.
+        if self.rim then
+            local rim = (not self.enabled) and C.disabled or (on and C.accent or C.border)
+            self.rim:SetColorTexture(unpack(rim))
         end
         self.label:SetTextColor(unpack(self.enabled and C.soft or C.disabled))
     end
@@ -518,21 +567,40 @@ end
 
 local protection = {}
 
+-- The mock-up's own metrics, named once. `.content { padding:18px; gap:20px }`,
+-- `.cards { gap:10px }`, and one row for a `.qt` at 16 px. Written here rather
+-- than as numbers at the two places that need them: the build lays the screen
+-- out top-down and the refresh re-lays it from question 3, so a height spelt out
+-- twice is a screen that agrees with itself only until somebody edits one half.
+local Q_TITLE_ROW, CARD_HEIGHT, CARD_GUTTER, BLOCK_GAP = 26, 74, 10, 20
+-- Where the block under question 2 begins, written as the sum of the two
+-- question blocks above it rather than as one number so a change to any of them
+-- is visible here.
+local CHOOSE_TOP = -(Q_TITLE_ROW + CARD_HEIGHT + BLOCK_GAP
+    + Q_TITLE_ROW + CARD_HEIGHT + 14)
+-- One row of a check or a radio, and the extra a wrapped sub-line takes.
+local ROW_HEIGHT = 24
+
 local function buildProtectionTab(parent)
     protection.frame = parent
     local width = FRAME_WIDTH - PAD * 2
     local y = 0
 
+    -- `.qt` is two pieces, not one string: a small accent number and a 16 px
+    -- white title, ten pixels apart. Three spaces in one accent-coloured
+    -- 14 px string gave neither the hierarchy nor the air.
     local function stepTitle(text, number)
-        local head = newLabel(parent, number .. "   " .. text, FONT_SECTION, C.accent)
-        head:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
-        y = y - 24
-        return head
+        local num = newLabel(parent, number, FONT_BODY, C.accent)
+        num:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y - 4)
+        local head = newLabel(parent, text, FONT_TITLE, C.ink)
+        head:SetPoint("TOPLEFT", num, "TOPRIGHT", 10, 4)
+        y = y - Q_TITLE_ROW
+        return head, num
     end
 
     -- Question 1 ------------------------------------------------------------
     stepTitle(L["Q1_TITLE"], "1")
-    local cardWidth = (width - 16) / 2
+    local cardWidth = (width - CARD_GUTTER) / 2
     protection.q1Strangers = newCard(parent, "SanctuaryQ1_strangers",
         L["Q1_STRANGERS_TITLE"], L["Q1_STRANGERS_DESC"], cardWidth,
         function() return ns.getScope() == "strangers" end,
@@ -542,11 +610,11 @@ local function buildProtectionTab(parent)
         L["Q1_BLOCKEDONLY_TITLE"], L["Q1_BLOCKEDONLY_DESC"], cardWidth,
         function() return ns.getScope() == "blockedOnly" end,
         function() setFilter("scope", "blockedOnly") end)
-    protection.q1Blocked:SetPoint("TOPLEFT", protection.q1Strangers, "TOPRIGHT", 16, 0)
-    y = y - 90
+    protection.q1Blocked:SetPoint("TOPLEFT", protection.q1Strangers, "TOPRIGHT", CARD_GUTTER, 0)
+    y = y - CARD_HEIGHT - BLOCK_GAP
 
     -- Question 2 ------------------------------------------------------------
-    protection.q2Title = stepTitle(L["Q2_TITLE"], "2")
+    protection.q2Title, protection.q2Number = stepTitle(L["Q2_TITLE"], "2")
     protection.q2All = newCard(parent, "SanctuaryQ2_all",
         L["Q2_ALL_TITLE"], L["Q2_ALL_DESC"], cardWidth,
         function() return ns.getPreset() == "all" end,
@@ -556,8 +624,8 @@ local function buildProtectionTab(parent)
         L["Q2_CUSTOM_TITLE"], L["Q2_CUSTOM_DESC"], cardWidth,
         function() return ns.getPreset() == "custom" end,
         function() setFilter("preset", "custom") end)
-    protection.q2Custom:SetPoint("TOPLEFT", protection.q2All, "TOPRIGHT", 16, 0)
-    y = y - 84
+    protection.q2Custom:SetPoint("TOPLEFT", protection.q2All, "TOPRIGHT", CARD_GUTTER, 0)
+    y = y - CARD_HEIGHT - 14
 
     -- The enhanced-instance box is a single widget with two homes: under the two
     -- cards in "Everything", indented under "Block group invitations" in "I
@@ -568,41 +636,47 @@ local function buildProtectionTab(parent)
         function(value) setFilter("strictGroupInviteSystemMessages", value) end)
     protection.strictNote = newLabel(parent, L["STRICT_EXPERIMENTAL"], FONT_BODY, C.dim)
 
+    -- Automatic trust used to live at the bottom of Advanced, three sections
+    -- down, with its sentence spelt out underneath. It decides who is allowed --
+    -- the same question the whole screen is about -- so it belongs here, on the
+    -- row under the strict box, in the same shape as every other line: a box, a
+    -- label, and the sentence on hover rather than a paragraph on screen.
+    protection.trust = newCheck(parent, "SanctuaryAutoTrust",
+        L["FILTER_AUTO_TRUST"], L["ADV_TRUST_DESC"],
+        function() return filterStored("autoTrust") == true end,
+        function(value) setFilter("autoTrust", value) end)
+
     -- The detailed boxes, folded away until "I choose" is picked.
     local choose = CreateFrame("Frame", "SanctuaryChoose", parent)
     choose:SetSize(width, 1)
     protection.choose = choose
     protection.checks = {}
 
+    -- Two columns, and which row goes in which is the mock-up's own split
+    -- (`C2Choisis`, `.cols`): everything that is chat or an invitation on the
+    -- left, everything that is an action plus the public channels on the right.
+    -- One column made the screen taller than the window on its own, which is
+    -- what "ça allonge la fenêtre" is about -- and the fold is what a person
+    -- reads first, so it is data here rather than an order of creation.
     local CHECK_ROWS = {
-        { key = "groupInvite", labelKey = "FILTER_GROUP_INVITE", tipKey = "TIP_GROUP_INVITE" },
-        { key = "whisper",     labelKey = "FILTER_WHISPER",      tipKey = "TIP_WHISPER" },
-        { key = "say",         labelKey = "FILTER_SAY",          tipKey = "TIP_SAY" },
-        { key = "yell",        labelKey = "FILTER_YELL",         tipKey = "TIP_YELL" },
-        { key = "emote",       labelKey = "FILTER_EMOTE",        tipKey = "TIP_EMOTE" },
-        { key = "duel",        labelKey = "FILTER_DUEL",         tipKey = "TIP_DUEL" },
-        { key = "trade",       labelKey = "FILTER_TRADE",        tipKey = "TIP_TRADE" },
-        { key = "guildInvite", labelKey = "FILTER_GUILD_INVITE", tipKey = "TIP_GUILD_INVITE" },
+        { key = "groupInvite", labelKey = "FILTER_GROUP_INVITE", tipKey = "TIP_GROUP_INVITE", col = 1 },
+        { key = "whisper",     labelKey = "FILTER_WHISPER",      tipKey = "TIP_WHISPER",      col = 1 },
+        { key = "say",         labelKey = "FILTER_SAY",          tipKey = "TIP_SAY",          col = 1 },
+        { key = "yell",        labelKey = "FILTER_YELL",         tipKey = "TIP_YELL",         col = 1 },
+        { key = "emote",       labelKey = "FILTER_EMOTE",        tipKey = "TIP_EMOTE",        col = 1 },
+        { key = "duel",        labelKey = "FILTER_DUEL",         tipKey = "TIP_DUEL",         col = 2 },
+        { key = "trade",       labelKey = "FILTER_TRADE",        tipKey = "TIP_TRADE",        col = 2 },
+        { key = "guildInvite", labelKey = "FILTER_GUILD_INVITE", tipKey = "TIP_GUILD_INVITE", col = 2 },
     }
-    local rowY = 0
     for _, row in ipairs(CHECK_ROWS) do
         local check = newCheck(choose, "SanctuaryFilter_" .. row.key,
             L[row.labelKey], L[row.tipKey],
             function() return filterStored(row.key) == true end,
             function(value) setFilter(row.key, value) end)
-        check:SetPoint("TOPLEFT", choose, "TOPLEFT", 0, rowY)
         protection.checks[row.key] = check
-        rowY = rowY - 24
-        if row.key == "groupInvite" then
-            -- The indented slot the strict box takes in this mode.
-            protection.strictSlot = rowY
-            rowY = rowY - 24
-        end
     end
 
     protection.channelsLabel = newLabel(choose, L["CHANNELS_LABEL"], FONT_BODY, C.soft)
-    protection.channelsLabel:SetPoint("TOPLEFT", choose, "TOPLEFT", 0, rowY - 6)
-    rowY = rowY - 28
     protection.channelRadios = {}
     -- Written out rather than built from the mode name: a key that only exists
     -- as a concatenation cannot be found by searching for it, and an unreachable
@@ -617,20 +691,59 @@ local function buildProtectionTab(parent)
         local radio = newRadio(choose, "SanctuaryChannel_" .. mode, L[row.labelKey], L[row.tipKey],
             function() return (filterStored("channelMode") or "none") == mode end,
             function() setFilter("channelMode", mode) end)
-        radio:SetPoint("TOPLEFT", choose, "TOPLEFT", 16, rowY)
         protection.channelRadios[mode] = radio
-        rowY = rowY - 22
     end
-    -- Measured, never guessed: a wrong constant here is a screen that fits in
-    -- the window on the developer's layout and is cut off on the real one.
-    protection.chooseHeight = -rowY
-    choose:SetHeight(protection.chooseHeight)
+
+    -- Laid out from a width rather than at a fixed one: the window resizes on
+    -- both axes now, and the two columns are the only thing on this screen that
+    -- has to share the extra pixels. Measured on the way through and never
+    -- guessed -- a wrong constant here is a screen that fits on the developer's
+    -- layout and is cut off on the real one.
+    function protection.layoutChoose(innerWidth)
+        local colWidth = (innerWidth - BLOCK_GAP) / 2
+        local colX = { 0, colWidth + BLOCK_GAP }
+        local colY = { 0, 0 }
+        for _, row in ipairs(CHECK_ROWS) do
+            local col = row.col
+            local check = protection.checks[row.key]
+            check:ClearAllPoints()
+            check:SetPoint("TOPLEFT", choose, "TOPLEFT", colX[col], colY[col])
+            colY[col] = colY[col] - ROW_HEIGHT
+            if row.key == "groupInvite" then
+                -- `.cbr.sub { padding-left:26px }` -- the indented slot the
+                -- strict box takes in this mode, kept clear whether it is
+                -- there or not.
+                protection.strictSlot = colY[col]
+                colY[col] = colY[col] - ROW_HEIGHT
+            end
+        end
+
+        protection.channelsLabel:ClearAllPoints()
+        protection.channelsLabel:SetPoint("TOPLEFT", choose, "TOPLEFT", colX[2], colY[2] - 6)
+        colY[2] = colY[2] - 28
+        for _, row in ipairs(CHANNEL_ROWS) do
+            local radio = protection.channelRadios[row.mode]
+            radio:ClearAllPoints()
+            radio:SetPoint("TOPLEFT", choose, "TOPLEFT", colX[2] + 16, colY[2])
+            colY[2] = colY[2] - 22
+        end
+
+        protection.chooseHeight = -math.min(colY[1], colY[2])
+        choose:SetSize(innerWidth, protection.chooseHeight)
+        return protection.chooseHeight
+    end
+    protection.layoutChoose(width)
 
     -- Question 3 ------------------------------------------------------------
     protection.q3Anchor = CreateFrame("Frame", nil, parent)
     protection.q3Anchor:SetSize(width, 1)
-    protection.q3Title = newLabel(parent, "3   " .. L["Q3_TITLE"], FONT_SECTION, C.accent)
-    local thirdWidth = (width - 32) / 3
+    -- Same two pieces as the questions above, but placed by the refresh rather
+    -- than here: what sits over them folds and unfolds. The title rides on the
+    -- number, so the refresh only ever moves one of the two.
+    protection.q3Number = newLabel(parent, "3", FONT_BODY, C.accent)
+    protection.q3Title = newLabel(parent, L["Q3_TITLE"], FONT_TITLE, C.ink)
+    protection.q3Title:SetPoint("TOPLEFT", protection.q3Number, "TOPRIGHT", 10, 4)
+    local thirdWidth = (width - CARD_GUTTER * 2) / 3
     protection.q3 = {}
     local Q3_ROWS = {
         { key = "silent",  titleKey = "Q3_SILENT_TITLE",  descKey = "Q3_SILENT_DESC" },
@@ -646,7 +759,9 @@ local function buildProtectionTab(parent)
     end
 
     -- Question 4 ------------------------------------------------------------
-    protection.q4Title = newLabel(parent, "4   " .. L["Q4_TITLE"], FONT_SECTION, C.accent)
+    protection.q4Number = newLabel(parent, "4", FONT_BODY, C.accent)
+    protection.q4Title = newLabel(parent, L["Q4_TITLE"], FONT_TITLE, C.ink)
+    protection.q4Title:SetPoint("TOPLEFT", protection.q4Number, "TOPRIGHT", 10, 4)
 
     local function newTile(name, titleText, onManage)
         local tile = CreateFrame("Frame", name, parent, "BackdropTemplate")
@@ -768,20 +883,19 @@ refreshTab.protection = function()
         radio:Refresh()
     end
     protection.channelsLabel:SetTextColor(unpack(blockedOnly and C.disabled or C.soft))
-    protection.q2Title:SetTextColor(unpack(blockedOnly and C.disabled or C.accent))
+    protection.q2Title:SetTextColor(unpack(blockedOnly and C.disabled or C.ink))
+    protection.q2Number:SetTextColor(unpack(blockedOnly and C.disabled or C.accent))
 
-    -- Question 1 title, its two cards, question 2 title, its two cards. Written
-    -- as the sum of what is above rather than as one number, so a change to any
-    -- of the four is visible here.
-    local y = -(24 + 90 + 24 + 84)
+    local y = CHOOSE_TOP
     if custom then
         protection.choose:Show()
         protection.choose:ClearAllPoints()
         protection.choose:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
+        protection.layoutChoose(width)
         protection.strict:ClearAllPoints()
-        protection.strict:SetPoint("TOPLEFT", protection.choose, "TOPLEFT", 16, protection.strictSlot)
+        protection.strict:SetPoint("TOPLEFT", protection.choose, "TOPLEFT", 26, protection.strictSlot)
         protection.strictNote:Hide()
-        y = y - protection.chooseHeight
+        y = y - protection.chooseHeight - 4
     else
         protection.choose:Hide()
         protection.strict:ClearAllPoints()
@@ -789,31 +903,41 @@ refreshTab.protection = function()
         protection.strictNote:ClearAllPoints()
         protection.strictNote:SetPoint("LEFT", protection.strict.label, "RIGHT", 8, 0)
         protection.strictNote:Show()
-        y = y - 30
+        y = y - ROW_HEIGHT
     end
     protection.strict:Refresh()
 
-    protection.q3Title:ClearAllPoints()
-    protection.q3Title:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
-    y = y - 24
-    local thirdWidth = (width - 32) / 3
+    -- Under the strict box in both modes: in "I choose" the strict box has gone
+    -- into the left column, and this line stays at the screen's own left margin
+    -- because it answers question 1, not question 2.
+    protection.trust:ClearAllPoints()
+    protection.trust:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
+    protection.trust:Refresh()
+    y = y - ROW_HEIGHT - BLOCK_GAP
+
+    protection.q3Number:ClearAllPoints()
+    protection.q3Number:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y - 4)
+    y = y - Q_TITLE_ROW
+    local thirdWidth = (width - CARD_GUTTER * 2) / 3
     local index = 0
     for _, key in ipairs({ "silent", "minimal", "verbose" }) do
         local card = protection.q3[key]
         card:ClearAllPoints()
-        card:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD + index * (thirdWidth + 16), y)
+        card:SetPoint("TOPLEFT", protection.frame, "TOPLEFT",
+            PAD + index * (thirdWidth + CARD_GUTTER), y)
+        card:SetWidth(thirdWidth)
         card:Refresh()
         index = index + 1
     end
-    y = y - 90
+    y = y - CARD_HEIGHT - BLOCK_GAP
 
-    protection.q4Title:ClearAllPoints()
-    protection.q4Title:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
-    y = y - 24
+    protection.q4Number:ClearAllPoints()
+    protection.q4Number:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y - 4)
+    y = y - Q_TITLE_ROW
     protection.tileAllowed:ClearAllPoints()
     protection.tileAllowed:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
     protection.tileBlocked:ClearAllPoints()
-    protection.tileBlocked:SetPoint("TOPLEFT", protection.tileAllowed, "TOPRIGHT", 16, 0)
+    protection.tileBlocked:SetPoint("TOPLEFT", protection.tileAllowed, "TOPRIGHT", CARD_GUTTER, 0)
 
     local counts = ns.getListCounts and ns.getListCounts()
         or { allowed = { total = 0, manual = 0, trust = 0, bnet = 0 }, blocked = { total = 0, names = 0, patterns = 0 } }
@@ -1024,22 +1148,13 @@ end
 
 local advanced = {}
 
+-- Advanced keeps what a person only ever opens on purpose: diagnostics, the
+-- journal's size, the minimap button and the technical line. Automatic trust
+-- left for the home screen -- it says who is allowed, which is the one question
+-- the first screen exists to answer.
 local function buildAdvancedTab(parent)
     local width = FRAME_WIDTH - PAD * 2
     local y = 0
-
-    advanced.trustSection = newSection(parent, L["ADV_TRUST_TITLE"], nil, width)
-    advanced.trustSection:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
-    y = y - 34
-    advanced.trust = newCheck(parent, "SanctuaryAutoTrust", L["FILTER_AUTO_TRUST"], nil,
-        function() return filterStored("autoTrust") == true end,
-        function(value) setFilter("autoTrust", value) end)
-    advanced.trust:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
-    y = y - 24
-    advanced.trustDesc = newLabel(parent, L["ADV_TRUST_DESC"], FONT_BODY, C.dim)
-    advanced.trustDesc:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + 26, y)
-    advanced.trustDesc:SetWidth(width - 26)
-    y = y - 40
 
     advanced.diagSection = newSection(parent, L["ADV_DIAG_TITLE"], nil, width)
     advanced.diagSection:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
@@ -1120,7 +1235,6 @@ local function buildAdvancedTab(parent)
 end
 
 refreshTab.advanced = function()
-    advanced.trust:Refresh()
     advanced.debug:Refresh()
     advanced.minimap:Refresh()
     advanced.maxInput:SetText(tostring(SanctuaryDB and SanctuaryDB.logging.maxEntries or 5000))
@@ -1166,10 +1280,14 @@ local function buildAboutTab(parent)
         string.format(L["ABOUT_GITHUB"], "github.com/VincentCassiau/Sanctuary"),
         FONT_BODY, C.dim, "CENTER")
     about.github:SetPoint("TOP", parent, "TOP", 0, y)
+    about.height = -y + 24
 end
 
+-- What it drew, like every other screen, rather than the floor: the floor is
+-- `applyHeight`'s job and applying it here as well hid the top padding's cost
+-- inside a number that was already too big.
 refreshTab.about = function()
-    return MIN_HEIGHT
+    return about.height or MIN_HEIGHT
 end
 
 -- ============================================================================
@@ -2060,15 +2178,26 @@ local function layoutTabs()
     for _, def in ipairs(visible) do
         local btn = tabButtons[def.key]
         local width = math.max(70, (#L[def.labelKey] * 8) + 20)
-        btn:SetSize(width, TAB_HEIGHT)
-        btn:ClearAllPoints()
-        btn:SetPoint("TOPLEFT", mainFrame, "BOTTOMLEFT", x, 0)
-        x = x + width + 2
         local current = (def.key == activeTab)
-        -- The current tab is flush with the frame: same fill, no top border, so
-        -- it reads as part of the window rather than as a button under it.
+        -- `.tab.on { margin-top:-2px; padding-top:6px }`: the current tab starts
+        -- TAB_LIFT higher and is that much taller, so both rows keep the same
+        -- bottom edge and the current one alone climbs over the frame's border.
+        -- That overlap is what "fusionne avec le cadre" is made of; every tab
+        -- was drawn at the same y before, so the strip read as four buttons
+        -- under the window and told nobody where they were.
+        btn:SetSize(width, current and (TAB_HEIGHT + TAB_LIFT) or TAB_HEIGHT)
+        btn:ClearAllPoints()
+        btn:SetPoint("TOPLEFT", mainFrame, "BOTTOMLEFT", x, current and TAB_LIFT or 0)
+        x = x + width + 2
         applyBackdrop(btn, current and C.panel or C.tabOff, C.border)
-        btn.label:SetTextColor(unpack(current and C.accent or C.dim))
+        btn.label:SetTextColor(unpack(current and C.ink or C.dim))
+        -- `border-top:0` on both, drawn rather than removed: a backdrop has four
+        -- sides. The current tab hides its top edge under the panel's own fill,
+        -- which is the same colour as the window above it, so the two meet with
+        -- no line between them.
+        if current then btn.merge:Show() else btn.merge:Hide() end
+        -- `box-shadow: inset 0 -2px 0 accent`.
+        if current then btn.underline:Show() else btn.underline:Hide() end
     end
 end
 
@@ -2158,7 +2287,10 @@ function ns.refreshUI()
     local height = MIN_HEIGHT
     local refresh = refreshTab[activeTab]
     if refresh then height = refresh() or MIN_HEIGHT end
-    applyHeight(height)
+    -- A screen answers with the height of what it drew, measured from its own
+    -- top edge; the top padding the tab frames are offset by is not theirs to
+    -- know about, and is added here, once.
+    applyHeight(height + PAD)
     refreshOpenPanel(true)
 end
 
@@ -2295,14 +2427,35 @@ local function createMainFrame()
     for _, def in ipairs(TAB_DEFS) do
         local frame = CreateFrame("Frame", "SanctuaryTabContent_" .. def.key, contentFrame)
         frame:SetSize(FRAME_WIDTH, MIN_HEIGHT)
-        frame:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", 0, 0)
+        -- `.content { padding:18px }`, once, for the five screens. Every screen
+        -- used to start at the very top of the content area, so the first line
+        -- of each -- "1 Qui peut vous contacter ?" among them -- was glued to
+        -- the title bar with nothing between the two. Put here rather than in
+        -- each build so no screen can be forgotten, and paid for once in
+        -- `ns.refreshUI`, which is the only place that knows what a screen asked
+        -- for.
+        frame:SetPoint("TOPLEFT", contentFrame, "TOPLEFT", 0, -PAD)
         frame:Hide()
         tabFrames[def.key] = frame
 
         local btn = CreateFrame("Button", "SanctuaryTab_" .. def.key, mainFrame, "BackdropTemplate")
         btn:SetSize(80, TAB_HEIGHT)
-        btn.label = newLabel(btn, L[def.labelKey], FONT_BODY, C.dim, "CENTER")
-        btn.label:SetPoint("CENTER")
+        btn.label = newLabel(btn, L[def.labelKey], FONT_DESC, C.dim, "CENTER")
+        -- Centred on what is left once the underline has taken its two pixels,
+        -- so the word does not sit visibly low in the current tab.
+        btn.label:SetPoint("CENTER", btn, "CENTER", 0, 1)
+        btn.merge = btn:CreateTexture(nil, "ARTWORK")
+        btn.merge:SetHeight(TAB_LIFT)
+        btn.merge:SetPoint("TOPLEFT", btn, "TOPLEFT", 1, 0)
+        btn.merge:SetPoint("TOPRIGHT", btn, "TOPRIGHT", -1, 0)
+        btn.merge:SetColorTexture(unpack(C.panel))
+        btn.merge:Hide()
+        btn.underline = btn:CreateTexture(nil, "OVERLAY")
+        btn.underline:SetHeight(TAB_LIFT)
+        btn.underline:SetPoint("BOTTOMLEFT", btn, "BOTTOMLEFT", 1, 1)
+        btn.underline:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -1, 1)
+        btn.underline:SetColorTexture(unpack(C.accent))
+        btn.underline:Hide()
         local key = def.key
         btn:SetScript("OnClick", function()
             PlaySound(SOUNDKIT.IG_CHARACTER_INFO_TAB)

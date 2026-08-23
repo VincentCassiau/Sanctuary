@@ -4309,9 +4309,19 @@ local createdWidgets = {}
 -- addon hangs on a frame (`entry.nameLabel`, `btn.label`, `dialog.which`)
 -- starts lowercase. Stubbing those too would turn `if not entry.nameLabel` into
 -- a permanently false test and quietly break the pooling logic.
+-- `SetBackdrop*` is never auto-stubbed, and that exception is the whole point:
+-- in Retail a frame created WITHOUT "BackdropTemplate" has none of the three,
+-- and `applyBackdrop` gives up in silence on a frame with no `SetBackdrop`.
+-- Auto-stubbed, they exist on every widget, so the harness accepted a backdrop
+-- the client never drew -- which is how checkboxes and radios shipped with no
+-- box at all and every test stayed green.
 local widgetMeta
 widgetMeta = {
     __index = function(t, key)
+        if key == "SetBackdrop" or key == "SetBackdropColor"
+            or key == "SetBackdropBorderColor" then
+            return nil
+        end
         if type(key) == "string" and key:match("^%u") then
             local stub = function() return nil end
             rawset(t, key, stub)
@@ -4321,11 +4331,18 @@ widgetMeta = {
     end,
 }
 
-local function newWidget(kind, name, parent)
+local function newWidget(kind, name, parent, template)
     local w = setmetatable({}, widgetMeta)
     w.__kind = kind
     w.__name = name
     w.__parent = parent
+    w.__template = template
+    -- What "BackdropTemplate" mixes in, and only when it is asked for.
+    if type(template) == "string" and template:find("BackdropTemplate", 1, true) then
+        function w:SetBackdrop(info) self.__backdrop = info end
+        function w:SetBackdropColor(r, g, b, a) self.__backdropColor = { r, g, b, a } end
+        function w:SetBackdropBorderColor(r, g, b, a) self.__backdropBorder = { r, g, b, a } end
+    end
     w.__scripts = {}
     w.__children = {}
     w.__shown = true
@@ -4345,6 +4362,11 @@ local function newWidget(kind, name, parent)
     function w:Insert(text) self.__text = (self.__text or "") .. tostring(text) end
     function w:GetStringHeight() return 12 end
     function w:GetFont() return "Fonts\\FRIZQT__.TTF", 12, "" end
+    -- Recorded rather than stubbed: what a texture is filled with, and whether
+    -- it was rounded, is exactly what "the box is invisible" and "the radio is a
+    -- square" are made of.
+    function w:SetColorTexture(r, g, b, a) self.__colorTexture = { r, g, b, a or 1 } end
+    function w:AddMaskTexture(mask) self.__mask = mask end
     function w:SetChecked(value) self.__checked = value and true or false end
     function w:GetChecked() return self.__checked and true or false end
     function w:IsShown() return self.__shown and true or false end
@@ -4380,6 +4402,15 @@ local function newWidget(kind, name, parent)
         self.__children[#self.__children + 1] = tex
         return tex
     end
+    -- A real widget method, and one the auto-stub cannot stand in for: it has to
+    -- answer an object the caller then calls `SetTexture` on. The stub answers
+    -- nil, so the round radios of the mock-up took the interface down at load
+    -- the moment they were drawn.
+    function w:CreateMaskTexture(maskName)
+        local mask = newWidget("MaskTexture", maskName, self)
+        self.__children[#self.__children + 1] = mask
+        return mask
+    end
     function w:SetScrollChild(child) self.__scrollChild = child end
     function w:GetScrollChild() return self.__scrollChild end
     function w:Click()
@@ -4394,7 +4425,7 @@ end
 
 local coreCreateFrame = CreateFrame
 function CreateFrame(frameType, name, parent, template)
-    local w = newWidget(frameType or "Frame", name, parent)
+    local w = newWidget(frameType or "Frame", name, parent, template)
     if parent and parent.__children then
         parent.__children[#parent.__children + 1] = w
     end
@@ -4607,6 +4638,113 @@ equal(diagTab:IsShown(), false, "unticking debug mode hides the diagnostics tab 
 equal(diagContent:IsShown(), false, "unticking debug mode closes the panel it was showing")
 equal(_G["SanctuaryTabContent_protection"]:IsShown(), true,
     "closing the debug panel falls back to a tab that still exists")
+
+-- ---------------------------------------------------------------------------
+-- Every box, dot and tab is actually drawn
+-- ---------------------------------------------------------------------------
+
+-- The 1.0.0 session's first finding, and the one nothing here could see: an
+-- unticked box had NO rendering at all and a ticked one was a bare blue square,
+-- because a Retail CheckButton built without "BackdropTemplate" has no
+-- `SetBackdrop` and `applyBackdrop` returns in silence. What follows asks the
+-- widgets what they were actually given, so the fill and the border are facts
+-- rather than intentions.
+--
+-- A scope of its own: the enclosing function is at Lua's ceiling of 200 locals.
+;(function()
+
+_G["SanctuaryTab_protection"]:Click()
+_G.SanctuaryQ2_custom:Click()
+
+local CHECK_BG = { 0.149, 0.149, 0.200, 1.00 }
+local CHECK_ON = { 0.302, 0.702, 1.000, 1.00 }
+
+local function sameColor(got, want)
+    if type(got) ~= "table" then return false end
+    for index = 1, 4 do
+        if math.abs((got[index] or -1) - want[index]) > 0.001 then return false end
+    end
+    return true
+end
+
+-- Every check the five screens carry, the folded ones included: "même rendu
+-- partout" is a promise about all of them, so the list is spelt out and a new
+-- box added without one is a box this test does not cover -- which is why the
+-- count is asserted too.
+local CHECKS = {
+    "SanctuaryStrictCheck", "SanctuaryAutoTrust",
+    "SanctuaryFilter_groupInvite", "SanctuaryFilter_whisper", "SanctuaryFilter_say",
+    "SanctuaryFilter_yell", "SanctuaryFilter_emote", "SanctuaryFilter_duel",
+    "SanctuaryFilter_trade", "SanctuaryFilter_guildInvite",
+    "SanctuaryJournalEnable", "SanctuaryJournalShowMessages",
+    "SanctuaryDebugCheck", "SanctuaryMinimapCheck",
+}
+for _, name in ipairs(CHECKS) do
+    local box = _G[name]
+    check(box ~= nil, name .. " exists")
+    check(box.__template ~= nil and box.__template:find("BackdropTemplate", 1, true) ~= nil,
+        name .. " is built with the template that gives a frame its backdrop")
+    check(sameColor(box.__backdropColor, CHECK_BG),
+        name .. " is filled with the mock-up's box colour, not the field colour")
+    check(box.__backdropBorder ~= nil, name .. " has a border, ticked or not")
+    check(sameColor(box.mark and box.mark.__colorTexture, CHECK_ON),
+        name .. " marks the ticked state in the mock-up's blue")
+end
+
+-- The unticked state is the one that had nothing to show. A box whose fill and
+-- border are only applied when it is ticked reads as an empty label.
+_G.SanctuaryFilter_say.get = function() return false end
+_G.SanctuaryFilter_say:Refresh()
+equal(_G.SanctuaryFilter_say.mark:IsShown(), false, "an unticked box shows no mark")
+check(sameColor(_G.SanctuaryFilter_say.__backdropColor, CHECK_BG),
+    "and is still a drawn box, which is the whole of the defect")
+
+-- The radios are round: three discs and a circular mask, never a backdrop.
+for _, mode in ipairs({ "none", "keywords", "all" }) do
+    local radio = _G["SanctuaryChannel_" .. mode]
+    check(radio ~= nil and radio.rim ~= nil and radio.fill ~= nil and radio.mark ~= nil,
+        "the " .. mode .. " radio is drawn as a rim, a fill and a dot")
+    equal(radio.__backdropColor, nil, "and never as a square backdrop")
+    check(radio.mark.__mask ~= nil, "its dot is rounded by a mask")
+    equal(radio:GetWidth(), 18, "and it is the same 18 px as a checkbox")
+end
+_G.SanctuaryChannel_keywords:Click()
+equal(_G.SanctuaryChannel_keywords.mark:IsShown(), true, "the picked channel shows its dot")
+equal(_G.SanctuaryChannel_none.mark:IsShown(), false, "and the others do not")
+check(sameColor(_G.SanctuaryChannel_keywords.rim.__colorTexture, { 0.4, 0.6, 1.0, 1.0 }),
+    "the picked radio's rim answers too")
+_G.SanctuaryChannel_none:Click()
+
+-- The tab strip: the current tab merges with the frame and the others sit under
+-- it. All four were drawn at the same height with the same fill, so the strip
+-- said nothing about where one was.
+local function tabState(key)
+    local tab = _G["SanctuaryTab_" .. key]
+    return tab:GetHeight(), tab.underline:IsShown(), tab.merge:IsShown()
+end
+local currentHeight, currentUnderline, currentMerge = tabState("protection")
+local otherHeight, otherUnderline, otherMerge = tabState("journal")
+check(currentHeight > otherHeight, "the current tab is taller than the others")
+equal(currentUnderline, true, "it carries the two-pixel underline")
+equal(currentMerge, true, "and hides its top edge under the panel's own fill")
+equal(otherUnderline, false, "a tab that is not current has no underline")
+equal(otherMerge, false, "and keeps its top edge")
+_G["SanctuaryTab_journal"]:Click()
+local _, journalUnderline = tabState("journal")
+local _, protectionUnderline = tabState("protection")
+equal(journalUnderline, true, "changing screen moves the underline")
+equal(protectionUnderline, false, "and takes it off the one left behind")
+_G["SanctuaryTab_protection"]:Click()
+
+-- Automatic trust left Advanced for the home screen, decision 103.
+check(_G.SanctuaryAutoTrust:GetParent() == _G.SanctuaryTabContent_protection,
+    "automatic trust is a row on the home screen")
+_G.SanctuaryAutoTrust:Click()
+equal(SanctuaryDB.filters.autoTrust, true, "and it still writes its own key")
+_G.SanctuaryAutoTrust:Click()
+equal(SanctuaryDB.filters.autoTrust, false, "both ways")
+
+end)()
 
 -- ---------------------------------------------------------------------------
 -- Question 1: the mode switch, and what it greys out
