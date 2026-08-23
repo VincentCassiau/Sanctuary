@@ -1036,8 +1036,10 @@ local ensureWhitelistCache
 
 -- "Which Battle.net account is playing this character". Attribution only: it
 -- names the account behind a character on screen -- the tester's answer and the
--- allowed panel's line -- and decides nothing. Nothing in the blocked path calls
--- it (see the Battle.net invariant next to `bnetWhisperFilter`).
+-- allowed panel's line -- and decides nothing. The blocked path asks its own
+-- question, `bnetAccountBlockingCharacter` just below, and asks it more strictly
+-- than this: a wrong answer here mislabels a line, a wrong answer there refuses
+-- somebody the right to block their harasser.
 --
 -- Two lookups, stopping at the first hit:
 --
@@ -1066,6 +1068,46 @@ local function bnetAccountForCharacter(name)
     if bareKey and bareKey ~= fullKey then
         local account = map[bareKey]
         if account then return account end
+    end
+
+    return nil
+end
+
+-- "Is this character a Battle.net friend's, closely enough to refuse to block
+-- them" -- decision 100, the panel's sentence, and `ns.addBlocked`'s second
+-- gate. Deliberately not the function above.
+--
+-- Attribution can afford to guess: crediting a stranger's character to a friend
+-- puts the wrong name on one line of a panel. Refusing cannot. Asked with the
+-- tolerant lookup, a harasser who merely shares a pseudo with a friend's
+-- character -- on ANOTHER realm -- could not be blocked at all, neither in the
+-- field nor from the right-click menu, and the add-on answered with the
+-- Battle.net sentence, naming a person the player has never met. That is the
+-- residual same-name cross-realm risk PROJECT_MEMORY records; the realm was the
+-- way out of it, and closing that door left no way out at all.
+--
+-- So the realm-qualified key first and always -- the one shape that tells two
+-- namesakes apart -- and the bare pseudo only when the roster never gave a realm
+-- for that character, which is exactly what step 2 above exists to cover (an
+-- offline friend, a name handed over without its realm). Still failing open: a
+-- roster that has not answered yet knows nobody and refuses nobody.
+local function bnetAccountBlockingCharacter(name)
+    local map = Sanctuary.bnetAccountByCharacter
+    if map then
+        local fullKey = normalizeBlockedKey(name)
+        if fullKey then
+            local account = map[fullKey]
+            if account then return account end
+        end
+    end
+
+    local unrealmed = Sanctuary.bnetAccountByCharacterNoRealm
+    if unrealmed then
+        local bareKey = normalizeName(name)
+        if bareKey then
+            local account = unrealmed[bareKey]
+            if account then return account end
+        end
     end
 
     return nil
@@ -1166,6 +1208,11 @@ Sanctuary.bnetWhitelistLabels = {}
 -- name tester resolve an account from a character and back.
 Sanctuary.bnetCharacterByAccount = {}
 Sanctuary.bnetAccountByCharacter = {}
+-- The realm-less half of that map, kept apart on purpose: the characters the
+-- roster named without a realm, and only those. `bnetAccountBlockingCharacter`
+-- is the one reader -- see the comment there for why refusing needs a stricter
+-- map than attributing does.
+Sanctuary.bnetAccountByCharacterNoRealm = {}
 -- The same character, spelled for a reader instead of for a lookup: the realm
 -- is what tells two namesakes apart in a key, and noise on a panel line.
 Sanctuary.bnetCharacterDisplayByAccount = {}
@@ -1225,16 +1272,31 @@ local function rebuildWhitelist()
     -- place. Both break a product rule, so an ambiguous key resolves to nobody
     -- and the "Name-Realm" keys, which stay distinct, keep answering.
     local accountKeyByCharacter = {}
-    local function noteAccountForCharacter(key, accountName, accountKey)
+    local function noteAccountInto(store, held, key, accountName, accountKey)
         if not key or not accountName or not accountKey then return end
-        local held = accountKeyByCharacter[key]
-        if held == nil then
-            accountKeyByCharacter[key] = accountKey
-            accountByCharacter[key] = accountName
-        elseif held ~= accountKey then
-            accountKeyByCharacter[key] = false
-            accountByCharacter[key] = nil
+        local seen = held[key]
+        if seen == nil then
+            held[key] = accountKey
+            store[key] = accountName
+        elseif seen ~= accountKey then
+            held[key] = false
+            store[key] = nil
         end
+    end
+    local function noteAccountForCharacter(key, accountName, accountKey)
+        noteAccountInto(accountByCharacter, accountKeyByCharacter,
+            key, accountName, accountKey)
+    end
+
+    -- The same record, restricted to the characters the roster named without a
+    -- realm. Same collision rule, its own store: `bnetAccountBlockingCharacter`
+    -- reads it to know when a bare pseudo is all there ever was, rather than
+    -- treating every bare pseudo as if it were.
+    local accountByCharacterNoRealm = {}
+    local accountKeyByCharacterNoRealm = {}
+    local function noteUnrealmedCharacter(key, accountName, accountKey)
+        noteAccountInto(accountByCharacterNoRealm, accountKeyByCharacterNoRealm,
+            key, accountName, accountKey)
     end
 
     local function noteSource(store, labelStore, key, source, displayName)
@@ -1378,6 +1440,12 @@ local function rebuildWhitelist()
                         if bareKey ~= fullKey then
                             noteAccountForCharacter(bareKey, info.accountName, accountKey)
                         end
+                        -- No realm anywhere for this character: the bare key is
+                        -- everything the roster gave, so it is the only key a
+                        -- refusal can honestly be built on for this friend.
+                        if not fullKey then
+                            noteUnrealmedCharacter(bareKey, info.accountName, accountKey)
+                        end
                     end
                 end
             end
@@ -1420,6 +1488,7 @@ local function rebuildWhitelist()
     Sanctuary.bnetCharacterByAccount = characterByAccount
     Sanctuary.bnetCharacterDisplayByAccount = characterDisplayByAccount
     Sanctuary.bnetAccountByCharacter = accountByCharacter
+    Sanctuary.bnetAccountByCharacterNoRealm = accountByCharacterNoRealm
     Sanctuary.whitelistDirty = false
 
     if SanctuaryDB and SanctuaryDB.debugEnabled then
@@ -2090,13 +2159,14 @@ function ns.addBlocked(name, source)
     -- si ami Battle.net)" -- a sentence that states the rule and breaks it in
     -- the same breath.
     --
-    -- Asked of the map `rebuildWhitelist` records, through the one function that
-    -- answers "which account is playing this character". It fails open: a roster
-    -- that has not answered yet knows nobody, so nothing legitimate is refused
-    -- on a stale cache -- the wrong way round would be an add-on that will not
-    -- let somebody block their harasser.
+    -- Asked of `bnetAccountBlockingCharacter`, not of the tolerant attribution
+    -- lookup: on the realm-qualified key, and on the bare pseudo only when the
+    -- roster never gave that character a realm. See the comment there. It fails
+    -- open: a roster that has not answered yet knows nobody, so nothing
+    -- legitimate is refused on a stale cache -- the wrong way round would be an
+    -- add-on that will not let somebody block their harasser.
     ns.ensureWhitelist()
-    if bnetAccountForCharacter(clean) then return false, nil, nil, "account" end
+    if bnetAccountBlockingCharacter(clean) then return false, nil, nil, "account" end
     local key = normalizeBlockedKey(clean)
     if not key then return false, nil, nil, "name" end
     SanctuaryDB.blockedNames = SanctuaryDB.blockedNames or {}

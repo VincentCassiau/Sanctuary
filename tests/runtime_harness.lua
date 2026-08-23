@@ -3640,13 +3640,47 @@ do
     local ok, _, _, refusal = ns.addBlocked("Bnetchar-Ysondre", "menu")
     equal(ok, false, "the character a Battle.net friend plays cannot be blocked")
     equal(refusal, "account", "and is answered with the Battle.net sentence")
-    -- The bare name, the way the right-click menu hands it over on your realm.
-    equal(select(4, ns.addBlocked("Bnetchar")), "account",
-        "with or without the realm on it")
     equal(SanctuaryDB.blockedNames[ns.normalizeBlockedKey("Bnetchar-Ysondre")], nil,
         "and nothing is written")
     equal(ns.classifyName("Bnetchar-Ysondre").verdict, "always_allowed",
         "so the friend stays allowed")
+end
+
+-- That refusal is keyed on the realm, and a namesake on another one keeps a way
+-- out. Asked on the bare pseudo, it answered for every realm at once: a harasser
+-- who merely happens to be called like a friend's character could be blocked
+-- nowhere -- not in the field, not from the right-click menu -- and read the
+-- Battle.net sentence naming somebody he has never met. The residual same-name
+-- cross-realm risk PROJECT_MEMORY records; the realm was the way out of it, and
+-- closing that door left none.
+do
+    local ok, key, _, refusal = ns.addBlocked("Bnetchar-Hyjal")
+    equal(ok, true, "a namesake of a friend's character, on another realm, is blockable")
+    equal(refusal, nil, "with no Battle.net sentence in the way")
+    equal(ns.classifyName("Bnetchar-Hyjal").verdict, "always_blocked",
+        "and the entry does block him")
+    equal(ns.classifyName("Bnetchar-Ysondre").verdict, "always_allowed",
+        "while the friend, on his own realm, is untouched")
+    equal(select(1, ns.removeBlocked(key)), true, "removed again")
+    ns.invalidateWhitelist()
+end
+
+-- The friend the roster names without a realm: a bare pseudo is all it ever
+-- gave, so the bare pseudo is what a refusal can honestly answer on -- the case
+-- step 2 of the attribution lookup exists for, kept exactly as it was.
+do
+    local savedFriends = bnetFriends
+    bnetFriends = {
+        { accountName = "No Realm#9999", bnetAccountID = 93,
+          gameAccountInfo = { characterName = "Norealmchar" } },
+    }
+    ns.invalidateWhitelist()
+    equal(select(4, ns.addBlocked("Norealmchar")), "account",
+        "a friend the roster gave no realm for is refused on his bare pseudo")
+    equal(select(4, ns.addBlocked("Norealmchar-Hyjal")), "account",
+        "and on whatever realm somebody spells after it")
+    bnetFriends = savedFriends
+    ns.invalidateWhitelist()
 end
 
 -- A settings file inherited from before that refusal still holds such an entry.
