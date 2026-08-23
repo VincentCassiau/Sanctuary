@@ -2911,6 +2911,51 @@ equal(ns.normalizeBlockedKey("Mixed-Conseil des Ombres"), "mixed-conseildesombre
 equal(ns.normalizeBlockedKey("Mixed-Kil'jaeden"), "mixed-kiljaeden",
     "and one written with an apostrophe without it")
 
+-- C2c -- what the field invites ("Name or Name-Realm"), typed by a keyboard
+-- under pressure. The hyphen left under the fingers and the space typed instead
+-- of it used to build keys no event in the game ever produces --
+-- "toto--testrealm", "totoysondre-testrealm". Those entries showed in the panel,
+-- counted in the tile and armed the guards, and blocked nobody: the person
+-- typing a harasser's name was told nothing and protected from nothing.
+--
+-- One invariant, never anything in between: either nothing is written at all, or
+-- the entry blocks the character it names -- under the spelling that was typed
+-- AND under its canonical one.
+resetModelState()
+for _, case in ipairs({
+    { typed = "Toto-",                canonical = "Toto-TestRealm" },
+    { typed = "-Toto",                canonical = "Toto-TestRealm" },
+    { typed = "Toto Ysondre",         canonical = "Toto-Ysondre" },
+    { typed = "Toto - Ysondre",       canonical = "Toto-Ysondre" },
+    { typed = "Toto-Les Sentinelles", canonical = "Toto-LesSentinelles" },
+    { typed = "Toto-Azjol-Nerub",     canonical = "Toto-AzjolNerub" },
+}) do
+    wipe(SanctuaryDB.blockedNames)
+    ns.invalidateWhitelist()
+    local before = ns.getListCounts().blocked.names
+    local added = ns.addBlocked(case.typed)
+    local after = ns.getListCounts().blocked.names
+    if added then
+        equal(after, before + 1, "\"" .. case.typed .. "\" makes one entry")
+        equal(ns.classifyName(case.typed).verdict, "always_blocked",
+            "and it blocks the character it was typed for")
+        equal(ns.classifyName(case.canonical).verdict, "always_blocked",
+            "as well as that character written out \"" .. case.canonical .. "\"")
+    else
+        equal(after, before, "\"" .. case.typed .. "\" was refused and wrote nothing")
+    end
+end
+
+-- Nothing but separators is nobody: refused outright, so no line the game can
+-- never match reaches the panel.
+for _, typed in ipairs({ "-", " - ", "--" }) do
+    wipe(SanctuaryDB.blockedNames)
+    ns.invalidateWhitelist()
+    equal(select(1, ns.addBlocked(typed)), false,
+        "\"" .. typed .. "\" is not a name and is refused")
+    equal(ns.getListCounts().blocked.names, 0, "leaving nothing behind")
+end
+
 -- C3 -- "everyone except the people I block".
 resetModelState()
 guildMembers = { "Mate-TestRealm" }

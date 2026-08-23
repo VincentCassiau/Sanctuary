@@ -686,6 +686,41 @@ ns.isFilterOn = isFilterOn
 ns.getScope = getScope
 ns.getPreset = getPreset
 
+-- ----------------------------------------------------------------------------
+-- Where a pseudo ends and a realm begins -- one rule, one place
+-- ----------------------------------------------------------------------------
+
+-- A WoW character name carries neither a space nor a hyphen, so the first of the
+-- two separates the pseudo from the realm; the realm may hold more of them and
+-- keeps them until `normalizeRealm` folds them away. Answers the two halves,
+-- pseudo lower-cased, realm exactly as it was handed over (nil when there is
+-- none).
+--
+-- Leading and trailing separators go first. "Toto-" is the hyphen left under the
+-- fingers, not a realm: read literally it used to build the key "toto--testrealm",
+-- an entry no event in the game can ever produce. And the space is a separator
+-- for the same reason the hyphen is -- "Toto Ysondre" used to be squashed into
+-- the single pseudo "totoysondre", keyed "totoysondre-testrealm", when it plainly
+-- names a character on Ysondre.
+--
+-- Both entries showed up in the panel, counted in the tile and armed the guards,
+-- and blocked nobody: somebody typing a harasser's name under pressure was told
+-- nothing and protected from nothing.
+--
+-- Answers nil when nothing usable is left ("-", " - "), and every caller refuses
+-- the input rather than inventing an entry for it.
+local function splitCharacterName(name)
+    local clean = stripWoWFormatting(name)
+    if not clean then return nil end
+    clean = clean:gsub("^[%s%-]+", ""):gsub("[%s%-]+$", "")
+    if clean == "" then return nil end
+    local namePart, realmPart = clean:match("^([^%s%-]+)[%s%-](.*)$")
+    if not namePart then namePart = clean end
+    namePart = namePart:lower()
+    if namePart == "" then return nil end
+    return namePart, realmPart
+end
+
 -- Keyword blacklist: blocks names containing any suspect keyword.
 -- Private on purpose since 0.4.0: isAlwaysBlocked is the only caller, so a
 -- pattern and an exact blocked name can never be tested by different code.
@@ -726,22 +761,18 @@ end
 -- what WoW itself shows in an invite box when the other player shares it -- so
 -- the key says which realm rather than standing for all of them at once.
 --
--- A character name never contains a hyphen, so the first one splits the name
--- from the realm; the realm may hold more of them, and keeps them until
--- `normalizeRealm` strips them.
+-- Where the two halves come from is `splitCharacterName`, the one rule the
+-- pattern test shares: a key and a pattern can never disagree about where a
+-- pseudo ends. An entry it refuses -- nothing left but separators -- has no key,
+-- so `ns.addBlocked` answers false and writes nothing.
 --
 -- Answers nil while the player's realm is still unknown, which is only true
 -- before the world is entered: no invitation, whisper or name test reaches this
 -- code that early, and a key invented then would be an entry no later lookup
 -- could match.
 local function normalizeBlockedKey(name)
-    local clean = stripWoWFormatting(name)
-    if not clean then return nil end
-    clean = clean:gsub("%s", "")
-    local namePart, realmPart = clean:match("^([^%-]+)%-(.+)$")
-    if not namePart then namePart = clean end
-    namePart = namePart:lower()
-    if namePart == "" then return nil end
+    local namePart, realmPart = splitCharacterName(name)
+    if not namePart then return nil end
     local realm = normalizeRealm(realmPart) or normalizeRealm(getPlayerRealm())
     if not realm then return nil end
     return namePart .. "-" .. realm
