@@ -4771,7 +4771,7 @@ check(rendered:find(ns.L["WL_GROUP_NOTE"], 1, true) ~= nil,
     "and the current group is a line, not a list")
 -- The Battle.net rule is on screen where somebody would look for a way to cut
 -- one of them off, folded group or not.
-check(rendered:find(ns.L["WL_BNET_HINT"], 1, true) ~= nil,
+check(rendered:find(ns.L["BNET_NOT_BLOCKED"], 1, true) ~= nil,
     "the Battle.net group says Sanctuary never blocks on Battle.net")
 
 -- Unfolding shows "Character . Account" for a connected friend, and the account
@@ -4966,7 +4966,7 @@ check(blockedPanel ~= nil and blockedPanel:IsShown(), "the blocked panel opens")
 check(panelRowTexts(blockedPanel):find("Xxxxxxx-Ysondre", 1, true) ~= nil,
     "it lists the blocked names")
 check(panelRowTexts(blockedPanel):find("test", 1, true) ~= nil, "and the patterns")
-check(panelRowTexts(blockedPanel):find(ns.L["PANEL_BLOCKED_BNET"], 1, true) ~= nil,
+check(panelRowTexts(blockedPanel):find(ns.L["BNET_NOT_BLOCKED"], 1, true) ~= nil,
     "and says a Battle.net friend cannot be blocked from here")
 
 _G.SanctuaryBlockedAddInput:SetText("Toto")

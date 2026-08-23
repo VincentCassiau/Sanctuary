@@ -1489,7 +1489,7 @@ local AUTO_GROUP_LABELS = {
 -- that has to be said where somebody would go looking to block one of them.
 local AUTO_GROUP_HINTS = {
     trust = "WL_TRUST_HINT",
-    bnet = "WL_BNET_HINT",
+    bnet = "BNET_NOT_BLOCKED",
 }
 
 local function refreshAllowedPanel(force)
@@ -1668,7 +1668,7 @@ local function buildBlockedPanel()
     -- Said here, where somebody types a name in: the blocked list holds WoW
     -- characters, and Battle.net is cut in Battle.net. Without the line the only
     -- way to learn it is to add a friend's account and watch nothing happen.
-    panel.bnetNote = newLabel(child, L["PANEL_BLOCKED_BNET"], FONT_BODY, C.dim)
+    panel.bnetNote = newLabel(child, L["BNET_NOT_BLOCKED"], FONT_BODY, C.dim)
     panel.bnetNote:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -32)
     panel.bnetNote:SetWidth(PANEL_WIDTH - 40)
 
