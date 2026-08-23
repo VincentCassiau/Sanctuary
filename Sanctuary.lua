@@ -2833,9 +2833,23 @@ local function systemMessageFilter(self, event, msg, ...)
     return shouldBlock
 end
 
+-- Forward declaration: "am I the sender" is defined further down, with the realm
+-- rule it shares with the blocked list, and the whisper filter needs it too.
+-- `local isSelf` down there would leave this one nil and hand `whisperFilter` a
+-- nil global -- the same shadowing trap `splitCharacterName` carries a note
+-- about.
+local isSelf
+
 -- Whisper filter (P1 — active if setting enabled)
 local function whisperFilter(self, event, msg, sender, ...)
     if not isEnabled() then return false end
+    -- Whispering yourself is a real thing people do -- a note, a link kept for
+    -- later -- and it arrives as a CHAT_MSG_WHISPER whose sender is the player.
+    -- This line was on the six other character filters and missing here alone,
+    -- so a player who had blocked their own name, or who fell under one of their
+    -- own patterns, saw their note vanish. Nothing Sanctuary does may touch what
+    -- the player says to themselves.
+    if isSelf(sender) then return false end
 
     if isAlwaysBlocked(sender) then return true end
     if isFilterOn("whisper") ~= true then return false end
@@ -2869,10 +2883,13 @@ local function bnetWhisperFilter(self, event, msg, sender, ...)
     return true
 end
 
-local isSelf
 do
--- Never filter the player's own public messages. Realm information is honored
--- when present so a same-named player on another realm is not mistaken for self.
+-- Never filter the player's own messages, public or whispered to themselves.
+-- Realm information is honored when present so a same-named player on another
+-- realm is not mistaken for self.
+--
+-- Assigns the forward local declared above `whisperFilter`: no `local` on this
+-- line, or that filter loses it.
 isSelf = function(sender)
     local clean = stripWoWFormatting(sender)
     if not clean then return false end
