@@ -2074,6 +2074,80 @@ do
     ns.invalidateWhitelist()
 end
 
+-- And the other way of being blocked: a PATTERN. The ticker's own guard asks
+-- `ns.findBlockedKey`, which reads `SanctuaryDB.blockedNames` and nothing else,
+-- so somebody caught by "toxic" walked straight past it: five minutes in the
+-- group wrote him into "Toujours autorises" with source "trust", the tile
+-- counted him and the panel listed him, while `classifyName` went on answering
+-- always_blocked/keyword. One person on both lists at once, which is the pair
+-- decision 104 exists to make impossible -- the same symptom as the two cases
+-- above, through the door they did not close.
+--
+-- Both realm shapes, because that is the other half of what the guard has to
+-- survive: the player's own realm and somebody else's, which is what a dungeon
+-- group is made of. And a member the pattern does not catch stands beside them
+-- as the witness: refusing everything would hold the invariant too, and kill the
+-- feature without a single test noticing.
+do
+    inGroup = true
+    groupMembers = { "Toxichome-TestRealm", "Toxicguy-Hyjal", "Cleanmate-Hyjal" }
+    fire("GROUP_ROSTER_UPDATE")
+    check(SanctuaryCharDB.groupTracker["Toxichome-TestRealm"] ~= nil,
+        "a member on the player's realm is tracked")
+    check(SanctuaryCharDB.groupTracker["Toxicguy-Hyjal"] ~= nil,
+        "a member on another realm is tracked")
+    check(SanctuaryCharDB.groupTracker["Cleanmate-Hyjal"] ~= nil,
+        "and so is the member no pattern catches")
+
+    check(ns.addPattern("toxic"), "a pattern is added instead of an exact name")
+    equal(ns.classifyName("Toxichome-TestRealm").list, "keyword",
+        "it blocks the member on the player's realm")
+    equal(ns.classifyName("Toxicguy-Hyjal").list, "keyword",
+        "and the one on another realm, before the group timer")
+
+    local trustBefore = ns.getListCounts().allowed.trust
+    -- Aged through whatever key the tracker chose, so this measures the ticker's
+    -- decision and not the harness's idea of the key.
+    for trackedKey in pairs(SanctuaryCharDB.groupTracker) do
+        SanctuaryCharDB.groupTracker[trackedKey] = now - 1000
+    end
+    runTickers()
+    equal(SanctuaryDB.manualWhitelist.toxichome, nil,
+        "five minutes do not write a pattern-blocked member into the allowed list")
+    equal(SanctuaryDB.manualWhitelist.toxicguy, nil,
+        "nor the same case on another realm")
+    ns.invalidateWhitelist()
+    local toxicHome = ns.classifyName("Toxichome-TestRealm")
+    equal(toxicHome.verdict, "always_blocked", "he is still blocked after the ticker")
+    equal(toxicHome.list, "keyword", "on the pattern, not on trust")
+    local toxicAway = ns.classifyName("Toxicguy-Hyjal")
+    equal(toxicAway.verdict, "always_blocked", "and so is the cross-realm one")
+    equal(toxicAway.list, "keyword", "on the pattern too")
+    equal(SanctuaryCharDB.groupTracker["Toxicguy-Hyjal"], nil,
+        "the tracker drops them rather than weighing them again every 30 s")
+
+    -- The witness. Without it this whole block would pass on a correction that
+    -- simply stopped granting trust to anybody.
+    check(SanctuaryDB.manualWhitelist.cleanmate ~= nil,
+        "the member no pattern catches still earns his automatic trust")
+    equal(SanctuaryDB.manualWhitelist.cleanmate.source, "trust",
+        "recorded as trust, like any other automatically trusted contact")
+    equal(ns.getListCounts().allowed.trust, trustBefore + 1,
+        "and the automatic-trust tile counts him and nobody else")
+
+    -- The refusal is the ticker's alone: a name typed by hand, or allowed from
+    -- the right-click menu, keeps the behaviour it had -- the pattern still wins
+    -- the decision, but the entry is written and the panel shows it.
+    equal(select(1, ns.addAllowed("Toxicguy-Hyjal")), true,
+        "the same name added by hand is not refused")
+    ns.removeAllowed("toxicguy")
+
+    ns.removePattern("toxic")
+    ns.removeAllowed("cleanmate")
+    groupMembers = { "Dungeonmate-TestRealm" }
+    ns.invalidateWhitelist()
+end
+
 -- Closing a blocked whisper tab must not close unrelated non-whitelisted tabs.
 ChatFrame1 = { chatType = "WHISPER", chatTarget = "Blocked" }
 ChatFrame2 = { chatType = "WHISPER", chatTarget = "OtherUnknown" }

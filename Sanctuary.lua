@@ -2073,6 +2073,28 @@ function ns.addAllowed(name, source)
     local key = ns.findAllowedKey(clean)
     -- Something was typed and nothing usable is left of it -- "-", " - ".
     if not key then return false, nil, nil, "name" end
+    -- Automatic trust never writes over the always-blocked door, decision 104.
+    -- The guard stands here, at the one write every path goes through, and not
+    -- beside the ticker that calls it: the ticker asks `findBlockedKey`, which
+    -- reads `blockedNames` and nothing else, so somebody blocked by a PATTERN
+    -- went on being written into "Toujours autorises" with source "trust" --
+    -- counted in the tile, listed on the allowed panel -- while `classifyName`
+    -- went on answering always_blocked/keyword. One person on both lists at once
+    -- is what decision 104 exists to end, and the list of ways to be blocked is
+    -- not this function's business to keep in step.
+    --
+    -- `isAlwaysBlocked` for that reason: it is the gate every decision path asks
+    -- first, it covers both ways of being blocked, and it answers on whatever
+    -- realm form the tracker hands over.
+    --
+    -- Restricted to source "trust", so the two hand gestures keep their exact
+    -- behaviour: a name typed into "Toujours autorises", or allowed from the
+    -- right-click menu, still displaces the blocked entry and still offers the
+    -- Annuler that puts the whole gesture back. What is refused here is the
+    -- write nobody asked for and nobody sees.
+    if source == "trust" and isAlwaysBlocked(clean) then
+        return false, key, nil, "blocked"
+    end
     SanctuaryDB.manualWhitelist = SanctuaryDB.manualWhitelist or {}
     if SanctuaryDB.manualWhitelist[key] then
         return false, key, SanctuaryDB.manualWhitelist[key]
@@ -6461,6 +6483,15 @@ C_Timer.NewTicker(30, function()
             -- that keyed the tracker on the bare pseudo still reads as one --
             -- the player's own realm, as it always did -- and the next roster
             -- update replaces it with the qualified form.
+            --
+            -- What holds the invariant is no longer this line, though: it asks
+            -- `findBlockedKey`, which reads the exact names alone, and somebody
+            -- caught by a pattern walked past it. `ns.addAllowed` refuses a
+            -- source-"trust" write on everything the always-blocked door answers
+            -- for, patterns included, so the rule now lives at the write itself.
+            -- This test is kept for what it costs -- a lookup instead of a
+            -- write -- and because it says out loud, here, what this ticker will
+            -- not do.
             if not ns.findBlockedKey(name) then
                 -- Goes through the same write the panel and the right-click
                 -- menu use, so an automatically trusted contact is an entry
