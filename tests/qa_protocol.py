@@ -18,7 +18,7 @@ import sys
 
 PROTOCOL_ID = "sanctuary-1.0.0"
 
-# Seven phases, so the CLI can say "phase 3 / 7" instead of "step 9 / 17". A
+# Seven phases, so the CLI can say "phase 3 / 7" instead of "step 9 / 21". A
 # person playing a session needs to know where they are, not how far they have
 # counted.
 PHASES = {
@@ -122,6 +122,43 @@ STEPS = [
         obligatoire=False, marqueurs=[],
     ),
     dict(
+        id="D.7", phase=3, kind="play",
+        titre="Les trois refus de saisie",
+        action="Ouvrir « Gerer » sur la tuile Toujours bloques. Dans le champ "
+               "Pseudos : taper « - » et cliquer Ajouter, puis retaper « - » et "
+               "valider avec Entree ; coller « Truc#1234 » et faire de meme, une "
+               "fois au bouton, une fois a Entree. Dans le champ Patterns : "
+               "taper « to.to », une fois au bouton, une fois a Entree. Laisser "
+               "la phrase s'effacer entre deux essais.",
+        attendu="Une phrase orange sous le champ concerne, et sous lui seul : "
+                "« Un pseudo s'ecrit Pseudo ou Pseudo-Royaume » pour « - », la "
+                "phrase Battle.net pour « Truc#1234 », « Un pattern est un texte "
+                ": des lettres seulement » pour « to.to ». Chaque phrase est "
+                "entiere, lisible, ne recouvre pas les etiquettes du dessous ; "
+                "rien d'autre ne bouge a l'ecran quand elle apparait ou "
+                "s'efface ; elle part seule au bout de quelques secondes. Le "
+                "champ se vide et aucune etiquette n'est ajoutee. Le bouton et "
+                "la touche Entree donnent le meme resultat.",
+        echec_si="Une phrase tronquee, une phrase qui recouvre les etiquettes, "
+                 "une phrase sous le mauvais champ, la liste qui saute quand "
+                 "elle apparait, une phrase qui reste, ou une difference entre "
+                 "le bouton et Entree.",
+        obligatoire=True, marqueurs=[],
+    ),
+    dict(
+        id="D.8", phase=3, kind="play",
+        titre="La phrase Battle.net, aux deux endroits",
+        action="Lire la ligne sous la description dans Toujours bloques, puis "
+               "ouvrir « Gerer » sur Toujours autorises et deplier « Amis "
+               "Battle.net » pour lire la ligne sous l'en-tete du groupe.",
+        attendu="La meme phrase aux deux endroits, mot pour mot, en francais, "
+                "entiere et non tronquee : « Sanctuary ne bloque pas les amis "
+                "Battle.net. Faites-le directement sur Battle.net. »",
+        echec_si="Deux formulations differentes, une phrase en anglais, ou une "
+                 "phrase coupee a l'un des deux endroits.",
+        obligatoire=True, marqueurs=[],
+    ),
+    dict(
         id="B.1", phase=4, kind="play",
         titre="Le rapport",
         action="Onglet Avance : cocher le mode debug, cliquer « Vider le debug » "
@@ -193,6 +230,18 @@ STEPS = [
         obligatoire=True, marqueurs=["chatOutputNoMatch"],
     ),
     dict(
+        id="F.4", phase=5, kind="play",
+        titre="Se chuchoter a soi-meme",
+        action="Ouvrir un onglet de chuchotement dedie avec soi-meme, puis taper "
+               "/w <son propre pseudo> note. Regarder ensuite l'onglet Journal.",
+        attendu="La ligne s'affiche comme un chuchotement ordinaire, l'onglet de "
+                "chuchotement reste ouvert, aucune ligne « Bloque » n'apparait "
+                "dans le chat, et le Journal ne gagne aucune entree.",
+        echec_si="La ligne manque, l'onglet de chuchotement se ferme, une ligne "
+                 "« Bloque » apparait, ou une entree arrive au Journal.",
+        obligatoire=True, marqueurs=[],
+    ),
+    dict(
         id="F.2", phase=6, kind="play",
         titre="Donjon et masquage en instance",
         action="Entrer seul dans un vieux donjon. Cocher « Filtrage renforce en "
@@ -247,6 +296,19 @@ STEPS = [
                "dans Toujours bloques ni dans Toujours autorises.",
         attendu="Les deux listes sont dans l'etat ou vous les vouliez.",
         echec_si="Une donnee de test reste dans une liste.",
+        obligatoire=True, marqueurs=[],
+    ),
+    dict(
+        id="G.4", phase=7, kind="play",
+        titre="La version affichee",
+        action="Onglet A propos : lire la ligne de version. La comparer a la "
+               "ligne « Protocole ... -- build ... » que le runner a affichee au "
+               "demarrage de la session.",
+        attendu="A propos affiche la version 1.0.0, et le runner a annonce le "
+                "protocole « sanctuary-1.0.0 ». Le compte rendu final reprendra "
+                "les deux.",
+        echec_si="A propos affiche une autre version, ou le protocole annonce "
+                 "n'est pas sanctuary-1.0.0.",
         obligatoire=True, marqueurs=[],
     ),
     dict(
