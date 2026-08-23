@@ -3464,14 +3464,26 @@ equal(ns.classifyName("Kadaj-Ysondre").verdict, "always_allowed",
     "an entry goes on answering for the realm it was written on")
 check(ns.classifyName("Kadaj-TestRealm").verdict ~= "always_allowed",
     "and does not follow the player onto the realm they are on now")
--- Not asked of the bare "Kadaj" here, and the reason is written down rather than
--- passed over: a manual entry also feeds the Battle.net ACCOUNT cache from its
--- display name -- that is how a one-word account name typed in this field lets
--- its whispers through -- and a bare display name lands there as a bare key,
--- which `classifyName` answers on. So after a transfer a bare name still finds
--- that account entry. Out of this lot on purpose: the brief freezes the
--- Battle.net half ("comportement et textes inchanges"), and the fix is a
--- decision about what a one-word entry means, not a key shape.
+-- The bare name is the one that has to be asked, because the account cache is
+-- the back door onto this decision: a manual CHARACTER entry feeds that cache
+-- from its display name -- that is how a one-word account name typed in this
+-- field lets its whispers through -- and a bare display name lands there under
+-- a bare key. Read by `classifyName`, that key answered for "Kadaj" on every
+-- realm, so the transfer this whole section is about was walked around while
+-- the qualified lookups above stayed green.
+equal(ns.classifyName("Kadaj").verdict, "unknown",
+    "a bare name is not let in through the account cache either")
+equal(select(1, ns.getCharacterDecision("Kadaj")), true,
+    "so the decision keeps him out")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Kadaj"), true,
+    "and his WoW whisper is discarded, like the one written out in full")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Kadaj-Ysondre"), false,
+    "while the character the entry really names still gets through")
+-- Nothing moved on either tile: the account entry a character entry produces was
+-- never counted, and still is not.
+equal(ns.getListCounts().allowed.manual, 1, "one typed entry, one counted")
+equal(ns.getListCounts().allowed.bnet, 0, "and no Battle.net account invented")
+equal(ns.getListCounts().blocked.total, 1, "the blocked tile is untouched")
 equal(ns.classifyName("Blokaj-Ysondre").verdict, "always_blocked",
     "the blocked side is engraved the same way")
 check(ns.classifyName("Blokaj-TestRealm").verdict ~= "always_blocked",
@@ -3562,6 +3574,54 @@ equal(ns.classifyName("Real-Ysondre").verdict, "unknown",
     "while no character is allowed by it, on any realm")
 equal(select(4, ns.addBlocked("Real Friend#1234")), "account",
     "and the blocked field still refuses one")
+-- The tester answers on the tag, which is the only reader of the account half
+-- left: a "#" names an account and nothing else, so it goes on answering.
+do
+    local tested = ns.describeAccessDecision("Real Friend#1234")
+    equal(tested.verdict, "always_allowed", "the tester says the account is allowed")
+    equal(tested.list, "manual", "as one the person typed")
+    equal(tested.display, "Real Friend#1234", "and says it whole, with no realm added")
+end
+equal(ns.getListCounts().allowed.manual, 1, "one account typed, one counted")
+equal(ns.getListCounts().allowed.bnet, 0, "and none of it lands on the friends tile")
+
+-- The one-word account name, which is where the two readers of the account cache
+-- part company. Typed into the allowed field it is indistinguishable from a
+-- character, so it is stored as one -- realm engraved, decision 119 -- and its
+-- display name feeds the account cache all the same.
+--
+--   * its Battle.net whisper passes, which is what the field is for;
+--   * `classifyName` answers on the CHARACTER key alone, so the entry covers
+--     the realm it was engraved on and no other -- no back door onto 119.
+resetModelState()
+equal(select(2, ns.addAllowed("Zephos")), "zephos-testrealm",
+    "a one-word entry is a character entry, realm and all")
+check(ns.isBNetWhitelisted("Zephos"),
+    "and its display name still reaches the account cache")
+equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hello", "Zephos"), false,
+    "so the Battle.net whisper of a one-word account typed by hand still arrives")
+equal(ns.classifyName("Zephos").verdict, "always_allowed",
+    "the character it names is allowed on the player's own realm")
+equal(ns.classifyName("Zephos").list, "manual", "as a typed entry, not as an account")
+equal(ns.classifyName("Zephos-Ysondre").verdict, "unknown",
+    "and his namesake on another realm is not")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Zephos-Ysondre"), true,
+    "whose WoW whisper is discarded")
+equal(ns.getListCounts().allowed.manual, 1, "one entry typed, one counted")
+equal(ns.getListCounts().allowed.bnet, 0, "and nothing added to the friends tile")
+
+-- The same one word off the ROSTER is an account and answers as one: the friend
+-- list is where an account name really is one, whatever it is spelled like.
+resetModelState()
+bnetFriends = { { bnetAccountID = 55, accountName = "Zephos" } }
+ns.invalidateWhitelist()
+equal(ns.classifyName("Zephos").verdict, "always_allowed",
+    "a Battle.net friend whose account name is one word is allowed")
+equal(ns.classifyName("Zephos").list, "bnet", "and named as the friend he is")
+equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hello", "Zephos"), false,
+    "his whisper arrives")
+equal(ns.getListCounts().allowed.bnet, 1, "and he is counted once, on the friends tile")
+equal(ns.getListCounts().allowed.manual, 0, "with nothing on the typed one")
 resetModelState()
 
 -- C2e -- the same invariant on the pattern list. A pattern is looked for in the
