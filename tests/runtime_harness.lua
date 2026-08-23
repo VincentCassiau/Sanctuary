@@ -1989,11 +1989,14 @@ SanctuaryDB.filters.autoTrust = true
 inGroup = true
 groupMembers = { "Dungeonmate-TestRealm" }
 fire("GROUP_ROSTER_UPDATE")
-local trackedAt = SanctuaryCharDB.groupTracker.dungeonmate
-check(trackedAt ~= nil, "group member tracking started")
+-- Tracked under the name with its realm: the shape the blocked list keys on, so
+-- the ticker below can ask about the right person.
+local dungeonmateKey = "Dungeonmate-TestRealm"
+local trackedAt = SanctuaryCharDB.groupTracker[dungeonmateKey]
+check(trackedAt ~= nil, "group member tracking started, realm and all")
 now = now + 30
 fire("PLAYER_ENTERING_WORLD")
-equal(SanctuaryCharDB.groupTracker.dungeonmate, trackedAt, "group tracker survives loading transition")
+equal(SanctuaryCharDB.groupTracker[dungeonmateKey], trackedAt, "group tracker survives loading transition")
 now = trackedAt + (SanctuaryDB.temporalGroupTrust.trustThresholdMinutes * 60) + 1
 runTickers()
 check(SanctuaryDB.manualWhitelist.dungeonmate ~= nil, "auto-trust adds member after threshold")
@@ -2025,6 +2028,48 @@ do
     equal(SanctuaryCharDB.groupTracker.stayer, nil,
         "and the tracker drops it rather than weighing it again every 30 s")
     ns.removeBlocked("stayer-testrealm")
+    ns.invalidateWhitelist()
+end
+
+-- The same thing across realms, which is the shape a dungeon group actually has.
+-- The tracker used to key its members on the bare pseudo -- the realm was built
+-- and then thrown away -- so the ticker asked "is <pseudo> blocked?" of a lookup
+-- that answers for one realm only: the player's own. A harasser blocked as
+-- "Cross-Hyjal" from the right-click menu, which writes the name with its realm,
+-- was not recognised: five minutes of standing in the group wrote him into
+-- "Toujours autorises" with source "trust", the tile counted him, and the tester
+-- answered "toujours autorise : trust" while the blocked entry was still there.
+-- The two lists holding one person at once is what decision 104 exists to end.
+do
+    inGroup = true
+    groupMembers = { "Cross-Hyjal" }
+    fire("GROUP_ROSTER_UPDATE")
+    check(SanctuaryCharDB.groupTracker["Cross-Hyjal"] ~= nil,
+        "a cross-realm member is tracked under the name with its realm")
+
+    local addedBlocked = ns.addBlocked("Cross-Hyjal", "menu")
+    check(addedBlocked, "and can be put into the blocked list from the menu")
+    local trustBefore = ns.getListCounts().allowed.trust
+    -- Aged through whatever key the tracker chose, so this measures the ticker's
+    -- decision and not the harness's idea of the key.
+    for trackedKey in pairs(SanctuaryCharDB.groupTracker) do
+        SanctuaryCharDB.groupTracker[trackedKey] = now - 1000
+    end
+    runTickers()
+    check(SanctuaryDB.blockedNames["cross-hyjal"] ~= nil,
+        "five minutes in a cross-realm group do not take him out of the blocked list")
+    equal(SanctuaryDB.manualWhitelist.cross, nil,
+        "and nothing is written on the allowed side")
+    ns.invalidateWhitelist()
+    equal(ns.getListCounts().allowed.trust, trustBefore,
+        "so the automatic-trust tile does not count him either")
+    equal(SanctuaryCharDB.groupTracker["Cross-Hyjal"], nil,
+        "the tracker drops him rather than weighing him again every 30 s")
+
+    ns.removeBlocked("cross-hyjal")
+    inGroup = false
+    groupMembers = {}
+    fire("GROUP_ROSTER_UPDATE")
     ns.invalidateWhitelist()
 end
 

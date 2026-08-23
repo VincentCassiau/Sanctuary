@@ -1895,8 +1895,13 @@ function ns.describeAccessDecision(name)
     -- click removes it -- but the tester no longer says a thing the add-on has
     -- stopped doing.
     --
-    -- The manual allowed list is gone from here too, and by construction: the
-    -- two lists are exclusive now, so a name cannot be in both.
+    -- The manual allowed list is not excluded here, and must not be. Decision
+    -- 104 makes the two lists exclusive at the write -- putting a name in one
+    -- takes it out of the other, on the key that write uses -- but the allowed
+    -- list is realm-less by decision 82, so allowing a bare "Toto" cannot
+    -- displace "Toto-Hyjal" from the blocked list: it does not name him. That
+    -- residue is the one way a person can still read a name on both panels, and
+    -- when it happens this is the line that says which of the two is in force.
     local overridden, overriddenDetail = nil, nil
     if classification.verdict == "always_blocked" then
         local characterKey = normalizeName(name)
@@ -4997,11 +5002,32 @@ local function refreshGroupTracker()
                 if realm and realm ~= "" then
                     name = name .. "-" .. realm
                 end
-                local normalized = normalizeName(name)
-                if normalized then
-                    currentMembers[normalized] = true
-                    if not SanctuaryCharDB.groupTracker[normalized] then
-                        SanctuaryCharDB.groupTracker[normalized] = GetTime()
+                -- Tracked under the name WITH its realm, the shape the blocked
+                -- list keys on and the shape the right-click menu writes. The
+                -- realm was built one line up and then thrown away by
+                -- `normalizeName`, so the tracker held a bare pseudo and the
+                -- ticker below asked "is <pseudo> blocked?" of a lookup that
+                -- answers for one realm only: the player's own. A dungeon group
+                -- is cross-realm by construction, so a harasser blocked as
+                -- "Pseudo-AutreRoyaume" was not recognised there, and five
+                -- minutes of standing still wrote him into "Toujours autorises"
+                -- with source "trust" -- counted on the tile, answered by the
+                -- tester -- while his blocked entry was still on the other
+                -- panel. Decision 104 exists to make that pair impossible.
+                --
+                -- Deliberately not "is this pseudo blocked on any realm": that
+                -- would take trust away from Cross-Dalaran because somebody
+                -- blocked Cross-Hyjal, which is the same namesake mistake the
+                -- blocked list dropped its bare-key fallback to end. One person,
+                -- one realm, one key.
+                --
+                -- `normalizeName` still gates it, as the one rule that says what
+                -- is left of a name: a roster entry with no pseudo in it ("-")
+                -- is no more trackable than it is writable.
+                if normalizeName(name) then
+                    currentMembers[name] = true
+                    if not SanctuaryCharDB.groupTracker[name] then
+                        SanctuaryCharDB.groupTracker[name] = GetTime()
                     end
                 end
             end
@@ -6417,6 +6443,13 @@ C_Timer.NewTicker(30, function()
             -- lasts. Unblocking somebody later starts their five minutes over,
             -- which is the trust this rule is about: freshly earned, not banked
             -- while they were blocked.
+            --
+            -- `name` carries its realm: `refreshGroupTracker` keys the tracker
+            -- that way precisely so this lookup can answer, and so the write
+            -- below displaces the right entry. An entry inherited from a build
+            -- that keyed the tracker on the bare pseudo still reads as one --
+            -- the player's own realm, as it always did -- and the next roster
+            -- update replaces it with the qualified form.
             if not ns.findBlockedKey(name) then
                 -- Goes through the same write the panel and the right-click
                 -- menu use, so an automatically trusted contact is an entry
