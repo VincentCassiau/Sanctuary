@@ -3091,6 +3091,59 @@ check(ns.isBNetWhitelisted("Real Friend#1234"),
     "which is how an account carrying a tag is allowed")
 equal(ns.getListCounts().allowed.manual, 2, "two entries typed, two counted")
 
+-- C2d bis -- an account is not a character, and the "#" is how we know: no WoW
+-- pseudo carries one, on any realm. Keyed like a name it was cut at the first
+-- space, so "Real Friend#1234" became "real" and every Real of every realm
+-- walked in -- whisper, invite and verdict -- with nothing shown and nothing
+-- heard. Not the realm-less over-allowance decision 82 accepted: the person
+-- named an account, not a character.
+equal(ns.classifyName("Real-Ysondre").verdict, "unknown",
+    "a stranger sharing the first word of an allowed account stays unknown")
+equal(ns.classifyName("Real-Hyjal").verdict, "unknown",
+    "on his own realm as on any other")
+equal(select(1, ns.getCharacterDecision("Real-Ysondre")), true,
+    "the decision blocks him like the stranger he is")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Real-Ysondre"), true,
+    "his whisper is discarded")
+-- Scoped: this file is one chunk and Lua counts live locals per function.
+do
+    local before = declinedGroups
+    fire("PARTY_INVITE_REQUEST", "Real-Ysondre")
+    runTimers(3)
+    equal(declinedGroups, before + 1, "and his group invite is refused")
+end
+check(ns.isBNetWhitelisted("Real Friend#1234"),
+    "while the account itself is still allowed on its own channel")
+equal(ns.getListCounts().allowed.manual, 2, "and still counted on the tile")
+
+-- Two accounts whose display names start with the same word are two accounts.
+-- Cut to that word they shared one key: the second was refused as a duplicate,
+-- silently, and only the first one ever got through.
+wipe(SanctuaryDB.manualWhitelist)
+ns.invalidateWhitelist()
+equal(select(1, ns.addAllowed("Manual Battle#1111")), true, "one account is allowed")
+equal(select(1, ns.addAllowed("Manual Buddy#5678")), true,
+    "and so is another one sharing its first word")
+equal(ns.getListCounts().allowed.manual, 2, "both are counted")
+equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hello", "Manual Battle#1111"), false,
+    "the first one's Battle.net whisper arrives")
+equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hello", "Manual Buddy#5678"), false,
+    "and so does the second one's")
+
+-- A settings file written before the field could tell the two apart holds the
+-- cut key with the tagged name beside it. The entry is read from the name, not
+-- from the key, so the stranger it used to let in is shut out on load.
+wipe(SanctuaryDB.manualWhitelist)
+SanctuaryDB.manualWhitelist.real = { displayName = "Real Friend#1234", addedAt = 1 }
+ns.invalidateWhitelist()
+equal(ns.classifyName("Real-Ysondre").verdict, "unknown",
+    "a legacy account entry allows no character either")
+check(ns.isBNetWhitelisted("Real Friend#1234"),
+    "and the account it names stays allowed")
+equal(ns.getListCounts().allowed.manual, 1, "counted once, as the panel shows it")
+wipe(SanctuaryDB.manualWhitelist)
+ns.invalidateWhitelist()
+
 -- C2e -- the same invariant on the pattern list. A pattern is looked for in the
 -- pseudo half alone, and a pseudo carries no hyphen: one holding a hyphen
 -- matches nobody, ever. Stored, it showed in the panel, counted in the tile and

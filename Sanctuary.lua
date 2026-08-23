@@ -540,6 +540,19 @@ local function normalizeBNetName(name)
     return name
 end
 
+-- The one mark that tells an account from a character. A Battle.net display
+-- name carries its tag ("Real Friend#1234"); a WoW pseudo can never carry a
+-- "#", on any realm, so a text holding one names an account and nothing else.
+--
+-- The allowed field takes both, and both used to be keyed by `normalizeName`,
+-- which cuts at the first space: "Real Friend#1234" was keyed "real", and the
+-- stranger Real-Ysondre -- any Real, on any realm -- walked in silently, chat,
+-- invites and all. That is not the realm-less over-allowance decision 82
+-- accepted; the person named an account, and this is how we know.
+local function isAccountName(name)
+    return type(name) == "string" and name:find("#", 1, true) ~= nil
+end
+
 local function deepCopy(orig)
     if type(orig) ~= "table" then return orig end
     local copy = {}
@@ -1063,6 +1076,31 @@ local function rebuildWhitelist()
     local function addManualEntry(key, data)
         local source = (type(data) == "table" and data.source == "trust") and "trust" or "manual"
         local label = (type(data) == "table" and data.displayName) or key
+
+        -- An entry naming an account never joins the character cache. Cut to
+        -- its first word by `normalizeName` it would allow whoever happens to
+        -- share that word, on every realm, in silence -- and a settings file
+        -- written before `addAllowed` learned to tell the two apart still holds
+        -- the cut key with the tagged name beside it, so the display name is
+        -- read here too rather than the key alone.
+        --
+        -- It is still noted as a source, under a key carrying its "#" that no
+        -- name coming out of the game can ever equal: the tile counts the
+        -- manual entries from this table, and dropping the entry from it would
+        -- have taken the account off the count while its chip stayed on the
+        -- panel. Allowed it remains -- through the account cache, which is
+        -- where an account belongs.
+        local accountName = (isAccountName(label) and label)
+            or (isAccountName(key) and key)
+            or nil
+        if accountName then
+            noteSource(sources, sourceLabels, normalizeBNetName(accountName), source, label)
+            if manualEntryAllowsBNet(data) then
+                addBNetAccountName(accountName, source, label)
+            end
+            return
+        end
+
         addCharacterName(key, source, label)
         if type(data) == "table" then
             addCharacterName(data.displayName, source, label)
@@ -1583,7 +1621,14 @@ function ns.addAllowed(name, source)
     -- refused outright when nothing is left of it -- "-" writes here no more
     -- than it writes there. The field is the same on both panels ("Name or
     -- Name-Realm"), so the two sides had no business reading it differently.
-    local key = normalizeName(clean)
+    --
+    -- Unless what was typed is an account: a "#" is a Battle.net tag and no
+    -- pseudo carries one, so such an entry is keyed whole, the way the account
+    -- cache keys it. Cut, "Real Friend#1234" became "real" -- an entry that
+    -- allowed every Real of every realm without a word, and that two accounts
+    -- sharing their first word ("Manual Battle#1111", "Manual Buddy#5678")
+    -- collided on, the second of them refused as a duplicate without a word.
+    local key = isAccountName(clean) and normalizeBNetName(clean) or normalizeName(clean)
     if not key then return false end
     SanctuaryDB.manualWhitelist = SanctuaryDB.manualWhitelist or {}
     if SanctuaryDB.manualWhitelist[key] then
