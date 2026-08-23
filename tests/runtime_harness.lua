@@ -3845,6 +3845,162 @@ check(chatMessages[1]:find(ns.L["ADDON_LOADED_INACTIVE"], 1, true) ~= nil,
 SanctuaryCharDB.overrides.enabled = nil
 
 -- ===========================================================================
+-- SECTION: no dead entry -- what the person typed reaches what the game says
+-- ===========================================================================
+
+-- The invariant, stated once for the three fields somebody can type into: when
+-- the field answers yes, the name the GAME hands over for that same person must
+-- be classified the way they asked. Four rounds of this release closed four
+-- different ways of writing an entry that blocked or allowed nobody -- a hyphen,
+-- a BattleTag, punctuation, and a case fold that stopped at ASCII -- each one
+-- found by somebody reading the code, one at a time, after the panel had already
+-- shown the chip and counted the tile. This loop is what is meant to catch the
+-- fifth without a fifth round.
+--
+-- Left column: what somebody types in the panel. Right column: how that same
+-- character reaches a decision in game -- realm-qualified, and with the initial
+-- in uppercase, because that is what WoW renders.
+--
+-- The whole section lives in a `do ... end`: the enclosing chunk is at Lua's
+-- 200-local ceiling and a new local at its level stops the file compiling.
+do
+
+local TYPED_AND_RENDERED = {
+    -- The control. If this row ever fails, the fix broke the ASCII names that
+    -- always worked and every other row below is noise.
+    { typed = "elodie",     piece = "elo", rendered = "Elodie-TestRealm", what = "an ASCII pseudo" },
+    { typed = "élodie",     piece = "élo", rendered = "Élodie-TestRealm", what = "an accented initial" },
+    { typed = "ÉLODIE",     piece = "ÉLO", rendered = "Élodie-TestRealm", what = "the same name typed in capitals" },
+    { typed = "ZOË",        piece = "OË",  rendered = "Zoë-TestRealm",    what = "capitals with the accent inside the pseudo" },
+    { typed = "ŒDIPE",      piece = "œdi", rendered = "Œdipe-TestRealm",  what = "a ligature" },
+    { typed = "žofia",      piece = "žof", rendered = "Žofia-TestRealm",  what = "a caron" },
+    { typed = "илья",       piece = "иль", rendered = "Илья-TestRealm",   what = "a cyrillic pseudo" },
+    { typed = "ЁЖИК",       piece = "ёж",  rendered = "Ёжик-TestRealm",   what = "cyrillic Ё, outside the main run" },
+    { typed = "toto-éonar", piece = "tot", rendered = "Toto-Éonar",       what = "an accented realm" },
+}
+
+for _, case in ipairs(TYPED_AND_RENDERED) do
+    -- Blocked: the field said yes, so the person is blocked, and the tile the
+    -- panel shows says the same thing the decision does.
+    resetModelState()
+    equal(ns.addBlocked(case.typed), true,
+        "the blocked field accepts " .. case.what .. " (" .. case.typed .. ")")
+    equal(ns.getListCounts().blocked.names, 1,
+        "and counts it once (" .. case.typed .. ")")
+    equal(ns.classifyName(case.rendered).verdict, "always_blocked",
+        "and " .. case.rendered .. " is blocked when the game hands the name over")
+    equal(ns.describeAccessDecision(case.rendered).blockedNow, true,
+        "and the tester says so too (" .. case.rendered .. ")")
+
+    -- Allowed: the harder direction. In the default scope an unknown name is
+    -- cut, so a name the person allowed by hand and that stays unknown is a
+    -- friend silenced with no popup, no sound and no chat line.
+    resetModelState()
+    equal(ns.addAllowed(case.typed), true,
+        "the allowed field accepts " .. case.what .. " (" .. case.typed .. ")")
+    equal(ns.classifyName(case.rendered).verdict, "always_allowed",
+        "and " .. case.rendered .. " is allowed when the game hands the name over")
+    equal(ns.describeAccessDecision(case.rendered).blockedNow, false,
+        "so nothing of theirs is cut (" .. case.rendered .. ")")
+    equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", case.rendered), false,
+        "and their whisper reaches the person (" .. case.rendered .. ")")
+
+    -- Pattern: a piece of the pseudo, looked for in the pseudo alone.
+    resetModelState()
+    equal(ns.addPattern(case.piece), true,
+        "the pattern field accepts " .. case.piece .. " (" .. case.what .. ")")
+    equal(ns.getListCounts().blocked.patterns, 1,
+        "and counts it once (" .. case.piece .. ")")
+    equal(ns.classifyName(case.rendered).verdict, "always_blocked",
+        "and " .. case.piece .. " catches " .. case.rendered)
+end
+
+-- The fold is bounded, and the boundary is part of the contract: ß has no
+-- one-letter uppercase and × is not a letter at all. Neither is folded, so
+-- neither turns one name into another.
+resetModelState()
+equal(ns.addBlocked("Straße"), true, "a name with a sharp s is still a name")
+equal(ns.classifyName("Straße-TestRealm").verdict, "always_blocked",
+    "and it blocks the person the game names")
+equal(ns.classifyName("Strasse-TestRealm").verdict, "unknown",
+    "while a different spelling is a different person")
+
+-- Two pseudos that differ by an accent are two people, before and after the
+-- fold. Folding case must not fold letters together.
+resetModelState()
+equal(ns.addBlocked("élodie"), true, "the accented name is blocked")
+equal(ns.classifyName("Elodie-TestRealm").verdict, "unknown",
+    "and the unaccented namesake is left alone")
+
+-- Same rule on the realm half: an accented realm is its own realm.
+resetModelState()
+equal(ns.addBlocked("toto-éonar"), true, "the name is blocked on its accented realm")
+equal(ns.classifyName("Toto-Eonar").verdict, "unknown",
+    "and the same pseudo on another realm walks free")
+
+-- ---------------------------------------------------------------------------
+-- Whispering yourself
+-- ---------------------------------------------------------------------------
+
+-- People whisper themselves: a note, a link kept for later. It arrives as a
+-- CHAT_MSG_WHISPER whose sender is the player, and the whisper filter was the
+-- one character filter with no "am I the sender" line -- so somebody who had
+-- blocked their own name, or who fell under one of their own patterns, watched
+-- their own note disappear. Both spellings the game uses are checked, because
+-- only one of them carries a realm.
+resetModelState()
+ns.addBlocked("Victim")
+ns.addPattern("vic")
+ns.addBlocked("Spammerguy")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "note to self", "Victim"), false,
+    "a whisper to yourself is delivered, bare name")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "note to self", "Victim-TestRealm"), false,
+    "and realm-qualified")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Spammerguy-TestRealm"), true,
+    "while a blocked player's whisper is still discarded")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Nobody-TestRealm"), true,
+    "and so is a stranger's")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Victim-Ysondre"), true,
+    "and a namesake on another realm is not the player")
+
+-- The same question with an accented player name, which is where "am I the
+-- sender" used to compare two spellings of the same person.
+do
+    local realFullName, realName = UnitFullName, UnitName
+    UnitFullName = function(unit)
+        if unit == "player" then return "Élodie", "TestRealm" end
+        return realFullName(unit)
+    end
+    UnitName = function(unit)
+        if unit == "player" then return "Élodie", "TestRealm" end
+        return realName(unit)
+    end
+
+    resetModelState()
+    -- The say filter is off by default, and an off filter answers "keep it" for
+    -- everyone: turn it on, or the line proves nothing about self-recognition.
+    SanctuaryDB.filters.say = true
+    equal(dispatchChatFilter("CHAT_MSG_WHISPER", "note to self", "Élodie-TestRealm"), false,
+        "an accented player still recognises their own whisper")
+    equal(dispatchChatFilter("CHAT_MSG_SAY", "hello", "Élodie-TestRealm"), false,
+        "and their own say line")
+    equal(dispatchChatFilter("CHAT_MSG_SAY", "hello", "Élodie-Ysondre"), true,
+        "while their namesake on another realm is a stranger like any other")
+    SanctuaryDB.filters.say = false
+
+    UnitFullName, UnitName = realFullName, realName
+end
+
+-- The mocks are back: the rest of the file speaks for Victim again.
+resetModelState()
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "note to self", "Victim-TestRealm"), false,
+    "the player is Victim again for everything that follows")
+
+resetModelState()
+
+end
+
+-- ===========================================================================
 -- SECTION: hiding secret system lines during a chat lockdown
 -- ===========================================================================
 
