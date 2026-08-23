@@ -135,6 +135,14 @@ C_AddOns = {
         if addonName ~= "Sanctuary" then return nil end
         return addonMetadata[field]
     end,
+    -- The API Retail actually answers the .toc's Interface with: a number, and
+    -- the one the AddOns manager grades "Out of date" on. `GetAddOnMetadata`
+    -- does not serve that field on this client, which is why the recording read
+    -- `addonMetaInterface=nil` on every snapshot.
+    GetAddOnInterfaceVersion = function(addonName)
+        if addonName ~= "Sanctuary" then return nil end
+        return tonumber(addonMetadata.Interface)
+    end,
 }
 
 function IsInGroup() return inGroup end
@@ -450,6 +458,27 @@ end
 local closedChatFrames = {}
 function FCF_Close(frame)
     closedChatFrames[#closedChatFrames + 1] = frame
+end
+
+-- What Retail calls to open a chat window. The temporary one -- a whisper
+-- conversation, a Battle.net conversation, a pet battle -- is what makes an
+-- eleventh frame appear halfway through a session, and it is the frame the
+-- 23/08 recording found unwrapped: DEGRADED (chat_frames=10/11). Modelled here
+-- so a frame born after the hooks are in place is a case a check can set up.
+temporaryChatWindows = 0
+function FCF_OpenTemporaryWindow(chatType, chatTarget)
+    temporaryChatWindows = temporaryChatWindows + 1
+    local index = 10 + temporaryChatWindows
+    local frame = {
+        chatType = chatType,
+        chatTarget = chatTarget,
+        AddMessage = function(self, message, ...)
+            chatMessages[#chatMessages + 1] = message
+            chatMessageArgs[#chatMessageArgs + 1] = { n = select("#", ...), ... }
+        end,
+    }
+    _G["ChatFrame" .. index] = frame
+    return frame, index
 end
 
 local eventFrames = {}
@@ -773,6 +802,36 @@ equal(buildContext.addonMetaVersion, "unavailable", "missing metadata API report
 equal(buildContext.addonMetaBuild, "unavailable", "missing metadata API reports an unavailable addon build")
 equal(buildContext.addonMetaInterface, "unavailable", "missing metadata API reports an unavailable addon interface")
 C_AddOns = savedAddOnsApi
+
+-- Decision 109: every snapshot of the 23/08 recording carried
+-- `addonMetaInterface=nil` while the header read `interface=120100`.
+-- `GetAddOnMetadata` answers for the custom X- fields and a documented handful
+-- of standard ones; "Interface" is not among them on this client and comes back
+-- nil every time. Retail exposes that value through `GetAddOnInterfaceVersion`,
+-- which is the API meant for the question, so that is where the answer comes
+-- from when the metadata says nothing.
+do
+    local savedMeta = C_AddOns.GetAddOnMetadata
+    C_AddOns.GetAddOnMetadata = function(_, field)
+        if field == "Interface" then return nil end
+        return savedMeta(_, field)
+    end
+    local context = ns.getClientBuildContext()
+    equal(context.addonMetaInterface, tostring(context.addonInterface),
+        "a client that will not hand over the .toc interface still reports one")
+    check(context.addonMetaInterface ~= "nil",
+        "which is the field that came back nil on every snapshot of the recording")
+
+    -- A real read error is still an error: it is not papered over by a second
+    -- source, or a broken metadata API would read as a healthy one.
+    C_AddOns.GetAddOnMetadata = function(_, field)
+        if field == "Interface" then error("boom") end
+        return savedMeta(_, field)
+    end
+    equal(ns.getClientBuildContext().addonMetaInterface, "error",
+        "and a metadata call that fails stays an error")
+    C_AddOns.GetAddOnMetadata = savedMeta
+end
 check(SanctuaryDB.debugLog[1].data.groupInviteFilter, "debug snapshot reports group invite filter")
 check(SanctuaryDB.debugLog[1].data.partyInviteSoundGuardActive, "debug snapshot reports active invite sound guard")
 equal(SanctuaryDB.debugLog[1].data.chatFramesSeen, 1, "debug snapshot reports chat frames seen")
@@ -795,6 +854,38 @@ ns.hookChatOutputDiagnostics()
 ChatFrame1:AddMessage(systemMessage)
 equal(#chatMessages, beforeOutputMessages, "chat output guard remains single after rehook")
 equal(#SanctuaryDB.debugLog, beforeOutputDebug + 2, "chat output diagnostic hook is not duplicated")
+
+-- A chat window opened DURING the session, decision 106. The scan used to run
+-- at load and at PLAYER_ENTERING_WORLD and never again, so the eleventh frame
+-- printed straight past the envelope for the rest of the session and the
+-- recording graded itself DEGRADED (chat_frames=10/11) with no way to say which
+-- frame or why.
+do
+    local health = ns.getInstrumentationHealth()
+    equal(health.chatFramesSeen, health.chatFramesWrapped,
+        "every chat frame there is, is wrapped before the new one opens")
+    local newFrame = FCF_OpenTemporaryWindow("WHISPER", "Somebody")
+    -- The hook fires on the way out of the opener, so by here it is wrapped:
+    -- nothing below asks for a rescan.
+    health = ns.getInstrumentationHealth()
+    equal(health.chatFramesSeen, 2, "the new window is counted")
+    equal(health.chatFramesWrapped, 2, "and it is wrapped, with no rescan asked for")
+    equal(ns.getInstrumentationVerdict({
+        chatFilterApiUsed = health.chatFilterApiUsed,
+        chatFramesSeen = health.chatFramesSeen,
+        chatFramesWrapped = health.chatFramesWrapped,
+        systemChatTypeID = health.systemChatTypeID,
+    }), "ok", "so the recording no longer grades itself degraded on chat_frames")
+
+    -- And the envelope really is doing its work on that frame: a blocked invite
+    -- line printed to it is suppressed exactly as on ChatFrame1.
+    local before = #chatMessages
+    newFrame:AddMessage(systemMessage)
+    equal(#chatMessages, before, "a blocked invite line is suppressed on the new window too")
+
+    _G.ChatFrame11 = nil
+    temporaryChatWindows = 0
+end
 
 local trustedOutputMessage = "[Friend] vous a invité à rejoindre un groupe, mais vous ne pouviez pas accepter car vous êtes déjà dans un groupe."
 SanctuaryDB.manualWhitelist.chatfriend = { displayName = "Friend" }

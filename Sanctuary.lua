@@ -387,6 +387,22 @@ local function getClientBuildContext()
         setClientBuild("unavailable", "unavailable", "unavailable", "unavailable")
     end
 
+    -- The .toc "Interface" field can list several versions; what the client
+    -- actually resolved for this addon is the one the AddOns manager grades as
+    -- current or "Out of date", and it is the only one worth comparing to the
+    -- client's own interface. Read first, because the metadata answer below
+    -- falls back on it.
+    if type(C_AddOns) == "table" and type(C_AddOns.GetAddOnInterfaceVersion) == "function" then
+        local ok, interfaceVersion = pcall(C_AddOns.GetAddOnInterfaceVersion, ADDON_NAME)
+        if ok and interfaceVersion ~= nil and not isRestrictedValue(interfaceVersion) then
+            data.addonInterface = tonumber(interfaceVersion) or safeText(interfaceVersion, 20, "nil")
+        else
+            data.addonInterface = "error"
+        end
+    else
+        data.addonInterface = "unavailable"
+    end
+
     local getMetadata = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
     if type(getMetadata) == "function" then
         local okVersion, metaVersion = pcall(getMetadata, ADDON_NAME, "Version")
@@ -401,19 +417,18 @@ local function getClientBuildContext()
         data.addonMetaInterface = "unavailable"
     end
 
-    -- The .toc "Interface" field can list several versions; what the client
-    -- actually resolved for this addon is the one the AddOns manager grades as
-    -- current or "Out of date", and it is the only one worth comparing to the
-    -- client's own interface.
-    if type(C_AddOns) == "table" and type(C_AddOns.GetAddOnInterfaceVersion) == "function" then
-        local ok, interfaceVersion = pcall(C_AddOns.GetAddOnInterfaceVersion, ADDON_NAME)
-        if ok and interfaceVersion ~= nil and not isRestrictedValue(interfaceVersion) then
-            data.addonInterface = tonumber(interfaceVersion) or safeText(interfaceVersion, 20, "nil")
-        else
-            data.addonInterface = "error"
-        end
-    else
-        data.addonInterface = "unavailable"
+    -- `GetAddOnMetadata` answers for the custom X- fields and a documented
+    -- handful of standard ones; "Interface" is not among them on this client and
+    -- comes back nil every time, which is what the 23/08 recording published as
+    -- `addonMetaInterface=nil` on every snapshot. Retail exposes that value
+    -- through `GetAddOnInterfaceVersion` instead, and that is the same question
+    -- answered by the API meant for it -- what interface this addon declares.
+    -- Derived only where the metadata said nothing: a client that does answer
+    -- keeps its own answer, and a real read error stays an error rather than
+    -- being papered over by a second source.
+    if (data.addonMetaInterface == nil or data.addonMetaInterface == "nil")
+        and type(data.addonInterface) == "number" then
+        data.addonMetaInterface = tostring(data.addonInterface)
     end
 
     data.chatLockdown, data.chatLockdownKnown = readChatLockdown()
@@ -3382,7 +3397,32 @@ noteChatOutputWrapSkipped = function(frameIndex, chatFrame, reason)
 end
 end
 
-local function hookChatOutputDiagnostics()
+local hookChatOutputDiagnostics
+do
+-- Chat windows are not all there at load. Retail opens an eleventh frame the
+-- moment a whisper conversation or any temporary window is started, and this
+-- scan only ever ran at ADDON_LOADED and at PLAYER_ENTERING_WORLD -- so a frame
+-- born during the session printed straight past the envelope for the rest of it.
+-- Vincent's 23/08 export says it in one line: DEGRADED (chat_frames=10/11).
+local chatFrameCreationHooked = false
+
+hookChatOutputDiagnostics = function()
+    -- Post-hooks on the two functions that open a chat window, so the frame
+    -- exists by the time we look. `hooksecurefunc` never replaces the function,
+    -- which is what keeps this clear of Blizzard's taint rules on chat UI, and
+    -- the scan below is idempotent -- it does not matter which frame was just
+    -- created, or that two hooks fire for one window.
+    if not chatFrameCreationHooked and type(hooksecurefunc) == "function" then
+        chatFrameCreationHooked = true
+        for _, opener in ipairs({ "FCF_OpenTemporaryWindow", "FCF_OpenNewWindow" }) do
+            if type(_G[opener]) == "function" then
+                pcall(hooksecurefunc, opener, function()
+                    hookChatOutputDiagnostics()
+                end)
+            end
+        end
+    end
+
     for i = 1, 20 do
         local chatFrame = _G["ChatFrame" .. i]
         if chatFrame and not chatFrame.AddMessage then
@@ -3494,6 +3534,7 @@ local function hookChatOutputDiagnostics()
             end
         end
     end
+end
 end
 
 ns.hookChatOutputDiagnostics = hookChatOutputDiagnostics
