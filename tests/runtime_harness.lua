@@ -2007,7 +2007,7 @@ check(not block, "auto-trusted member passes whitelist decision")
 -- answer away, so the entry vanished and the name came back allowed with source
 -- "trust" -- silently, and exactly against the one list that is supposed to beat
 -- every trust source.
-;(function()
+do
     local addedBlocked = ns.addBlocked("Stayer-TestRealm")
     check(addedBlocked, "a name is put into the blocked list by hand")
     equal(ns.classifyName("Stayer-TestRealm").verdict, "always_blocked",
@@ -2026,7 +2026,7 @@ check(not block, "auto-trusted member passes whitelist decision")
         "and the tracker drops it rather than weighing it again every 30 s")
     ns.removeBlocked("stayer-testrealm")
     ns.invalidateWhitelist()
-end)()
+end
 
 -- Closing a blocked whisper tab must not close unrelated non-whitelisted tabs.
 ChatFrame1 = { chatType = "WHISPER", chatTarget = "Blocked" }
