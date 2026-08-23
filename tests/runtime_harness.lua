@@ -5387,6 +5387,29 @@ do
 end
 
 equal(#ns.buildPlayerMenuEntries({ name = "Victim" }), 0, "the player themselves gets nothing")
+equal(#ns.buildPlayerMenuEntries({ name = "Victim", server = "TestRealm" }), 0,
+    "spelt with their realm, still nothing")
+-- ... and a real stranger who happens to share the player's name gets the two
+-- entries the menu exists for. The comparison used to read the bare pseudo and
+-- ignore the realm, so the one person on that list somebody is most likely to
+-- want blocked -- a namesake, deliberately picked -- was the one the right-click
+-- menu had nothing to offer about.
+equal(#ns.buildPlayerMenuEntries({ name = "Victim", server = "Ysondre" }), 2,
+    "while a namesake on another realm is a stranger like any other")
+
+-- The allowed half asks the core for the key the list is actually written under.
+-- A Battle.net account allowed by hand is keyed whole; looked up under its first
+-- word alone it read as "not allowed", and the menu offered to allow again
+-- somebody who already was -- writing a second entry the first click had made.
+ns.addAllowed("Real Friend#1234")
+check(SanctuaryDB.manualWhitelist["real friend#1234"] ~= nil,
+    "an account allowed by hand is keyed whole")
+menuEntries = ns.buildPlayerMenuEntries({ name = "Real Friend#1234" })
+check(menuEntries[1].text:find(ns.L["MENU_UNALLOW"], 1, true) ~= nil,
+    "and the menu offers to stop allowing it, not to allow it a second time")
+menuEntries[1].action()
+equal(SanctuaryDB.manualWhitelist["real friend#1234"], nil, "which one click does")
+
 equal(#ns.buildPlayerMenuEntries({}), 0, "an unresolved identity gets nothing")
 equal(#ns.buildPlayerMenuEntries({ name = makeSecretValue("secret") }), 0,
     "and a secret name gets nothing")

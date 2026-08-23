@@ -2480,8 +2480,13 @@ local function resolveMenuName(contextData)
         full = name .. "-" .. contextData.server
     end
     if contextData.unit and UnitIsUnit and UnitIsUnit(contextData.unit, "player") then return nil end
-    local playerName = UnitName and UnitName("player")
-    if playerName and tostring(name):lower() == tostring(playerName):lower() then return nil end
+    -- "Is this me" asked of the core, on the full name, realm included. The menu
+    -- used to compare the bare pseudo under a fold of its own, which answered
+    -- yes about anybody who happened to share the player's name on another
+    -- realm: a real stranger, and the two entries the menu exists for were the
+    -- ones missing from their right-click. That fold also covered A-Z and
+    -- nothing more, so it missed an accented pseudo in the other direction.
+    if ns.isSelf and ns.isSelf(full) then return nil end
     return full
 end
 
@@ -2494,7 +2499,12 @@ function ns.buildPlayerMenuEntries(contextData)
     local name = resolveMenuName(contextData)
     if not name then return {} end
 
-    local allowedKey = ns.normalizeName and ns.normalizeName(name)
+    -- The key `ns.addAllowed` would write for this name, asked of the core --
+    -- the same move the blocked half makes just below. The bare-pseudo rule this
+    -- used to call is only half of it: an account allowed by hand is keyed
+    -- whole, so a BattleTag looked up under its first word alone read as "not
+    -- allowed", and the menu offered to allow somebody who already was.
+    local allowedKey = ns.findAllowedKey and ns.findAllowedKey(name)
     local isAllowed = allowedKey and SanctuaryDB and SanctuaryDB.manualWhitelist
         and SanctuaryDB.manualWhitelist[allowedKey] ~= nil
     -- The core's own resolution, asked rather than reimplemented: whatever key
