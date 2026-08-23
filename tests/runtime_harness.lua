@@ -6487,9 +6487,28 @@ ns.invalidateWhitelist()
 -- ---------------------------------------------------------------------------
 
 -- The checklist no longer asks anyone to scroll an export looking for five
--- entries: it runs tests/check_qa_run.lua on the settings file. That tool is
--- therefore part of the deliverable, and it is exercised end to end here --
--- including its exit code, which is what makes it usable without reading it.
+-- entries: it runs the offline check on the settings file, and the session
+-- protocol and that check have to name the same markers -- a session measuring
+-- something other than what it claims to is worse than no session at all.
+--
+-- Both tools left the repository with 1.0.0 (decisions 112, 114, 116): they only
+-- ever serve a session, the add-on never calls them, and they live in
+-- internal_docs/qa/, which is ignored. A clone of the published repository does
+-- not have them, and there is then nothing here to check -- which is a silence,
+-- not a failure. What follows runs only when they are there.
+local qaToolsDir = repoRoot .. "/internal_docs/qa"
+local function qaTool(name)
+    local handle = io.open(qaToolsDir .. "/" .. name, "r")
+    if not handle then return nil end
+    handle:close()
+    return qaToolsDir .. "/" .. name
+end
+local checkerPath, protocolPath = qaTool("check_qa_run.lua"), qaTool("qa_protocol.py")
+
+if not checkerPath or not protocolPath then
+    print("-- outillage de session absent (internal_docs/qa) : controles sautes")
+else
+;(function()
 -- opts.chatFilterApi   value carried by the SNAPSHOT in the log ("" for none)
 -- opts.manifestHealth  instrumentation carried by the manifest, or nil
 -- opts.scenarios       false to write a log where nothing was played
@@ -6568,10 +6587,10 @@ local function runChecker(fixturePath, since)
     local command
     if since then
         command = string.format('%q %q --since %q %q 2>&1', interpreter,
-            repoRoot .. "/tests/check_qa_run.lua", since, fixturePath)
+            checkerPath, since, fixturePath)
     else
         command = string.format('%q %q %q 2>&1', interpreter,
-            repoRoot .. "/tests/check_qa_run.lua", fixturePath)
+            checkerPath, fixturePath)
     end
     local pipe = io.popen(command)
     local output = pipe:read("a")
@@ -6777,9 +6796,8 @@ check(goodOutput:find("invitations=true", 1, true) ~= nil,
 -- The session protocol and the check agree on the markers
 -- ---------------------------------------------------------------------------
 
--- A session that measures something other than what it claims to is worse than
--- no session at all: a disagreement here stops the harness rather than costing
--- Vincent forty-five minutes of the wrong test.
+-- A disagreement here stops the harness rather than costing Vincent
+-- forty-five minutes of the wrong test.
 local function readLines(command)
     local pipe = io.popen(command)
     if not pipe then return nil end
@@ -6795,12 +6813,12 @@ end
 
 local interpreter = (arg and arg[-1]) or "lua"
 local checkerMarkers = readLines(string.format('%q %q --markers 2>&1', interpreter,
-    repoRoot .. "/tests/check_qa_run.lua"))
+    checkerPath))
 check(checkerMarkers ~= nil and #checkerMarkers > 0,
     "the offline check lists the markers it reads")
 
 local protocolMarkers = readLines(string.format('python3 %q --markers 2>&1',
-    repoRoot .. "/tests/qa_protocol.py"))
+    protocolPath))
 check(protocolMarkers ~= nil and #protocolMarkers > 0,
     "the session protocol lists the markers its steps claim")
 
@@ -6832,10 +6850,13 @@ if checkerMarkers and protocolMarkers then
 end
 
 check(os.execute(string.format('python3 %q --check >/dev/null 2>&1',
-    repoRoot .. "/tests/qa_protocol.py")) == true
+    protocolPath)) == true
     or os.execute(string.format('python3 %q --check >/dev/null 2>&1',
-    repoRoot .. "/tests/qa_protocol.py")) == 0,
+    protocolPath)) == 0,
     "the session protocol passes its own structural check")
+
+end)()
+end
 
 -- ---------------------------------------------------------------------------
 -- Two more checklist steps the machine can make
