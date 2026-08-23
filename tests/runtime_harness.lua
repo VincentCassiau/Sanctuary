@@ -3003,6 +3003,32 @@ for _, typed in ipairs({ "-", " - ", "--" }) do
     equal(ns.getListCounts().blocked.names, 0, "leaving nothing behind")
 end
 
+-- A BattleTag is not a character name and the blocked field refuses it: read as
+-- a pseudo and a realm it built "real-friend#1234", an entry no event can ever
+-- produce, while the panel's own line above the field says a Battle.net friend
+-- cannot be blocked there. The character that friend plays is another matter,
+-- and stays blockable.
+wipe(SanctuaryDB.blockedNames)
+ns.invalidateWhitelist()
+equal(select(1, ns.addBlocked("Real Friend#1234")), false,
+    "a name carrying a BattleTag is refused")
+equal(ns.getListCounts().blocked.names, 0, "writing nothing")
+equal(ns.hasAlwaysBlockedEntries(), false, "and arming nothing")
+equal(select(1, ns.addBlocked("Bnetchar-Ysondre")), true,
+    "while the character a Battle.net friend plays is still blockable")
+equal(ns.getListCounts().blocked.names, 1, "and counted")
+
+-- Refused on the tag alone, never on the Battle.net roster: an account name in
+-- one word is spelled exactly like a character, and reading the roster here
+-- would leave somebody unable to block a harasser who happens to be a namesake.
+bnetFriends = { { accountName = "Toto", bnetAccountID = 77 } }
+ns.invalidateWhitelist()
+equal(select(1, ns.addBlocked("Toto")), true,
+    "a name that also spells a Battle.net account is still blockable")
+equal(ns.getListCounts().blocked.names, 2, "and written")
+bnetFriends = {}
+ns.invalidateWhitelist()
+
 -- C2d -- the same field, the same rule, on the allowed side. Both panels invite
 -- "Name or Name-Realm", and the allowed list used to read it with a rule of its
 -- own: spaces squashed instead of cut, a hyphen honoured only with a character
@@ -3374,12 +3400,31 @@ bnetFriends = {
 }
 ns.invalidateWhitelist()
 
--- The account is in the blocked list, and the whisper still arrives.
-ns.addBlocked("Real Friend#1234")
+-- Typing a BattleTag into the blocked field is refused outright: a tag names an
+-- account, never a character, and the entry it used to make blocked nobody while
+-- claiming the opposite in the panel.
+do
+    local before = ns.getListCounts().blocked.names
+    equal(select(1, ns.addBlocked("Real Friend#1234")), false,
+        "a Battle.net account name is refused by the blocked field")
+    equal(ns.getListCounts().blocked.names, before, "writing nothing")
+    equal(ns.hasAlwaysBlockedEntries(), false, "and arming nothing")
+    equal(ns.classifyName("Real Friend#1234").verdict, "always_allowed",
+        "the account stays what the Battle.net roster says it is")
+    equal(ns.classifyName("Real Friend#1234").list, "bnet", "a Battle.net friend")
+end
+
+-- The entry a settings file from an earlier build can still carry, written the
+-- way that build wrote it: the account is in the blocked list, and the whisper
+-- still arrives.
+SanctuaryDB.blockedNames["real-friend#1234"] =
+    { displayName = "Real Friend#1234", addedAt = 0, source = "manual" }
 ns.invalidateWhitelist()
+equal(ns.hasAlwaysBlockedEntries(), true, "the inherited entry is there")
 equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(91)), false,
     "a Battle.net friend whose account is in the blocked list still whispers")
-ns.removeBlocked(ns.normalizeBlockedKey("Real Friend#1234"))
+equal(select(1, ns.removeBlocked(ns.normalizeBlockedKey("Real Friend#1234"))), true,
+    "and the panel can still delete it")
 
 -- Same for a pattern: it never reaches the Battle.net channel either.
 SanctuaryDB.keywords = { "friend" }
@@ -3428,7 +3473,10 @@ bnetFriends = {
       gameAccountInfo = { characterName = "Bnetchar", realmName = "Ysondre" } },
 }
 SanctuaryDB.keywords = { "friend" }
-ns.addBlocked("Real Friend#1234")
+-- Inherited entry again: the field refuses the tag now, and the diagnostic has
+-- to answer for the settings files that already hold one.
+SanctuaryDB.blockedNames["real-friend#1234"] =
+    { displayName = "Real Friend#1234", addedAt = 0, source = "manual" }
 ns.invalidateWhitelist()
 do
     local diag = ns.simulateBNetWhisper("Real Friend#1234")

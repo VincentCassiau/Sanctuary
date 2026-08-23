@@ -1646,6 +1646,24 @@ function ns.addBlocked(name, source)
     if not SanctuaryDB then return false end
     local clean = stripWoWFormatting(name)
     if not clean or clean:gsub("%s", "") == "" then return false end
+    -- A BattleTag names an account, never a character. "Real Friend#1234" read
+    -- as a pseudo and a realm built the key "real-friend#1234", which no event
+    -- of the game can ever produce: an entry showing in the panel, counted in
+    -- the tile and arming the guards while the Battle.net whisper went on
+    -- arriving -- as it must, the account channel follows the Battle.net roster
+    -- and nothing else. The panel says as much right above this field ("A
+    -- Battle.net friend cannot be blocked here: remove them in Battle.net"), and
+    -- the code went on doing it anyway, then listing it. Refused, exactly like
+    -- "-": nothing written, nothing counted, nothing armed.
+    --
+    -- Refused on the "#" alone, never on the Battle.net roster: a one-word
+    -- account name ("Toto") is spelled like a character, and refusing it would
+    -- leave somebody unable to block a harasser who happens to be a namesake.
+    -- The assumed residue: an account name with no tag ("Battle Friend") has
+    -- exactly the shape of a Pseudo-Realm pair and stays indistinguishable --
+    -- typed here it makes a character entry that blocks nobody. Nothing in the
+    -- string tells the two apart; the panel's sentence is what covers that case.
+    if clean:find("#", 1, true) then return false end
     local key = normalizeBlockedKey(clean)
     if not key then return false end
     SanctuaryDB.blockedNames = SanctuaryDB.blockedNames or {}
