@@ -3003,6 +3003,86 @@ for _, typed in ipairs({ "-", " - ", "--" }) do
     equal(ns.getListCounts().blocked.names, 0, "leaving nothing behind")
 end
 
+-- C2d -- the same field, the same rule, on the allowed side. Both panels invite
+-- "Name or Name-Realm", and the allowed list used to read it with a rule of its
+-- own: spaces squashed instead of cut, a hyphen honoured only with a character
+-- in front. "Toto Ysondre" was keyed "totoysondre" and "-Toto" was keyed
+-- "-toto" -- so the friend whose label the person could read in the panel, and
+-- see counted in the tile, went on being filtered with no popup, no sound and no
+-- line. An allowed player keeps WoW's own behaviour: that is not negotiable.
+--
+-- Same invariant as the blocked side, on the other list: either nothing is
+-- written at all, or the entry allows the character it names -- under the
+-- spelling that was typed AND under its canonical one. Realm-less on purpose
+-- (decision 82): allowing is the side where a mistake costs nothing.
+resetModelState()
+for _, typed in ipairs({ "Toto Ysondre", "-Toto", "Toto-", "Toto-Ysondre" }) do
+    wipe(SanctuaryDB.manualWhitelist)
+    ns.invalidateWhitelist()
+    local before = ns.getListCounts().allowed.manual
+    local added = ns.addAllowed(typed)
+    if added then
+        equal(ns.getListCounts().allowed.manual, before + 1,
+            "\"" .. typed .. "\" makes one entry, and one only")
+        equal(ns.classifyName(typed).verdict, "always_allowed",
+            "which allows the character it was typed for")
+        equal(ns.classifyName("Toto-TestRealm").verdict, "always_allowed",
+            "as well as that character written out \"Toto-TestRealm\"")
+    else
+        equal(ns.getListCounts().allowed.manual, before,
+            "\"" .. typed .. "\" was refused and wrote nothing")
+    end
+end
+
+-- The whisper is the proof, not the panel.
+wipe(SanctuaryDB.manualWhitelist)
+ns.invalidateWhitelist()
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Toto-Ysondre"), true,
+    "an unknown name's whisper is dropped in \"only people I know\"")
+equal(select(1, ns.addAllowed("Toto Ysondre")), true,
+    "the same name typed with a space is allowed")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Toto-Ysondre"), false,
+    "and her whisper arrives, exactly as WoW wrote it")
+
+-- Nothing but separators is nobody on this side either.
+for _, typed in ipairs({ "-", " - ", "--" }) do
+    wipe(SanctuaryDB.manualWhitelist)
+    ns.invalidateWhitelist()
+    equal(select(1, ns.addAllowed(typed)), false,
+        "\"" .. typed .. "\" is not a name and is refused here too")
+    equal(ns.getListCounts().allowed.manual, 0, "leaving nothing behind")
+end
+
+-- And the documented way to allow a Battle.net account is untouched: the raw
+-- entry feeds the account cache, whatever the key rule makes of it.
+wipe(SanctuaryDB.manualWhitelist)
+ns.invalidateWhitelist()
+equal(select(1, ns.addAllowed("Manual Battle")), true,
+    "an account display name is still accepted")
+check(ns.isBNetWhitelisted("Manual Battle"), "and still reaches the account cache")
+equal(select(1, ns.addAllowed("Real Friend#1234")), true, "tag included")
+check(ns.isBNetWhitelisted("Real Friend#1234"),
+    "which is how an account carrying a tag is allowed")
+equal(ns.getListCounts().allowed.manual, 2, "two entries typed, two counted")
+
+-- C2e -- the same invariant on the pattern list. A pattern is looked for in the
+-- pseudo half alone, and a pseudo carries no hyphen: one holding a hyphen
+-- matches nobody, ever. Stored, it showed in the panel, counted in the tile and
+-- armed the guards while blocking no one. Refused, and not cut in two --
+-- "Toto-Ysondre" cut down to "toto" would block every Toto of every realm.
+resetModelState()
+for _, typed in ipairs({ "Toto-Ysondre", "Azjol-Nerub", "-", " - " }) do
+    equal(select(1, ns.addPattern(typed)), false,
+        "the pattern \"" .. typed .. "\" matches nobody and is refused")
+    equal(ns.getListCounts().blocked.patterns, 0, "so nothing is counted")
+    equal(ns.hasAlwaysBlockedEntries(), false, "and no guard is armed")
+end
+equal(select(1, ns.addPattern("illidan")), true, "a pattern with no separator is added")
+equal(ns.getListCounts().blocked.patterns, 1, "and counted")
+equal(ns.classifyName("Illidanx-TestRealm").verdict, "always_blocked",
+    "and it still blocks a name whose pseudo contains it")
+equal(ns.classifyName("Illidanx-TestRealm").list, "keyword", "as a pattern")
+
 -- C3 -- "everyone except the people I block".
 resetModelState()
 guildMembers = { "Mate-TestRealm" }

@@ -498,18 +498,38 @@ local function stripWoWFormatting(value)
     return value
 end
 
+-- Forward declaration: the one rule that says where a pseudo ends lives further
+-- down, next to the always-blocked door, and is assigned there. Declared here so
+-- `normalizeName` cuts with it rather than with a rule of its own -- keep the
+-- two together whatever else moves. `local function splitCharacterName` down
+-- there would shadow this and silently hand `normalizeName` a nil global.
+local splitCharacterName
+
+-- The key shape of the allowed list and of the whitelist caches: the pseudo
+-- half, lower-cased, no realm.
+--
+-- Cut by `splitCharacterName`, the same rule the blocked list and the patterns
+-- use, so the three lists can never disagree about where a pseudo ends. Its own
+-- rule used to strip spaces instead of cutting on them, and to cut on a hyphen
+-- only when a character came first, which wrote on the allowed side exactly the
+-- entries `addBlocked` refuses: "Toto Ysondre" was keyed "totoysondre" and
+-- "-Toto" was keyed "-toto" -- keys no name coming out of the game ever matches.
+-- The person read the label in the panel, saw it counted in the tile, and the
+-- friend they had just allowed went on being filtered with no popup, no sound
+-- and no chat line. An allowed player keeps WoW's own behaviour: that is the
+-- product rule this broke.
+--
+-- Realm-less on purpose, unlike the blocked list. Dropping the realm here can
+-- only allow somebody by mistake, never block somebody by mistake -- and of the
+-- two, only the second one hurts. Rosters also hand over bare names often enough
+-- that demanding a realm would lose friends the add-on is meant to let through.
+--
+-- Answers nil when nothing usable is left ("-", " - "), and every caller refuses
+-- the input rather than inventing an entry for it.
 local function normalizeName(name)
-    name = stripWoWFormatting(name)
-    if not name then return nil end
-    -- WoW character names never contain spaces.
-    name = name:gsub("%s", ""):lower()
-    -- The allowed side stays realm-less on purpose, unlike the blocked list.
-    -- Dropping the realm here can only allow somebody by mistake, never block
-    -- somebody by mistake -- and of the two, only the second one hurts. Rosters
-    -- also hand over bare names often enough that demanding a realm would lose
-    -- friends the add-on is meant to let through.
-    local nameOnly = name:match("^([^-]+)-") or name
-    return nameOnly
+    -- Parenthesised: `splitCharacterName` answers two values and every caller
+    -- here wants the pseudo alone.
+    return (splitCharacterName(name))
 end
 
 local function normalizeBNetName(name)
@@ -709,7 +729,10 @@ ns.getPreset = getPreset
 --
 -- Answers nil when nothing usable is left ("-", " - "), and every caller refuses
 -- the input rather than inventing an entry for it.
-local function splitCharacterName(name)
+--
+-- Assigns the forward local declared next to `normalizeName`: the allowed list
+-- cuts here too. No `local` on this line, or `normalizeName` loses it.
+function splitCharacterName(name)
     local clean = stripWoWFormatting(name)
     if not clean then return nil end
     clean = clean:gsub("^[%s%-]+", ""):gsub("[%s%-]+$", "")
@@ -1556,6 +1579,10 @@ function ns.addAllowed(name, source)
     if not SanctuaryDB then return false end
     local clean = stripWoWFormatting(name)
     if not clean or clean:gsub("%s", "") == "" then return false end
+    -- Keyed on the pseudo half, cut by the one rule the blocked list uses, and
+    -- refused outright when nothing is left of it -- "-" writes here no more
+    -- than it writes there. The field is the same on both panels ("Name or
+    -- Name-Realm"), so the two sides had no business reading it differently.
     local key = normalizeName(clean)
     if not key then return false end
     SanctuaryDB.manualWhitelist = SanctuaryDB.manualWhitelist or {}
@@ -1567,6 +1594,12 @@ function ns.addAllowed(name, source)
         -- tooltip states where a name came from, and a name added from a right
         -- click is not a name somebody typed: dropping the origin made the
         -- tooltip claim a hand entry that never happened.
+        --
+        -- The raw entry, never the key: `addManualEntry` feeds the Battle.net
+        -- cache from `displayName`, and that is the documented way to allow an
+        -- account -- "Real Friend#1234" typed here reaches the Battle.net
+        -- whisper path through this field alone. Key it here and the account
+        -- would stop being allowed the day the key rule changed.
         displayName = clean,
         addedAt = time(),
         source = (source == "trust" or source == "menu") and source or nil,
@@ -1650,6 +1683,10 @@ function ns.restoreBlocked(key, data)
 end
 
 do
+-- The stored spelling of a pattern, and the one `removePattern` looks up. It
+-- deliberately does NOT refuse a hyphen: a settings file written by an earlier
+-- build can hold "toto-ysondre", and the person has to be able to delete it from
+-- the panel. `addPattern` is where a new one is refused.
 local function normalizePatternText(text)
     if type(text) ~= "string" then return nil end
     local clean = stripWoWFormatting(text)
@@ -1661,10 +1698,22 @@ end
 
 ns.normalizePatternText = normalizePatternText
 
+-- A pattern holding a hyphen matches nobody, ever, and is refused rather than
+-- stored: `matchesKeyword` looks in the pseudo half alone, and a pseudo carries
+-- no hyphen by construction. Stored, "Toto-Ysondre" showed in the panel, counted
+-- in the tile and armed the guards while blocking no one -- the dead entry the
+-- blocked list had just closed, reopened one commit later on the pattern list.
+--
+-- Refused, and not cut down to its pseudo half like a name: "Toto-Ysondre" cut
+-- to "toto" would block every Toto of every realm, the silent over-block that
+-- searching the pseudo alone has just ended. A pattern names a piece of text to
+-- look for, not a realm; there is nothing to salvage here, only something to say
+-- no to.
 function ns.addPattern(text)
     if not SanctuaryDB then return false end
     local clean = normalizePatternText(text)
     if not clean then return false end
+    if clean:find("-", 1, true) then return false end
     SanctuaryDB.keywords = SanctuaryDB.keywords or {}
     for _, existing in ipairs(SanctuaryDB.keywords) do
         if existing == clean then return false, clean, clean end
