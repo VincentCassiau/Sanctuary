@@ -1,6 +1,6 @@
 -- ============================================================================
 -- Sanctuary — WoW Anti-Harassment Addon (Whitelist-based protection)
--- Version: 0.4.0 | Interface: 120007 (Midnight)
+-- Version: 1.0.0 | Interface: 120007 (Midnight)
 -- ============================================================================
 
 -- ============================================================================
@@ -9,7 +9,7 @@
 
 local ADDON_NAME, ns = ...
 local L = ns.L
-local VERSION = "0.4.0"
+local VERSION = "1.0.0"
 
 -- Build identity. This is NOT a release version and must never be presented as
 -- one: it only makes a user-provided debug report attributable to the exact
@@ -45,7 +45,7 @@ ns.COLOR_HIGHLIGHT = COLOR_HIGHLIGHT
 -- ============================================================================
 
 local ACCOUNT_DEFAULTS = {
-    -- Bumped to 2 by the 0.4.0 model (scope/preset switches, always-blocked
+    -- Bumped to 2 by the 1.0.0 model (scope/preset switches, always-blocked
     -- list). A settings file still carrying schema 1 is not migrated and not
     -- partly kept: it is rebuilt from these defaults, lists included. See
     -- handlers.ADDON_LOADED.
@@ -158,7 +158,7 @@ local playerRealm = nil
 -- Cached, but only once there is something worth caching. The API answers nil
 -- -- and, on some paths, an empty string -- until the world is entered, and an
 -- empty string is truthy: caching one froze the realm as "unknown" for the whole
--- session. That used to cost a realm comparison; since 0.4.0 every entry of the
+-- session. That used to cost a realm comparison; since 1.0.0 every entry of the
 -- blocked list is keyed by realm, so it would have cost the blocked list
 -- entirely, in silence, with the panel still showing the names.
 local function getPlayerRealm()
@@ -882,7 +882,7 @@ end
 ns.normalizePatternText = normalizePatternText
 
 -- Keyword blacklist: blocks names containing any suspect keyword.
--- Private on purpose since 0.4.0: isAlwaysBlocked is the only caller, so a
+-- Private on purpose since 1.0.0: isAlwaysBlocked is the only caller, so a
 -- pattern and an exact blocked name can never be tested by different code.
 --
 -- The pseudo half only, cut by the one rule the key builder uses. The panel
@@ -1488,7 +1488,7 @@ ensureWhitelistCache = function()
     end
 end
 
--- Which of the three tiers a name falls into, and why. The whole 0.4.0 model is
+-- Which of the three tiers a name falls into, and why. The whole 1.0.0 model is
 -- this function: always blocked, else always allowed, else unknown -- and only
 -- the third tier depends on a setting.
 --
@@ -5421,7 +5421,7 @@ local function formatChatDiagnosticResult(result)
     )
 end
 
--- Split in two since 0.4.0: the single diagnostic played both sounds inside one
+-- Split in two since 1.0.0: the single diagnostic played both sounds inside one
 -- call, which is precisely the case where nobody can tell whether they heard two
 -- sounds or one. Two buttons, one sound each, checked by ear one after the other.
 local function runSoundDiagnostic(kind)
@@ -5947,14 +5947,14 @@ end
 
 local frame = CreateFrame("Frame")
 
--- 0.4.0 changes what a setting means, not only where it is stored: the two
+-- 1.0.0 changes what a setting means, not only where it is stored: the two
 -- switches of questions 1 and 2 now decide what the per-filter values are worth.
 -- Carrying a 0.3.x file forward would therefore need a translation table for
 -- every combination, and every one of those translations would be a guess about
 -- what the person meant. The settings go back to the defaults instead.
 --
 -- The lists go with them. Keeping them meant a conversion -- the blocked list
--- is keyed by realm in 0.4.0 and was not before -- and a conversion is another
+-- is keyed by realm in 1.0.0 and was not before -- and a conversion is another
 -- guess about what someone meant, written once and lived with forever. There is
 -- one user today, she is told, and she types her lists again once.
 --
@@ -5963,7 +5963,7 @@ local frame = CreateFrame("Frame")
 --
 -- Two files, two stamps, two independent decisions. The account file is written
 -- once per account, the character file once per character: the first character
--- to load 0.4.0 stamps the account file, and every other character still logs in
+-- to load 1.0.0 stamps the account file, and every other character still logs in
 -- carrying a v1 file of its own. Deciding both from the account stamp would send
 -- those characters through `fillMissingDefaults`, which adds what is missing and
 -- overwrites nothing -- so an `overrides.enabled = false` written by 0.3.2 (a
@@ -5974,7 +5974,7 @@ local function resetAccountToSchemaV2()
     -- travels: this flag is the only record `releaseStaleProtectedPopupSoundMute`
     -- can read to lift a MuteSoundFile left behind by the previous session. A
     -- mute survives /reload and relogging -- only a full client restart clears
-    -- it -- and the first load of 0.4.0 always goes through this reset. Dropped
+    -- it -- and the first load of 1.0.0 always goes through this reset. Dropped
     -- here, the game's generic panel sounds stay off with no way out in game,
     -- which is a broken client, not a forgotten preference.
     local carriedPopupSoundMuted = SanctuaryDB and SanctuaryDB.protectedPopupSoundMuted
@@ -5993,7 +5993,7 @@ local function resetCharacterToSchemaV2()
 end
 
 -- Nothing inside this file needs both halves at once -- ADDON_LOADED decides
--- them one file at a time -- but the whole 0.4.0 reset stays reachable by name.
+-- them one file at a time -- but the whole 1.0.0 reset stays reachable by name.
 ns.resetToSchemaV2 = function()
     resetAccountToSchemaV2()
     resetCharacterToSchemaV2()
@@ -6037,7 +6037,7 @@ function handlers.ADDON_LOADED(addonName)
     SanctuaryCharDB.sessionStats = { blockedCount = 0, blockedByType = {} }
 
     -- One line at load, and only one. The Leatrix and BadBoy notices went with
-    -- 0.4.0: neither carried any compatibility logic, they were only a message,
+    -- 1.0.0: neither carried any compatibility logic, they were only a message,
     -- and a session that starts with three unexplained lines reads as a fault.
     if isEnabled() then
         printMsg(COLOR_ON .. L["ADDON_LOADED_ACTIVE"] .. COLOR_RESET)

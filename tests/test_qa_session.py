@@ -203,11 +203,11 @@ class ArchiveTests(unittest.TestCase):
     def test_the_name_comes_from_the_recording(self):
         build, saved_at = runner.read_manifest_fields(self.source)
         self.assertEqual(build, "20260821-1")
-        name = runner.archive_name("sanctuary-0.4.0", build, saved_at)
-        self.assertEqual(name, "sanctuary-0.4.0_build-20260821-1_2026-08-21_2030.lua")
+        name = runner.archive_name("sanctuary-1.0.0", build, saved_at)
+        self.assertEqual(name, "sanctuary-1.0.0_build-20260821-1_2026-08-21_2030.lua")
 
     def test_a_recording_with_no_manifest_still_gets_a_name(self):
-        name = runner.archive_name("sanctuary-0.4.0", None, None)
+        name = runner.archive_name("sanctuary-1.0.0", None, None)
         self.assertIn("build-inconnu", name)
         self.assertIn("date-inconnue", name)
 
@@ -409,7 +409,7 @@ class ReportTests(unittest.TestCase):
             "started_at": "2026-08-21 18:00:00",
             "finished_at": "2026-08-21 18:32:00",
             "completed": True, "operator_verdict": "CONFORME",
-            "archive_name": "sanctuary-0.4.0_build-20260821-1_2026-08-21_2030.lua",
+            "archive_name": "sanctuary-1.0.0_build-20260821-1_2026-08-21_2030.lua",
             "archive_state": "archive", "archive_size": 12345,
             "archive_sha": "deadbeef", "verdict": "CONFORME",
             "stability": runner.STABILITY_OK,

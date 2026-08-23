@@ -125,7 +125,7 @@ end
 function C_FriendList.ShowFriends() end
 C_GuildInfo = { GuildRoster = function() end }
 local addonMetadata = {
-    Version = "0.4.0",
+    Version = "1.0.0",
     ["X-Sanctuary-Build"] = "20260820-8",
     Interface = "120007",
 }
@@ -508,7 +508,7 @@ fire("ADDON_LOADED", "Sanctuary")
 -- gets its own section further down.
 SanctuaryDB.filters.preset = "custom"
 fire("PLAYER_ENTERING_WORLD")
-equal(ns.VERSION, "0.4.0", "version exported")
+equal(ns.VERSION, "1.0.0", "version exported")
 equal(#muted, 0, "no global sound files muted at rest")
 equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "party invite dialog sound suppressed while group filter active")
 equal(StaticPopupDialogs.DUEL_REQUESTED.sound, nil, "duel dialog sound suppressed while duel filter active")
@@ -712,12 +712,12 @@ SanctuaryDB.debugLog = {}
 ns.captureDebugSnapshot()
 equal(#SanctuaryDB.debugLog, 1, "debug snapshot captured")
 equal(SanctuaryDB.debugLog[1].cat, "SNAPSHOT", "debug snapshot category")
-equal(SanctuaryDB.debugLog[1].data.version, "0.4.0", "debug snapshot version")
+equal(SanctuaryDB.debugLog[1].data.version, "1.0.0", "debug snapshot version")
 equal(SanctuaryDB.debugLog[1].data.build, "20260820-8", "debug snapshot reports the diagnostic build id")
 equal(SanctuaryDB.debugLog[1].data.clientVersion, "12.0.7", "debug snapshot reports the client version")
 equal(SanctuaryDB.debugLog[1].data.clientBuild, "62119", "debug snapshot reports the client build")
 equal(SanctuaryDB.debugLog[1].data.clientInterface, 120007, "debug snapshot reports the client interface number")
-equal(SanctuaryDB.debugLog[1].data.addonMetaVersion, "0.4.0", "debug snapshot reports the loaded addon version metadata")
+equal(SanctuaryDB.debugLog[1].data.addonMetaVersion, "1.0.0", "debug snapshot reports the loaded addon version metadata")
 equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, "20260820-8", "debug snapshot reports the loaded addon build metadata")
 equal(SanctuaryDB.debugLog[1].data.addonMetaInterface, "120007", "debug snapshot reports the loaded addon interface metadata")
 check(SanctuaryDB.debugLog[1].data.chatLockdownKnown, "debug snapshot reports a readable chat messaging lockdown state")
@@ -1018,7 +1018,7 @@ local function expectSecretOutputReachesFrame(label, messageTypeID)
 end
 
 -- The two strict-mode calls below used to assert the opposite: the line reached
--- the frame, because nothing stopped it. That is the defect 0.4.0 fixes, so the
+-- the frame, because nothing stopped it. That is the defect 1.0.0 fixes, so the
 -- assertions are reformulated rather than removed -- and the journal must stay
 -- untouched, because a masked system line has no sender and no content to record.
 local function expectSecretOutputMasked(label, messageTypeID)
@@ -1796,7 +1796,7 @@ check(not unguardedDiagnostic.observed, "chat diagnostic does not fake observati
 equal(#rawDiagnosticMessages, 1, "unguarded chat diagnostic would print the probe message")
 DEFAULT_CHAT_FRAME = savedDefaultChatFrame
 
--- The two sounds are separate buttons since 0.4.0: played inside one call, no
+-- The two sounds are separate buttons since 1.0.0: played inside one call, no
 -- one could tell whether they had heard two sounds or one.
 playedSounds = {}
 SanctuaryDB.debugLog = {}
@@ -2397,7 +2397,7 @@ equal(groupBySource.bnet.total, 56, "a search reports how many entries it narrow
 equal(#ns.getAutoWhitelistGroups("nobodyhere")[1].entries, 0,
     "a search that matches nothing returns nothing rather than everything")
 
--- "Test a name" -- the same decision, not a second one. Since 0.4.0 it answers
+-- "Test a name" -- the same decision, not a second one. Since 1.0.0 it answers
 -- in three tiers, and the eight answers of the validated board are exactly the
 -- eight cases below.
 local verdict = ns.describeAccessDecision("Officer-TestRealm")
@@ -2707,7 +2707,7 @@ ns.resetDebugLog()
 
 
 -- ===========================================================================
--- SECTION: the 0.4.0 decision model
+-- SECTION: the 1.0.0 decision model
 -- ===========================================================================
 
 -- One phrase: always blocked, else always allowed, else unknown -- and only the
@@ -3730,7 +3730,7 @@ equal(SanctuaryDB.debugEnabled, false, "and debug mode is off again")
 equal(SanctuaryDB.uiSettings.showMessageColumn, false,
     "the text of blocked messages is not displayed until it is asked for")
 -- The lists go back to empty with the settings. Keeping them meant converting
--- them -- the blocked list is keyed by realm in 0.4.0 and was not before -- and
+-- them -- the blocked list is keyed by realm in 1.0.0 and was not before -- and
 -- a conversion is one more guess about what someone meant. She is told, and she
 -- types them again once.
 equal(next(SanctuaryDB.manualWhitelist), nil, "the names added by hand go too")
@@ -3752,7 +3752,7 @@ do
 
 -- C15b -- two files, two stamps. The account file is written once per account
 -- and the character file once per character, so the first character to load
--- 0.4.0 stamps the account file and every other character still logs in with a
+-- 1.0.0 stamps the account file and every other character still logs in with a
 -- v1 file of its own. Decided from the account stamp alone, those characters go
 -- through fillMissingDefaults, which adds what is missing and overwrites
 -- nothing: the `overrides.enabled = false` a right-click on the minimap button
@@ -3784,8 +3784,8 @@ check(SanctuaryCharDB.groupTracker.freshmate ~= nil, "and the tracking that star
 -- C15c -- the one record that is not a setting. A MuteSoundFile survives
 -- /reload and relogging; only a full client restart clears it. The flag mirrors
 -- it into SavedVariables so the next load can lift what the previous session
--- left behind -- and the first load of 0.4.0 always goes through the reset. The
--- real path: a 0.3.2 session with a sound guard up at /reload, then 0.4.0
+-- left behind -- and the first load of 1.0.0 always goes through the reset. The
+-- real path: a 0.3.2 session with a sound guard up at /reload, then 1.0.0
 -- copied in and reloaded without restarting the client.
 local unmutedBeforeStale = #unmuted
 SanctuaryDB = { schemaVersion = 1, protectedPopupSoundMuted = true }
@@ -4482,7 +4482,7 @@ local KNOWN_IDENTICAL = {
     ABOUT_VERSION = true, GROUP_COMMUNICATION = true, GROUP_INTERACTIONS = true,
     GROUP_NOTIFICATIONS = true, LOG_TYPE_DUEL = true, LOG_TYPE_EMOTE = true,
     LOG_TYPE_INVITE = true, LOG_TYPE_WHISPER = true, NOTIF_MINIMAL = true,
-    -- 0.4.0: proper nouns and format strings that read the same in both
+    -- 1.0.0: proper nouns and format strings that read the same in both
     -- languages. Listed rather than filtered out so adding one is deliberate.
     ADV_DIAG_TITLE = true, ADV_JOURNAL_TITLE = true, EXPORT_COLUMNS = true,
     PANEL_BLOCKED_PATTERNS = true, WL_BNET_ROW = true, TAB_PROTECTION = true,

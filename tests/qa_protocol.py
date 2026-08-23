@@ -16,7 +16,7 @@ Usage:
 import argparse
 import sys
 
-PROTOCOL_ID = "sanctuary-0.4.0"
+PROTOCOL_ID = "sanctuary-1.0.0"
 
 # Seven phases, so the CLI can say "phase 3 / 7" instead of "step 9 / 17". A
 # person playing a session needs to know where they are, not how far they have
