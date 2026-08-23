@@ -1800,25 +1800,26 @@ function ns.describeAccessDecision(name)
     local blockedNow = getCharacterDecision(name)
 
     -- Someone blocked by name who is also allowed by a trust source is the case
-    -- the tester exists for. Adding to the blocked list never removes the
-    -- allowed entry, so the answer says both: blocked, even though.
+    -- the tester exists for: a guild mate, a realm friend, somebody in the group.
+    -- The answer says both -- blocked, even though.
+    --
+    -- Never Battle.net any more, decision 100. That answer read "toujours bloque
+    -- : dans vos bloques (meme si ami Battle.net)", which states the rule and
+    -- breaks it in the same sentence, and `ns.addBlocked` now refuses to create
+    -- the case at all. An entry a settings file inherited from before that
+    -- refusal still blocks the character it names -- the panel shows it and one
+    -- click removes it -- but the tester no longer says a thing the add-on has
+    -- stopped doing.
+    --
+    -- The manual allowed list is gone from here too, and by construction: the
+    -- two lists are exclusive now, so a name cannot be in both.
     local overridden, overriddenDetail = nil, nil
     if classification.verdict == "always_blocked" then
         local characterKey = normalizeName(name)
-        local accountKey = normalizeBNetName(name)
-        if characterKey and Sanctuary.whitelistSources[characterKey] then
-            overridden = Sanctuary.whitelistSources[characterKey]
+        local source = characterKey and Sanctuary.whitelistSources[characterKey]
+        if source and source ~= "bnet" then
+            overridden = source
             overriddenDetail = Sanctuary.whitelistLabels[characterKey]
-            -- Same namesake trap as in `classifyName`, on the other half of the
-            -- tester's answer: "blocked, even though ..." has to name the account
-            -- of the person being blocked, not whichever namesake was read first.
-            if overridden == "bnet" then
-                local account = bnetAccountForCharacter(name)
-                if account then overriddenDetail = account end
-            end
-        elseif accountKey and Sanctuary.bnetWhitelistSources[accountKey] then
-            overridden = Sanctuary.bnetWhitelistSources[accountKey]
-            overriddenDetail = Sanctuary.bnetWhitelistLabels[accountKey] or name
         end
     end
 
@@ -1937,6 +1938,20 @@ end
 -- typed, so there is nothing to say about it. A duplicate: it answers
 -- (false, key, data), and the label is already on screen a few pixels away.
 
+-- Every write to the always-blocked lists goes through this, never through
+-- `invalidateWhitelist` alone. `isProtectionArmed` reads those lists, so adding
+-- the first name -- or removing the last one -- flips the guards on its own,
+-- with no filter touched and no event fired. And the sound guard is posted
+-- state, not state derived on read: `StaticPopupDialogs[...].sound` stays at
+-- whatever the last refresh left there. Skip this and the two product rules
+-- break at once: the first blocked name still plays its invite sound before the
+-- popup is masked, and after the last one is removed a stranger's invitation
+-- stays mute in the mode where it must sound exactly as WoW plays it.
+local function invalidateBlockedLists()
+    invalidateWhitelist()
+    refreshInviteSoundMuteState()
+end
+
 function ns.addAllowed(name, source)
     if not SanctuaryDB then return false end
     local clean = stripWoWFormatting(name)
@@ -1963,6 +1978,26 @@ function ns.addAllowed(name, source)
     if SanctuaryDB.manualWhitelist[key] then
         return false, key, SanctuaryDB.manualWhitelist[key]
     end
+    -- The two lists are exclusive, decision 104: "on peut a la fois ajouter dans
+    -- autorise et dans bloque, c'est pas normal". They were not, and the
+    -- reasoning for it -- "the blocked list wins anyway, and deleting a line
+    -- somebody typed would be a data loss they never asked for" -- had the cost
+    -- backwards: what a person reads is two lists that contradict each other,
+    -- with no way to tell from either one which of the two is in force.
+    --
+    -- What was displaced travels back to the caller rather than vanishing: the
+    -- interface says which list the name left, and Annuler puts the whole
+    -- gesture back -- this entry out, that one in. Undoing one half alone would
+    -- put the two lists back into the state this rule exists to end.
+    local displaced = nil
+    local blockedKey = normalizeBlockedKey(clean)
+    if blockedKey and SanctuaryDB.blockedNames and SanctuaryDB.blockedNames[blockedKey] then
+        displaced = {
+            list = "blocked", key = blockedKey,
+            data = SanctuaryDB.blockedNames[blockedKey],
+        }
+        SanctuaryDB.blockedNames[blockedKey] = nil
+    end
     local data = {
         -- "menu" travels here exactly as it does through `addBlocked`. The chip
         -- tooltip states where a name came from, and a name added from a right
@@ -1979,8 +2014,11 @@ function ns.addAllowed(name, source)
         source = (source == "trust" or source == "menu") and source or nil,
     }
     SanctuaryDB.manualWhitelist[key] = data
-    invalidateWhitelist()
-    return true, key, data
+    -- Through the blocked-list path, not `invalidateWhitelist` alone: this write
+    -- can have emptied the blocked list, and the guards and the invite sound are
+    -- posted state that only that call refreshes.
+    invalidateBlockedLists()
+    return true, key, data, nil, displaced
 end
 
 function ns.removeAllowed(key)
@@ -2000,20 +2038,6 @@ function ns.restoreAllowed(key, data)
     SanctuaryDB.manualWhitelist[key] = data
     invalidateWhitelist()
     return true, key, data
-end
-
--- Every write to the always-blocked lists goes through this, never through
--- `invalidateWhitelist` alone. `isProtectionArmed` reads those lists, so adding
--- the first name -- or removing the last one -- flips the guards on its own,
--- with no filter touched and no event fired. And the sound guard is posted
--- state, not state derived on read: `StaticPopupDialogs[...].sound` stays at
--- whatever the last refresh left there. Skip this and the two product rules
--- break at once: the first blocked name still plays its invite sound before the
--- popup is masked, and after the last one is removed a stranger's invitation
--- stays mute in the mode where it must sound exactly as WoW plays it.
-local function invalidateBlockedLists()
-    invalidateWhitelist()
-    refreshInviteSoundMuteState()
 end
 
 function ns.addBlocked(name, source)
@@ -2043,15 +2067,38 @@ function ns.addBlocked(name, source)
     -- had two answers to keep in step -- while the allowed field, sixty lines
     -- up, was already asking the question the other way round.
     if isAccountName(clean) then return false, nil, nil, "account" end
+    -- And the character a Battle.net friend is playing, refused for the same
+    -- reason and with the same sentence. Decision 100: "on s'etait dit que si on
+    -- voulait bloquer quelqu'un de Battle.net il fallait le faire via Battle.net".
+    -- Only the tag was refused before, so the friend's CHARACTER went in without
+    -- a word and the tester answered "toujours bloque : dans vos bloques (meme
+    -- si ami Battle.net)" -- a sentence that states the rule and breaks it in
+    -- the same breath.
+    --
+    -- Asked of the map `rebuildWhitelist` records, through the one function that
+    -- answers "which account is playing this character". It fails open: a roster
+    -- that has not answered yet knows nobody, so nothing legitimate is refused
+    -- on a stale cache -- the wrong way round would be an add-on that will not
+    -- let somebody block their harasser.
+    ns.ensureWhitelist()
+    if bnetAccountForCharacter(clean) then return false, nil, nil, "account" end
     local key = normalizeBlockedKey(clean)
     if not key then return false, nil, nil, "name" end
     SanctuaryDB.blockedNames = SanctuaryDB.blockedNames or {}
     if SanctuaryDB.blockedNames[key] then
         return false, key, SanctuaryDB.blockedNames[key]
     end
-    -- Deliberately does NOT remove the name from the allowed list. The blocked
-    -- list wins anyway, the tester says so in one sentence, and silently
-    -- deleting a line somebody typed would be a data loss they never asked for.
+    -- Exclusive with the allowed list, decision 104. See `ns.addAllowed` for
+    -- what `displaced` is and why the whole gesture has to be undoable at once.
+    local displaced = nil
+    local allowedKey = ns.findAllowedKey(clean)
+    if allowedKey and SanctuaryDB.manualWhitelist and SanctuaryDB.manualWhitelist[allowedKey] then
+        displaced = {
+            list = "allowed", key = allowedKey,
+            data = SanctuaryDB.manualWhitelist[allowedKey],
+        }
+        SanctuaryDB.manualWhitelist[allowedKey] = nil
+    end
     local data = {
         displayName = clean,
         addedAt = time(),
@@ -2059,7 +2106,7 @@ function ns.addBlocked(name, source)
     }
     SanctuaryDB.blockedNames[key] = data
     invalidateBlockedLists()
-    return true, key, data
+    return true, key, data, nil, displaced
 end
 
 function ns.removeBlocked(key)

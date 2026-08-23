@@ -614,15 +614,41 @@ local function clearUndo()
     if undoLine then undoLine:Hide() end
 end
 
-local function offerUndo(labelText, restore)
+local function offerUndoLine(text, restore)
     undoState = { restore = restore, at = GetTime() }
     local mine = undoState
     if undoLine then
-        undoLine.label:SetText(string.format(L["UNDO_REMOVED"], labelText))
+        undoLine.label:SetText(text)
         undoLine:Show()
     end
     C_Timer.After(UNDO_SECONDS, function()
         if undoState == mine then clearUndo() end
+    end)
+end
+
+local function offerUndo(labelText, restore)
+    offerUndoLine(string.format(L["UNDO_REMOVED"], labelText), restore)
+end
+
+-- The two lists are exclusive, so a name written into one leaves the other, and
+-- that is a removal nobody asked for out loud: it gets the same strip, naming
+-- the list it left. Annuler puts the WHOLE gesture back -- this entry out, that
+-- one in -- because undoing half of it would leave the name in both lists again,
+-- which is the state decision 104 exists to end.
+local DISPLACED_UNDO = {
+    allowed = { titleKey = "TILE_ALLOWED", remove = "removeBlocked", restore = "restoreAllowed" },
+    blocked = { titleKey = "TILE_BLOCKED", remove = "removeAllowed", restore = "restoreBlocked" },
+}
+
+local function offerDisplacedUndo(addedKey, displaced)
+    if type(displaced) ~= "table" then return end
+    local spec = DISPLACED_UNDO[displaced.list]
+    if not spec or not addedKey then return end
+    local label = (type(displaced.data) == "table" and displaced.data.displayName)
+        or displaced.key
+    offerUndoLine(string.format(L["UNDO_MOVED"], label, L[spec.titleKey]), function()
+        ns[spec.remove](addedKey)
+        ns[spec.restore](displaced.key, displaced.data)
     end)
 end
 
@@ -1730,9 +1756,10 @@ local function submitEntry(box, addFn)
     local text = box:GetText()
     box:SetText("")
     box:RefreshHint()
-    local ok, _, _, refusal = addFn(text)
+    local ok, key, _, refusal, displaced = addFn(text)
     local sentence = refusal and REFUSAL_TEXT[refusal]
     if sentence then box:SayNo(sentence()) else box:ClearNote() end
+    if ok then offerDisplacedUndo(key, displaced) end
     if ok and ns.refreshUI then ns.refreshUI() end
 end
 
@@ -2886,14 +2913,31 @@ function ns.buildPlayerMenuEntries(contextData)
         {
             text = isAllowed and L["MENU_UNALLOW"] or L["MENU_ALLOW"],
             action = function()
-                if isAllowed then ns.removeAllowed(allowedKey) else ns.addAllowed(name, "menu") end
+                if isAllowed then
+                    ns.removeAllowed(allowedKey)
+                else
+                    -- The menu writes through the same two functions the panels
+                    -- do, so it inherits the exclusivity rule and the Battle.net
+                    -- refusal without a second copy of either. What it has to do
+                    -- of its own is say what happened: there is no field here to
+                    -- put a sentence under.
+                    local ok, key, _, refusal, displaced = ns.addAllowed(name, "menu")
+                    if ok then offerDisplacedUndo(key, displaced) end
+                    if refusal == "account" then ns.printMsg(bnetNotBlockedFull()) end
+                end
                 if ns.refreshUI then ns.refreshUI() end
             end,
         },
         {
             text = isBlocked and L["MENU_UNBLOCK"] or L["MENU_BLOCK"],
             action = function()
-                if isBlocked then ns.removeBlocked(blockedKey) else ns.addBlocked(name, "menu") end
+                if isBlocked then
+                    ns.removeBlocked(blockedKey)
+                else
+                    local ok, key, _, refusal, displaced = ns.addBlocked(name, "menu")
+                    if ok then offerDisplacedUndo(key, displaced) end
+                    if refusal == "account" then ns.printMsg(bnetNotBlockedFull()) end
+                end
                 if ns.refreshUI then ns.refreshUI() end
             end,
         },

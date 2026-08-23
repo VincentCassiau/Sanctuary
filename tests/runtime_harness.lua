@@ -3508,17 +3508,35 @@ equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPaylo
 SanctuaryDB.keywords = {}
 ns.invalidateWhitelist()
 
--- Blocking the CHARACTER a Battle.net friend plays is a different act, and it
--- works: that character is blocked on the WoW paths (decision 29, the blocked
--- list beats the friend lists) while the account keeps whispering.
-ns.addBlocked("Bnetchar-Ysondre", "menu")
+-- Blocking the CHARACTER a Battle.net friend plays is refused too, decision 100:
+-- "on ne bloque pas un ami Battle.net, point". Only the tag used to be refused,
+-- so the character went in without a word and the tester answered "toujours
+-- bloque : dans vos bloques (meme si ami Battle.net)" -- a sentence that states
+-- the rule and breaks it in the same breath.
+do
+    local ok, _, _, refusal = ns.addBlocked("Bnetchar-Ysondre", "menu")
+    equal(ok, false, "the character a Battle.net friend plays cannot be blocked")
+    equal(refusal, "account", "and is answered with the Battle.net sentence")
+    -- The bare name, the way the right-click menu hands it over on your realm.
+    equal(select(4, ns.addBlocked("Bnetchar")), "account",
+        "with or without the realm on it")
+    equal(SanctuaryDB.blockedNames[ns.normalizeBlockedKey("Bnetchar-Ysondre")], nil,
+        "and nothing is written")
+    equal(ns.classifyName("Bnetchar-Ysondre").verdict, "always_allowed",
+        "so the friend stays allowed")
+end
+
+-- A settings file inherited from before that refusal still holds such an entry.
+-- It goes on blocking the character it names -- the panel shows it and one click
+-- removes it -- but the tester no longer credits the friendship in the same
+-- sentence, which is the answer decision 100 called false.
+SanctuaryDB.blockedNames[ns.normalizeBlockedKey("Bnetchar-Ysondre")] =
+    { displayName = "Bnetchar-Ysondre", addedAt = 0, source = "manual" }
 ns.invalidateWhitelist()
 equal(select(1, ns.getCharacterDecision("Bnetchar-Ysondre")), true,
-    "the character of a Battle.net friend can be blocked on the WoW paths")
-equal(ns.classifyName("Bnetchar-Ysondre").verdict, "always_blocked",
-    "and 'Test a name' says so rather than crediting the friendship")
-equal(ns.describeAccessDecision("Bnetchar-Ysondre").overriddenDetail, "Real Friend#1234",
-    "naming the account the block overrides")
+    "an inherited entry still blocks on the WoW paths")
+equal(ns.describeAccessDecision("Bnetchar-Ysondre").overriddenList, nil,
+    "and the tester no longer says 'blocked, even though Battle.net friend'")
 equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(91)), false,
     "while his Battle.net whispers keep arriving")
 ns.removeBlocked(ns.normalizeBlockedKey("Bnetchar-Ysondre"))
@@ -3646,10 +3664,32 @@ check(type(removedData) == "table" and removedData.displayName == "Toto-Ysondre"
 ns.restoreAllowed(removedKey, removedData)
 equal(SanctuaryDB.manualWhitelist.toto.displayName, "Toto-Ysondre",
     "and restoring puts back the same record, date included")
-equal(select(1, ns.addBlocked("Toto-Ysondre")), true, "the same name can also be blocked")
-check(SanctuaryDB.manualWhitelist.toto ~= nil,
-    "and blocking never deletes the allowed entry the person typed")
-equal(select(1, ns.getCharacterDecision("Toto-Ysondre")), true, "the decision blocks them")
+-- The two lists are exclusive, decision 104. Blocking a name takes it out of the
+-- allowed list and hands the entry back, so the whole gesture can be undone at
+-- once; undoing one half alone would put the two lists back into the state the
+-- rule exists to end.
+do
+    local blockOk, blockKey, _, _, displaced = ns.addBlocked("Toto-Ysondre")
+    equal(blockOk, true, "the same name can be blocked instead")
+    equal(SanctuaryDB.manualWhitelist.toto, nil, "which takes it out of the allowed list")
+    check(type(displaced) == "table" and displaced.list == "allowed",
+        "and says which list it came out of")
+    check(type(displaced.data) == "table" and displaced.data.displayName == "Toto-Ysondre",
+        "handing back the record as it was, date included")
+    equal(select(1, ns.getCharacterDecision("Toto-Ysondre")), true, "the decision blocks them")
+
+    -- And the other way round: allowing a blocked name takes it out of the
+    -- blocked list, guards and invite sound refreshed with it.
+    local allowOk, _, _, _, displacedBack = ns.addAllowed("Toto-Ysondre")
+    equal(allowOk, true, "allowing it again works")
+    equal(SanctuaryDB.blockedNames[blockKey], nil, "and takes it out of the blocked list")
+    check(type(displacedBack) == "table" and displacedBack.list == "blocked",
+        "saying which list it came out of")
+    equal(ns.hasAlwaysBlockedEntries(), false, "the blocked list is empty again")
+    equal(select(1, ns.getCharacterDecision("Toto-Ysondre")), false, "and the decision follows")
+end
+ns.removeAllowed("toto")
+ns.restoreAllowed(removedKey, removedData)
 equal(select(1, ns.addPattern("  Te St ")), true, "a pattern is normalised")
 equal(SanctuaryDB.keywords[1], "test", "to lower case with no spaces")
 equal(select(1, ns.addPattern("TEST")), false, "and deduplicated")
@@ -4872,15 +4912,19 @@ SanctuaryDB.filters.scope = "blockedOnly"
 check(testAnswerFor("Zorglub"):find(string.format(ns.L["TEST_UNKNOWN_ALLOWED"], "Zorglub"), 1, true) ~= nil,
     "and allowed in the other mode")
 SanctuaryDB.filters.scope = "strangers"
--- The last line of the board: blocked wins over allowed, and the answer names
--- the list it overrides rather than silently dropping it.
-ns.addBlocked("Bnetchar")
-local overriddenAnswer = testAnswerFor("Bnetchar")
-check(overriddenAnswer:find(string.format(ns.L["TEST_ALWAYS_BLOCKED"], "Bnetchar", ""):sub(1, 24), 1, true) ~= nil,
-    "a blocked Battle.net friend is answered as blocked even so")
-check(overriddenAnswer:find("RealFriend#1234", 1, true) ~= nil,
-    "and the answer still names the Battle.net account it overrides")
-ns.removeBlocked(ns.normalizeBlockedKey("Bnetchar"))
+-- The last line of the board: blocked wins over a trust source, and the answer
+-- names the list it overrides rather than silently dropping it. A guild mate,
+-- not a Battle.net friend -- one of those cannot be blocked at all now.
+ns.addBlocked("Officer-TestRealm")
+do
+    local overriddenAnswer = testAnswerFor("Officer-TestRealm")
+    check(overriddenAnswer:find(
+        string.format(ns.L["TEST_ALWAYS_BLOCKED"], "Officer-TestRealm", ""):sub(1, 24), 1, true) ~= nil,
+        "a blocked guild mate is answered as blocked even so")
+    check(overriddenAnswer:find(ns.L["LIST_GUILD"], 1, true) ~= nil,
+        "and the answer still names the list it overrides")
+end
+ns.removeBlocked(ns.normalizeBlockedKey("Officer-TestRealm"))
 equal(ns.describeAccessDecision("").valid, false, "an empty field asks nothing")
 
 -- The tester answers a question about the lists, so it has to be re-asked every
@@ -5180,16 +5224,21 @@ check(panelRowTexts(blockedPanel):find("Xxxxxxx-Ysondre", 1, true) ~= nil,
 check(panelRowTexts(blockedPanel):find("test", 1, true) ~= nil, "and the patterns")
 check(panelRowTexts(blockedPanel):find(ns.L["BNET_NOT_BLOCKED"], 1, true) ~= nil,
     "and says a Battle.net friend cannot be blocked from here")
+check(panelRowTexts(blockedPanel):find(ns.L["BNET_NOT_BLOCKED_HOW"], 1, true) ~= nil,
+    "with the way out, which is the half that matters where somebody is refused")
 
 _G.SanctuaryBlockedAddInput:SetText("Toto")
 check(ns.addBlocked("Toto"), "a name already in the allowed list can be blocked")
-check(SanctuaryDB.manualWhitelist.toto ~= nil,
-    "and blocking it does not silently delete the entry the person typed")
+equal(SanctuaryDB.manualWhitelist.toto, nil,
+    "and blocking it takes it out of the allowed list, decision 104")
 local blockedNow, blockedReason = ns.getCharacterDecision("Toto")
 equal(blockedNow, true, "the decision changes immediately")
 equal(blockedReason, "blocked_name", "and names the list that decided")
 ns.removeBlocked(ns.normalizeBlockedKey("Toto"))
-equal(select(1, ns.getCharacterDecision("Toto")), false, "removing it changes the decision back")
+equal(select(1, ns.getCharacterDecision("Toto")), true,
+    "removing it leaves an unknown name, which the strangers mode still filters")
+ns.addAllowed("Toto")
+equal(select(1, ns.getCharacterDecision("Toto")), false, "allowing it again lets them through")
 
 _G.SanctuaryPatternAddInput:SetText("  Sp Spam ")
 check(ns.addPattern("  Sp Spam "), "a pattern is normalised on the way in")
@@ -5283,6 +5332,94 @@ ns.ClosePanel()
 end)()
 
 -- ---------------------------------------------------------------------------
+-- The two lists are exclusive, and the strip says so
+-- ---------------------------------------------------------------------------
+
+-- Decision 104. A name written into one list leaves the other, and that removal
+-- gets the undo strip naming the list it left. Annuler puts the WHOLE gesture
+-- back: undoing half of it would leave the name in both lists again.
+--
+-- A scope of its own: the enclosing function is at Lua's ceiling of 200 locals.
+;(function()
+
+ns.OpenPanel("blocked")
+local nameBox = _G.SanctuaryBlockedAddInput
+local panel = _G.SanctuaryPanelBlocked
+local undo = _G.SanctuaryUndoLine
+
+ns.addAllowed("Bothways")
+equal(SanctuaryDB.manualWhitelist.bothways ~= nil, true, "a name is allowed by hand")
+
+nameBox:SetText("Bothways")
+panel.nameBtn:Click()
+local blockedKey = ns.normalizeBlockedKey("Bothways")
+check(SanctuaryDB.blockedNames[blockedKey] ~= nil, "blocking it writes the blocked entry")
+equal(SanctuaryDB.manualWhitelist.bothways, nil, "and takes the allowed one away")
+equal(undo:IsShown(), true, "the strip says a name was displaced")
+check(undo.label:GetText():find("Bothways", 1, true) ~= nil, "naming it")
+check(undo.label:GetText():find(ns.L["TILE_ALLOWED"], 1, true) ~= nil,
+    "and the list it came out of")
+equal(nameBox.note:IsShown(), false, "and nothing was refused")
+
+undo.button:Click()
+equal(SanctuaryDB.blockedNames[blockedKey], nil, "Annuler takes the new entry back out")
+check(SanctuaryDB.manualWhitelist.bothways ~= nil, "and puts the old one back")
+equal(undo:IsShown(), false, "the offer goes with it")
+
+-- The other direction, through the allowed panel.
+ns.ClosePanel()
+ns.addBlocked("Otherway")
+ns.OpenPanel("allowed")
+local allowedBox = _G.SanctuaryAllowedAddInput
+allowedBox:SetText("Otherway")
+_G.SanctuaryPanelAllowed.addBtn:Click()
+check(SanctuaryDB.manualWhitelist.otherway ~= nil, "allowing a blocked name writes the entry")
+equal(SanctuaryDB.blockedNames[ns.normalizeBlockedKey("Otherway")], nil,
+    "and takes the blocked one away")
+check(undo.label:GetText():find(ns.L["TILE_BLOCKED"], 1, true) ~= nil,
+    "the strip names the blocked list this time")
+undo.button:Click()
+check(SanctuaryDB.blockedNames[ns.normalizeBlockedKey("Otherway")] ~= nil,
+    "and Annuler puts the block back")
+equal(SanctuaryDB.manualWhitelist.otherway, nil, "taking the allowance away with it")
+ns.removeBlocked(ns.normalizeBlockedKey("Otherway"))
+ns.removeAllowed("bothways")
+ns.ClosePanel()
+
+-- The right-click menu writes through the same two functions, so it inherits
+-- both rules -- and says what happened, since there is no field to put a
+-- sentence under. Decisions 100 and 104.
+_G.SanctuaryTab_protection:Click()
+ns.addAllowed("Menuboth")
+local entries = ns.buildPlayerMenuEntries({ name = "Menuboth", server = "TestRealm" })
+equal(#entries, 2, "the menu offers its two entries")
+entries[2].action()
+equal(SanctuaryDB.manualWhitelist.menuboth, nil,
+    "blocking from the menu takes the name out of the allowed list too")
+equal(undo:IsShown(), true, "and offers the same undo")
+undo.button:Click()
+check(SanctuaryDB.manualWhitelist.menuboth ~= nil, "which puts both halves back")
+ns.removeAllowed("menuboth")
+
+-- A Battle.net friend refused from the menu says so out loud: nothing is
+-- written, and the person is told where to do it instead.
+do
+    local printed = {}
+    local savedPrint = ns.printMsg
+    ns.printMsg = function(text) printed[#printed + 1] = text end
+    local bnetEntries = ns.buildPlayerMenuEntries({ name = "Bnetchar", server = "Ysondre" })
+    bnetEntries[2].action()
+    ns.printMsg = savedPrint
+    equal(SanctuaryDB.blockedNames[ns.normalizeBlockedKey("Bnetchar-Ysondre")], nil,
+        "nothing is written for a Battle.net friend")
+    equal(#printed, 1, "and the refusal is said once")
+    equal(printed[1], ns.L["BNET_NOT_BLOCKED"] .. " " .. ns.L["BNET_NOT_BLOCKED_HOW"],
+        "with the Battle.net sentence, both halves")
+end
+
+end)()
+
+-- ---------------------------------------------------------------------------
 -- Saying no, and saying why
 -- ---------------------------------------------------------------------------
 
@@ -5355,6 +5492,19 @@ equal(nameBox:GetText(), "", "the field is emptied all the same")
 equal(ns.getListCounts().blocked.names, beforeNames, "and nothing was written to the list")
 check(panelRowTexts(panel):find(ns.L["REFUSED_NAME"], 1, true) ~= nil,
     "and the sentence is under the field it answers")
+
+-- The exact string step D.7 asks for, on the exact gesture it asks for, because
+-- that is the one that came back "aucun retour, blocage ou autre": a BattleTag
+-- with no space in it, pasted into the Pseudos field, submitted with the button.
+nameBox:SetText("Truc#1234")
+panel.nameBtn:Click()
+equal(nameBox.note:GetText(),
+    ns.L["BNET_NOT_BLOCKED"] .. " " .. ns.L["BNET_NOT_BLOCKED_HOW"],
+    "the button says why Truc#1234 was refused")
+equal(nameBox.note:IsShown(), true, "and the sentence is on screen")
+equal(ns.getListCounts().blocked.names, beforeNames, "with nothing written to the list")
+check(panelRowTexts(panel):find(ns.L["BNET_NOT_BLOCKED_HOW"], 1, true) ~= nil,
+    "and the way out is on screen with it")
 
 nameBox:SetText("Real Friend#1234")
 nameBox:GetScript("OnEnterPressed")(nameBox)
@@ -5638,11 +5788,11 @@ mainFrame:Show()
 _G["SanctuaryTab_advanced"]:Click()
 local advancedContent = _G["SanctuaryTabContent_advanced"]
 
-local trustBefore = SanctuaryDB.filters.autoTrust and true or false
-_G.SanctuaryAutoTrust:Click()
-equal(SanctuaryDB.filters.autoTrust, not trustBefore, "the auto-trust box writes its key")
-_G.SanctuaryAutoTrust:Click()
-equal(SanctuaryDB.filters.autoTrust, trustBefore, "and writes it back")
+-- Automatic trust is no longer here: it went to the home screen with decision
+-- 103, and Advanced keeps diagnostics, the journal's size, the minimap button
+-- and the technical line.
+check(findRow(advancedContent, ns.L["FILTER_AUTO_TRUST"]) == nil,
+    "the auto-trust row has left Advanced")
 
 -- The report: the summary first, then the recording.
 findRow(advancedContent, ns.L["DEBUG_EXPORT_BTN"]):Click()
