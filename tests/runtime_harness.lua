@@ -3156,6 +3156,25 @@ for _, typed in ipairs({ "Toto-Ysondre", "Azjol-Nerub", "-", " - " }) do
     equal(ns.getListCounts().blocked.patterns, 0, "so nothing is counted")
     equal(ns.hasAlwaysBlockedEntries(), false, "and no guard is armed")
 end
+-- The same dead entry wears other shapes, and the realistic one is the tag:
+-- somebody pastes their harasser's BattleTag in the pattern field. A pseudo
+-- carries no "#", no digit and no dot, so the pattern matches nobody -- while
+-- the chip appears, the tile goes up and the guards arm themselves. Refused,
+-- the field says no.
+for _, typed in ipairs({ "toto#1234", "1234", "t.o", "Real Friend#1234" }) do
+    equal(select(1, ns.addPattern(typed)), false,
+        "the pattern \"" .. typed .. "\" names nobody a pseudo can be and is refused")
+    equal(ns.getListCounts().blocked.patterns, 0, "so nothing is counted")
+    equal(ns.hasAlwaysBlockedEntries(), false, "and no guard is armed")
+end
+
+-- The rule is ASCII punctuation and digits, not "letters we recognise": a
+-- pattern written in another script is a pattern like any other.
+equal(select(1, ns.addPattern("zoé")), true, "an accented pattern is accepted")
+equal(ns.classifyName("Zoé-TestRealm").verdict, "always_blocked",
+    "and blocks the name it is part of")
+equal(select(1, ns.removePattern("zoé")), true, "and it can be removed again")
+
 equal(select(1, ns.addPattern("illidan")), true, "a pattern with no separator is added")
 equal(ns.getListCounts().blocked.patterns, 1, "and counted")
 equal(ns.classifyName("Illidanx-TestRealm").verdict, "always_blocked",

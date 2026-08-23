@@ -1747,9 +1747,9 @@ end
 
 do
 -- The stored spelling of a pattern, and the one `removePattern` looks up. It
--- deliberately does NOT refuse a hyphen: a settings file written by an earlier
--- build can hold "toto-ysondre", and the person has to be able to delete it from
--- the panel. `addPattern` is where a new one is refused.
+-- deliberately refuses nothing on shape: a settings file written by an earlier
+-- build can hold "toto-ysondre" or a pasted BattleTag, and the person has to be
+-- able to delete it from the panel. `addPattern` is where a new one is refused.
 local function normalizePatternText(text)
     if type(text) ~= "string" then return nil end
     local clean = stripWoWFormatting(text)
@@ -1761,22 +1761,34 @@ end
 
 ns.normalizePatternText = normalizePatternText
 
--- A pattern holding a hyphen matches nobody, ever, and is refused rather than
--- stored: `matchesKeyword` looks in the pseudo half alone, and a pseudo carries
--- no hyphen by construction. Stored, "Toto-Ysondre" showed in the panel, counted
--- in the tile and armed the guards while blocking no one -- the dead entry the
--- blocked list had just closed, reopened one commit later on the pattern list.
+-- A pattern is looked for in the pseudo half alone (`matchesKeyword`), and a
+-- pseudo is letters: no hyphen, no digit, no "#", no dot. A pattern holding any
+-- of those matches nobody, ever, and is refused rather than stored. Stored, it
+-- showed in the panel, counted in the tile and armed the guards while blocking
+-- no one -- the dead entry the blocked list had just closed, reopened one commit
+-- later on the pattern list.
+--
+-- The realistic one is the tag: somebody pastes their harasser's BattleTag in
+-- the pattern field, the chip appears, the tile goes up, nothing is blocked and
+-- nothing tells them so. Refused, the field says no and they can put the tag
+-- where it works -- the allowed field takes accounts, the blocked field refuses
+-- them too, and the pattern list is for a piece of a pseudo.
 --
 -- Refused, and not cut down to its pseudo half like a name: "Toto-Ysondre" cut
 -- to "toto" would block every Toto of every realm, the silent over-block that
 -- searching the pseudo alone has just ended. A pattern names a piece of text to
 -- look for, not a realm; there is nothing to salvage here, only something to say
 -- no to.
+--
+-- `%p` and `%d` are ASCII under Lua's C locale, so an accented or cyrillic
+-- pattern goes through untouched -- "zoé" and "илья" hold no punctuation as far
+-- as this rule is concerned. Do not trade it for a whitelist of letters, which
+-- would refuse exactly those names.
 function ns.addPattern(text)
     if not SanctuaryDB then return false end
     local clean = normalizePatternText(text)
     if not clean then return false end
-    if clean:find("-", 1, true) then return false end
+    if clean:find("[%p%d]") then return false end
     SanctuaryDB.keywords = SanctuaryDB.keywords or {}
     for _, existing in ipairs(SanctuaryDB.keywords) do
         if existing == clean then return false, clean, clean end
