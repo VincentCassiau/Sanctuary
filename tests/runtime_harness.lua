@@ -4698,6 +4698,39 @@ local function newWidget(kind, name, parent, template)
     function w:SetHeight(height) self.__height = height end
     function w:GetWidth() return self.__width end
     function w:GetHeight() return self.__height end
+    -- Anchors, recorded rather than auto-stubbed. `SetPoint` fell to the
+    -- catch-all above, so "where is this widget" was the one question the
+    -- harness could not be asked -- and a label anchored 320 px into a 464 px
+    -- screen was a defect no check here could reach, whatever it measured. The
+    -- six call forms of the real method are normalised to one shape, so a test
+    -- reads back the offset the client was actually handed.
+    w.__points = {}
+    function w:SetPoint(point, a, b, c, d)
+        local relativeTo, relativePoint, x, y
+        if a == nil then
+            relativeTo, relativePoint, x, y = self.__parent, point, 0, 0
+        elseif type(a) == "number" then
+            -- SetPoint(point, x, y): the parent, on the same point.
+            relativeTo, relativePoint, x, y = self.__parent, point, a, b or 0
+        elseif type(b) == "string" then
+            relativeTo, relativePoint, x, y = a, b, c or 0, d or 0
+        else
+            -- SetPoint(point, relativeTo[, x, y]): the relative point defaults
+            -- to the widget's own.
+            relativeTo, relativePoint, x, y = a, point, b or 0, c or 0
+        end
+        self.__points[#self.__points + 1] = {
+            point = point, relativeTo = relativeTo,
+            relativePoint = relativePoint, x = x, y = y,
+        }
+    end
+    function w:ClearAllPoints() self.__points = {} end
+    function w:GetNumPoints() return #self.__points end
+    function w:GetPoint(index)
+        local entry = self.__points[index or 1]
+        if not entry then return nil end
+        return entry.point, entry.relativeTo, entry.relativePoint, entry.x, entry.y
+    end
     function w:SetText(text) self.__text = text end
     function w:GetText() return self.__text end
     function w:Insert(text) self.__text = (self.__text or "") .. tostring(text) end
