@@ -888,7 +888,7 @@ do
 end
 
 local trustedOutputMessage = "[Friend] vous a invité à rejoindre un groupe, mais vous ne pouviez pas accepter car vous êtes déjà dans un groupe."
-SanctuaryDB.manualWhitelist.chatfriend = { displayName = "Friend" }
+SanctuaryDB.manualWhitelist["friend-testrealm"] = { displayName = "Friend" }
 ns.invalidateWhitelist()
 ns.getCharacterDecision("Friend")
 beforeOutputDebug = #SanctuaryDB.debugLog
@@ -897,7 +897,7 @@ ChatFrame1:AddMessage(trustedOutputMessage)
 equal(#chatMessages, beforeOutputMessages + 1, "chat output guard preserves trusted invite text")
 equal(#SanctuaryDB.debugLog, beforeOutputDebug + 1, "chat output diagnostic logs trusted invite text")
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "ALLOW_INVITE_OUTPUT", "trusted invite output diagnostic reports allow")
-SanctuaryDB.manualWhitelist.chatfriend = nil
+SanctuaryDB.manualWhitelist["friend-testrealm"] = nil
 ns.invalidateWhitelist()
 ns.getCharacterDecision("Harasser-TestRealm")
 
@@ -924,7 +924,7 @@ ChatFrame1.AddMessage = function(self, message, ...)
     return sanctuaryWrappedAddMessage(self, message, ...)
 end
 ns.hookChatOutputDiagnostics()
-SanctuaryDB.manualWhitelist.chatfriend = { displayName = "Friend" }
+SanctuaryDB.manualWhitelist["friend-testrealm"] = { displayName = "Friend" }
 ns.invalidateWhitelist()
 ns.getCharacterDecision("Friend")
 beforeOutputDebug = #SanctuaryDB.debugLog
@@ -935,7 +935,7 @@ equal(#chatMessages, beforeOutputMessages + 1, "rewrapped chat output preserves 
 equal(externalWrapperCalls, 1, "rewrapped trusted output calls external wrapper once")
 equal(#SanctuaryDB.debugLog, beforeOutputDebug + 1, "rewrapped trusted output logs only once")
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.action, "ALLOW_INVITE_OUTPUT", "rewrapped trusted output diagnostic reports allow")
-SanctuaryDB.manualWhitelist.chatfriend = nil
+SanctuaryDB.manualWhitelist["friend-testrealm"] = nil
 ns.invalidateWhitelist()
 ns.getCharacterDecision("Harasser-TestRealm")
 beforeOutputDebug = #SanctuaryDB.debugLog
@@ -1167,12 +1167,12 @@ local blockedDiscarded, blockedPath = dispatchChatFilter("CHAT_MSG_SYSTEM", syst
 equal(blockedPath, "called", "non-secret system payload reaches the addon filter")
 check(blockedDiscarded, "non-secret blocked invite text is discarded by the registry")
 
-SanctuaryDB.manualWhitelist.chatfriend = { displayName = "Friend" }
+SanctuaryDB.manualWhitelist["friend-testrealm"] = { displayName = "Friend" }
 ns.invalidateWhitelist()
 local allowedDiscarded, allowedPath = dispatchChatFilter("CHAT_MSG_SYSTEM", trustedOutputMessage)
 equal(allowedPath, "called", "trusted system payload reaches the addon filter")
 check(not allowedDiscarded, "trusted invite text is not discarded by the registry")
-SanctuaryDB.manualWhitelist.chatfriend = nil
+SanctuaryDB.manualWhitelist["friend-testrealm"] = nil
 ns.invalidateWhitelist()
 ns.getCharacterDecision("Harasser-TestRealm")
 
@@ -1469,7 +1469,7 @@ playerDeadOrGhost = false
 
 -- Blizzard-first trusted popup: it is initially masked and restored in the same
 -- event dispatch once the name-based decision is available.
-SanctuaryDB.manualWhitelist.friend = { displayName = "Friend" }
+SanctuaryDB.manualWhitelist["friend-testrealm"] = { displayName = "Friend" }
 ns.invalidateWhitelist()
 playedSounds = {}
 SanctuaryDB.debugLog = {}
@@ -1604,8 +1604,8 @@ check(guildApi ~= nil, "frame-first blocked guild invite logs native decline API
 check(guildApi.data.ok, "frame-first blocked guild invite native decline API succeeded")
 runTimers()
 
-SanctuaryDB.manualWhitelist.duelfriend = { displayName = "DuelFriend" }
-SanctuaryDB.manualWhitelist.guildfriend = { displayName = "GuildFriend" }
+SanctuaryDB.manualWhitelist["duelfriend-testrealm"] = { displayName = "DuelFriend" }
+SanctuaryDB.manualWhitelist["guildfriend-testrealm"] = { displayName = "GuildFriend" }
 ns.invalidateWhitelist()
 
 local beforeDuels = cancelledDuels
@@ -1702,7 +1702,7 @@ check(tradeApi ~= nil, "blocked trade logs native close API")
 check(tradeApi.data.ok, "blocked trade native close API succeeded")
 npcName = nil
 
-SanctuaryDB.manualWhitelist.traderfriend = { displayName = "TraderFriend" }
+SanctuaryDB.manualWhitelist["traderfriend-testrealm"] = { displayName = "TraderFriend" }
 ns.invalidateWhitelist()
 SanctuaryDB.debugLog = {}
 npcName = "TraderFriend-TestRealm"
@@ -1999,7 +1999,7 @@ fire("PLAYER_ENTERING_WORLD")
 equal(SanctuaryCharDB.groupTracker[dungeonmateKey], trackedAt, "group tracker survives loading transition")
 now = trackedAt + (SanctuaryDB.temporalGroupTrust.trustThresholdMinutes * 60) + 1
 runTickers()
-check(SanctuaryDB.manualWhitelist.dungeonmate ~= nil, "auto-trust adds member after threshold")
+check(SanctuaryDB.manualWhitelist["dungeonmate-testrealm"] ~= nil, "auto-trust adds member after threshold")
 ns.invalidateWhitelist()
 block = ns.getCharacterDecision("Dungeonmate-TestRealm")
 check(not block, "auto-trusted member passes whitelist decision")
@@ -2019,7 +2019,7 @@ do
     runTickers()
     check(SanctuaryDB.blockedNames["stayer-testrealm"] ~= nil,
         "five minutes in the group do not take it out of the blocked list")
-    equal(SanctuaryDB.manualWhitelist.stayer, nil,
+    equal(SanctuaryDB.manualWhitelist["stayer-testrealm"], nil,
         "and nothing is written on the allowed side")
     ns.invalidateWhitelist()
     local stayer = ns.classifyName("Stayer-TestRealm")
@@ -2058,7 +2058,7 @@ do
     runTickers()
     check(SanctuaryDB.blockedNames["cross-hyjal"] ~= nil,
         "five minutes in a cross-realm group do not take him out of the blocked list")
-    equal(SanctuaryDB.manualWhitelist.cross, nil,
+    equal(SanctuaryDB.manualWhitelist["cross-hyjal"], nil,
         "and nothing is written on the allowed side")
     ns.invalidateWhitelist()
     equal(ns.getListCounts().allowed.trust, trustBefore,
@@ -2112,9 +2112,9 @@ do
         SanctuaryCharDB.groupTracker[trackedKey] = now - 1000
     end
     runTickers()
-    equal(SanctuaryDB.manualWhitelist.toxichome, nil,
+    equal(SanctuaryDB.manualWhitelist["toxichome-testrealm"], nil,
         "five minutes do not write a pattern-blocked member into the allowed list")
-    equal(SanctuaryDB.manualWhitelist.toxicguy, nil,
+    equal(SanctuaryDB.manualWhitelist["toxicguy-hyjal"], nil,
         "nor the same case on another realm")
     ns.invalidateWhitelist()
     local toxicHome = ns.classifyName("Toxichome-TestRealm")
@@ -2128,9 +2128,9 @@ do
 
     -- The witness. Without it this whole block would pass on a correction that
     -- simply stopped granting trust to anybody.
-    check(SanctuaryDB.manualWhitelist.cleanmate ~= nil,
+    check(SanctuaryDB.manualWhitelist["cleanmate-hyjal"] ~= nil,
         "the member no pattern catches still earns his automatic trust")
-    equal(SanctuaryDB.manualWhitelist.cleanmate.source, "trust",
+    equal(SanctuaryDB.manualWhitelist["cleanmate-hyjal"].source, "trust",
         "recorded as trust, like any other automatically trusted contact")
     equal(ns.getListCounts().allowed.trust, trustBefore + 1,
         "and the automatic-trust tile counts him and nobody else")
@@ -2140,10 +2140,10 @@ do
     -- the decision, but the entry is written and the panel shows it.
     equal(select(1, ns.addAllowed("Toxicguy-Hyjal")), true,
         "the same name added by hand is not refused")
-    ns.removeAllowed("toxicguy")
+    ns.removeAllowed("toxicguy-hyjal")
 
     ns.removePattern("toxic")
-    ns.removeAllowed("cleanmate")
+    ns.removeAllowed("cleanmate-hyjal")
     groupMembers = { "Dungeonmate-TestRealm" }
     ns.invalidateWhitelist()
 end
@@ -2592,10 +2592,10 @@ bnetFriends = {
     { accountName = "RealFriend#1234", bnetAccountID = 77,
       gameAccountInfo = { characterName = "Bnetchar" } },
 }
-SanctuaryDB.manualWhitelist["typedname"] = { displayName = "TypedName", addedAt = 1, source = "manual" }
+SanctuaryDB.manualWhitelist["typedname-testrealm"] = { displayName = "TypedName", addedAt = 1, source = "manual" }
 -- Someone both typed in and in the guild keeps the label they were typed under:
 -- the manual list is the one the maintainer can act on.
-SanctuaryDB.manualWhitelist["guildmate"] = { displayName = "Guildmate", addedAt = 1, source = "manual" }
+SanctuaryDB.manualWhitelist["guildmate-testrealm"] = { displayName = "Guildmate", addedAt = 1, source = "manual" }
 ns.invalidateWhitelist()
 
 local groups = ns.getAutoWhitelistGroups()
@@ -2680,7 +2680,7 @@ verdict = ns.describeAccessDecision("Officer-TestRealm")
 equal(verdict.verdict, "always_blocked", "a blocked name beats a trust source")
 equal(verdict.list, "blocked_name", "named as an exact blocked name")
 equal(verdict.overriddenList, "guild", "and the answer still names the list it overrides")
-ns.removeBlocked(ns.normalizeBlockedKey("Officer-TestRealm"))
+ns.removeBlocked(ns.normalizeCharacterKey("Officer-TestRealm"))
 
 wipe(SanctuaryDB.manualWhitelist)
 SanctuaryDB.keywords = {}
@@ -3196,9 +3196,9 @@ check(ns.classifyName("Hyphen-TestRealm").verdict ~= "always_blocked",
 
 -- Spaces and apostrophes fold like hyphens, so a realm keeps one spelling
 -- whether it comes from the roster, an event or the keyboard.
-equal(ns.normalizeBlockedKey("Mixed-Conseil des Ombres"), "mixed-conseildesombres",
+equal(ns.normalizeCharacterKey("Mixed-Conseil des Ombres"), "mixed-conseildesombres",
     "a realm written with spaces is keyed without them")
-equal(ns.normalizeBlockedKey("Mixed-Kil'jaeden"), "mixed-kiljaeden",
+equal(ns.normalizeCharacterKey("Mixed-Kil'jaeden"), "mixed-kiljaeden",
     "and one written with an apostrophe without it")
 
 -- C2c -- what the field invites ("Name or Name-Realm"), typed by a keyboard
@@ -3282,24 +3282,36 @@ ns.invalidateWhitelist()
 --
 -- Same invariant as the blocked side, on the other list: either nothing is
 -- written at all, or the entry allows the character it names -- under the
--- spelling that was typed AND under its canonical one. Realm-less on purpose
--- (decision 82): allowing is the side where a mistake costs nothing.
+-- spelling that was typed AND under its canonical one. Realm and all, since
+-- decision 119: the realm that was typed when there was one, the player's own
+-- when there was not, and nobody of that name on any other realm.
 resetModelState()
-for _, typed in ipairs({ "Toto Ysondre", "-Toto", "Toto-", "Toto-Ysondre" }) do
+for _, case in ipairs({
+    { typed = "Toto Ysondre", canonical = "Toto-Ysondre", elsewhere = "Toto-TestRealm" },
+    { typed = "-Toto", canonical = "Toto-TestRealm", elsewhere = "Toto-Ysondre" },
+    { typed = "Toto-", canonical = "Toto-TestRealm", elsewhere = "Toto-Ysondre" },
+    { typed = "Toto-Ysondre", canonical = "Toto-Ysondre", elsewhere = "Toto-TestRealm" },
+}) do
     wipe(SanctuaryDB.manualWhitelist)
     ns.invalidateWhitelist()
     local before = ns.getListCounts().allowed.manual
-    local added = ns.addAllowed(typed)
+    local added = ns.addAllowed(case.typed)
     if added then
         equal(ns.getListCounts().allowed.manual, before + 1,
-            "\"" .. typed .. "\" makes one entry, and one only")
-        equal(ns.classifyName(typed).verdict, "always_allowed",
+            "\"" .. case.typed .. "\" makes one entry, and one only")
+        equal(ns.classifyName(case.typed).verdict, "always_allowed",
             "which allows the character it was typed for")
-        equal(ns.classifyName("Toto-TestRealm").verdict, "always_allowed",
-            "as well as that character written out \"Toto-TestRealm\"")
+        equal(ns.classifyName(case.canonical).verdict, "always_allowed",
+            "as well as that character written out \"" .. case.canonical .. "\"")
+        -- The half decision 119 added. A bare entry used to stand for the same
+        -- pseudo on every realm at once, so a stranger who merely shares a name
+        -- with somebody the person allowed walked in -- and a server transfer
+        -- moved the whole allowed list onto the new realm behind their back.
+        check(ns.classifyName(case.elsewhere).verdict ~= "always_allowed",
+            "and nobody of that name on another realm (\"" .. case.elsewhere .. "\")")
     else
         equal(ns.getListCounts().allowed.manual, before,
-            "\"" .. typed .. "\" was refused and wrote nothing")
+            "\"" .. case.typed .. "\" was refused and wrote nothing")
     end
 end
 
@@ -3386,6 +3398,171 @@ check(ns.isBNetWhitelisted("Real Friend#1234"),
 equal(ns.getListCounts().allowed.manual, 1, "counted once, as the panel shows it")
 wipe(SanctuaryDB.manualWhitelist)
 ns.invalidateWhitelist()
+
+-- C2d ter -- the realm, engraved at the write, on BOTH lists. Decision 119:
+-- "mettre le royaume dans tous les cas meme si on met juste un pseudo -- imagine
+-- la personne change de serveur, en interne on va re-rooter avec le nouveau
+-- serveur, c'est pas bon". A key with no realm is not one entry: it is that
+-- pseudo on every realm at once, so a stranger who merely shares a name with
+-- somebody the person allowed walked in -- chat, invites, sounds and all -- and
+-- the day the player transfers, the list they built for the realm they left
+-- points at whoever bears those names on the new one.
+resetModelState()
+
+-- One shape, and every door writes it.
+equal(select(2, ns.addAllowed("Kadaj")), "kadaj-testrealm",
+    "the allowed field engraves the player's realm on a name typed without one")
+equal(select(2, ns.addAllowed("Kadaj-Ysondre")), "kadaj-ysondre",
+    "and honours the realm when one was typed")
+equal(select(2, ns.addBlocked("Blokaj")), "blokaj-testrealm",
+    "the blocked field does the same with no realm typed")
+equal(select(2, ns.addBlocked("Blokaj-Ysondre")), "blokaj-ysondre",
+    "and the same with one")
+equal(ns.findAllowedKey("Kadaj"), "kadaj-testrealm",
+    "and what the right-click menu looks up is that very key")
+equal(ns.getListCounts().allowed.manual, 2,
+    "two realms, two entries -- neither swallowed as a duplicate of the other")
+
+-- Strict on both sides: an entry covers the character of ITS realm and nobody
+-- else's. The allowed list is the half this changes; the blocked one has read
+-- that way since 1.0.0 and must not regress.
+equal(ns.classifyName("Kadaj").verdict, "always_allowed",
+    "a bare name is the player's own realm, which is what an invite box shows")
+equal(ns.classifyName("Kadaj-TestRealm").verdict, "always_allowed",
+    "the same character written out in full")
+equal(ns.classifyName("Kadaj-Ysondre").verdict, "always_allowed",
+    "and the entry typed with its own realm answers for that one")
+check(ns.classifyName("Kadaj-Hyjal").verdict ~= "always_allowed",
+    "while a namesake on a third realm is allowed by neither")
+equal(select(1, ns.getCharacterDecision("Kadaj-Hyjal")), true,
+    "the decision treats him as the stranger he is")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Kadaj-Hyjal"), true,
+    "his whisper is discarded")
+equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Kadaj-Ysondre"), false,
+    "while the allowed one's arrives, exactly as WoW wrote it")
+equal(ns.classifyName("Blokaj-Ysondre").verdict, "always_blocked",
+    "the blocked entry answers for its realm")
+check(ns.classifyName("Blokaj-Hyjal").verdict ~= "always_blocked",
+    "and for no other")
+
+-- The transfer, which is the whole reason for the decision. The player's realm
+-- is a constant of this harness, so the move is played from the other side --
+-- the entries are engraved on Ysondre while the player stands on TestRealm --
+-- which is the same displacement and the same code: entries written on a realm
+-- the person is no longer on.
+--
+-- What must not happen is a key rebuilt from the display name while the caches
+-- are refilled: the entry would land on the realm the player is on NOW and the
+-- whole list would follow them across the transfer. The display names here are
+-- deliberately bare, so anything re-deriving would have nothing but the current
+-- realm to go on and the failure would be visible.
+resetModelState()
+SanctuaryDB.manualWhitelist["kadaj-ysondre"] = { displayName = "Kadaj", addedAt = 1 }
+SanctuaryDB.blockedNames["blokaj-ysondre"] = { displayName = "Blokaj", addedAt = 1 }
+ns.invalidateWhitelist()
+equal(ns.classifyName("Kadaj-Ysondre").verdict, "always_allowed",
+    "an entry goes on answering for the realm it was written on")
+check(ns.classifyName("Kadaj-TestRealm").verdict ~= "always_allowed",
+    "and does not follow the player onto the realm they are on now")
+-- Not asked of the bare "Kadaj" here, and the reason is written down rather than
+-- passed over: a manual entry also feeds the Battle.net ACCOUNT cache from its
+-- display name -- that is how a one-word account name typed in this field lets
+-- its whispers through -- and a bare display name lands there as a bare key,
+-- which `classifyName` answers on. So after a transfer a bare name still finds
+-- that account entry. Out of this lot on purpose: the brief freezes the
+-- Battle.net half ("comportement et textes inchanges"), and the fix is a
+-- decision about what a one-word entry means, not a key shape.
+equal(ns.classifyName("Blokaj-Ysondre").verdict, "always_blocked",
+    "the blocked side is engraved the same way")
+check(ns.classifyName("Blokaj-TestRealm").verdict ~= "always_blocked",
+    "and does not follow the player either")
+-- A rebuild is where a re-derivation would happen, so ask for several.
+for _ = 1, 3 do
+    ns.invalidateWhitelist()
+    ns.ensureWhitelist()
+end
+check(ns.classifyName("Kadaj-TestRealm").verdict ~= "always_allowed",
+    "and no number of rebuilds moves it")
+equal(ns.classifyName("Kadaj-Ysondre").verdict, "always_allowed",
+    "nor loses it")
+
+-- Decision 104 on the qualified key, both ways round: moving a name from one
+-- list to the other moves that character, and leaves his namesake alone.
+resetModelState()
+do
+    equal(select(1, ns.addBlocked("Movaj-Ysondre")), true, "a harasser is blocked")
+    equal(select(1, ns.addBlocked("Movaj")), true,
+        "and a namesake on the player's own realm, separately")
+    local ok, key, _, _, displaced = ns.addAllowed("Movaj-Ysondre")
+    equal(ok, true, "allowing the first one works")
+    equal(key, "movaj-ysondre", "under his own realm")
+    check(type(displaced) == "table" and displaced.list == "blocked"
+        and displaced.key == "movaj-ysondre",
+        "and it says which entry it displaced")
+    equal(SanctuaryDB.blockedNames["movaj-ysondre"], nil, "which is gone from the blocked list")
+    check(SanctuaryDB.blockedNames["movaj-testrealm"] ~= nil,
+        "while the namesake on the other realm stays blocked, untouched")
+    -- Annuler puts the whole gesture back, both halves at once.
+    ns.removeAllowed(key)
+    ns.restoreBlocked(displaced.key, displaced.data)
+    check(SanctuaryDB.blockedNames["movaj-ysondre"] ~= nil, "undo puts the block back")
+    equal(SanctuaryDB.manualWhitelist["movaj-ysondre"], nil, "taking the allowance with it")
+end
+
+-- Automatic trust goes through the same door, so it engraves the realm too --
+-- and what it writes is the group member, not whoever shares his pseudo at home.
+resetModelState()
+do
+    SanctuaryDB.filters.autoTrust = true
+    wipe(SanctuaryCharDB.groupTracker)
+    inGroup = true
+    groupMembers = { "Trustaj-Hyjal" }
+    fire("GROUP_ROSTER_UPDATE")
+    for trackedKey in pairs(SanctuaryCharDB.groupTracker) do
+        SanctuaryCharDB.groupTracker[trackedKey] = now - 1000
+    end
+    runTickers()
+    check(SanctuaryDB.manualWhitelist["trustaj-hyjal"] ~= nil,
+        "five minutes in the group write the member under his own realm")
+    equal(SanctuaryDB.manualWhitelist["trustaj-hyjal"].source, "trust",
+        "recorded as automatic trust")
+    ns.invalidateWhitelist()
+    check(ns.classifyName("Trustaj-TestRealm").verdict ~= "always_allowed",
+        "and his namesake on the player's realm gets nothing out of it")
+    inGroup = false
+    groupMembers = {}
+    wipe(SanctuaryCharDB.groupTracker)
+    ns.removeAllowed("trustaj-hyjal")
+    ns.invalidateWhitelist()
+end
+
+-- What the panels and the tester put on screen. The realm is in the key, so it
+-- belongs on the line: a chip reading "Kadaj" while the entry only covers
+-- Kadaj-Ysondre tells the reader something the add-on does not do.
+equal(ns.qualifiedDisplayName("kadaj-testrealm", "Kadaj"), "Kadaj-TestRealm",
+    "a name typed bare is shown with the realm it was engraved on")
+equal(ns.qualifiedDisplayName("kadaj-ysondre", "Kadaj-Ysondre"), "Kadaj-Ysondre",
+    "a name typed with its realm is shown as it was typed")
+equal(ns.qualifiedDisplayName("kadaj-ysondre", "Kadaj"), "Kadaj-Ysondre",
+    "and an entry from another realm keeps that realm, not the player's")
+equal(ns.qualifiedDisplayName("kadaj-azjolnerub", "Kadaj-Azjol-Nerub"), "Kadaj-Azjol-Nerub",
+    "a hyphenated realm reads the way the player reads it in game")
+equal(ns.qualifiedDisplayName("kadaj-hyjal", "Kadaj Hyjal"), "Kadaj-Hyjal",
+    "a space typed instead of the hyphen reads as the hyphen it meant")
+equal(ns.qualifiedDisplayName("real friend#1234", "Real Friend#1234"), "Real Friend#1234",
+    "and an account is left alone: there is no realm to add to one")
+
+-- The account half of the allowed list is untouched by all of this: a Battle.net
+-- account is not on a realm at all, so it is keyed whole and shown whole.
+resetModelState()
+equal(select(2, ns.addAllowed("Real Friend#1234")), "real friend#1234",
+    "an account is keyed whole, with no realm bolted on")
+check(ns.isBNetWhitelisted("Real Friend#1234"), "and reaches the account cache")
+equal(ns.classifyName("Real-Ysondre").verdict, "unknown",
+    "while no character is allowed by it, on any realm")
+equal(select(4, ns.addBlocked("Real Friend#1234")), "account",
+    "and the blocked field still refuses one")
+resetModelState()
 
 -- C2e -- the same invariant on the pattern list. A pattern is looked for in the
 -- pseudo half alone, and a pseudo carries no hyphen: one holding a hyphen
@@ -3684,7 +3861,7 @@ equal(outputEntry and outputEntry.data.filterEnabled, false, "the filter being o
 
 -- The control: with the filter ticked the envelope still works, and now names
 -- the filter as the decider.
-equal(select(1, ns.removeBlocked(ns.normalizeBlockedKey("Harasser"))), true,
+equal(select(1, ns.removeBlocked(ns.normalizeCharacterKey("Harasser"))), true,
     "the name is taken back out")
 SanctuaryDB.filters.scope = "strangers"
 ChatFrame3:AddMessage(inviteLine)
@@ -3738,7 +3915,7 @@ ns.invalidateWhitelist()
 equal(ns.hasAlwaysBlockedEntries(), true, "the inherited entry is there")
 equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(91)), false,
     "a Battle.net friend whose account is in the blocked list still whispers")
-equal(select(1, ns.removeBlocked(ns.normalizeBlockedKey("Real Friend#1234"))), true,
+equal(select(1, ns.removeBlocked(ns.normalizeCharacterKey("Real Friend#1234"))), true,
     "and the panel can still delete it")
 
 -- Same for a pattern: it never reaches the Battle.net channel either.
@@ -3760,7 +3937,7 @@ do
     local ok, _, _, refusal = ns.addBlocked("Bnetchar-Ysondre", "menu")
     equal(ok, false, "the character a Battle.net friend plays cannot be blocked")
     equal(refusal, "account", "and is answered with the Battle.net sentence")
-    equal(SanctuaryDB.blockedNames[ns.normalizeBlockedKey("Bnetchar-Ysondre")], nil,
+    equal(SanctuaryDB.blockedNames[ns.normalizeCharacterKey("Bnetchar-Ysondre")], nil,
         "and nothing is written")
     equal(ns.classifyName("Bnetchar-Ysondre").verdict, "always_allowed",
         "so the friend stays allowed")
@@ -3820,7 +3997,7 @@ end
 -- It goes on blocking the character it names -- the panel shows it and one click
 -- removes it -- but the tester no longer credits the friendship in the same
 -- sentence, which is the answer decision 100 called false.
-SanctuaryDB.blockedNames[ns.normalizeBlockedKey("Bnetchar-Ysondre")] =
+SanctuaryDB.blockedNames[ns.normalizeCharacterKey("Bnetchar-Ysondre")] =
     { displayName = "Bnetchar-Ysondre", addedAt = 0, source = "manual" }
 ns.invalidateWhitelist()
 equal(select(1, ns.getCharacterDecision("Bnetchar-Ysondre")), true,
@@ -3829,7 +4006,7 @@ equal(ns.describeAccessDecision("Bnetchar-Ysondre").overriddenList, nil,
     "and the tester no longer says 'blocked, even though Battle.net friend'")
 equal(dispatchChatFilter("CHAT_MSG_BN_WHISPER", "hi", "|Kq2|k", bnetWhisperPayload(91)), false,
     "while his Battle.net whispers keep arriving")
-ns.removeBlocked(ns.normalizeBlockedKey("Bnetchar-Ysondre"))
+ns.removeBlocked(ns.normalizeCharacterKey("Bnetchar-Ysondre"))
 
 -- The account itself is answered as a Battle.net friend, and so is the character
 -- it plays -- with the account named as the reason.
@@ -3864,7 +4041,7 @@ do
     equal(diag.reason, "bnet_whitelist", "for the one reason this channel knows")
     equal(diag.keyword, nil, "and never names a pattern")
 end
-ns.removeBlocked(ns.normalizeBlockedKey("Real Friend#1234"))
+ns.removeBlocked(ns.normalizeCharacterKey("Real Friend#1234"))
 SanctuaryDB.keywords = {}
 
 -- C9b -- two Battle.net friends, two realms, one character name. Nothing is
@@ -3946,13 +4123,18 @@ SanctuaryDB.filters.preset = "custom"
 -- C12 -- the writes.
 resetModelState()
 equal(select(1, ns.addAllowed("  Toto-Ysondre  ")), true, "a name is added once")
-equal(select(1, ns.addAllowed("toto")), false, "and a duplicate is a no-op")
-local removedOk, removedKey, removedData = ns.removeAllowed("toto")
+equal(select(1, ns.addAllowed("toto-ysondre")), false, "and a duplicate is a no-op")
+-- The same pseudo on the player's own realm is a different character, and gets
+-- its own entry rather than being swallowed as a duplicate (decision 119).
+equal(select(1, ns.addAllowed("toto")), true,
+    "while the same pseudo on the player's own realm is another entry")
+equal(select(1, ns.removeAllowed("toto-testrealm")), true, "removable on its own key")
+local removedOk, removedKey, removedData = ns.removeAllowed("toto-ysondre")
 equal(removedOk, true, "removing gives the data back")
 check(type(removedData) == "table" and removedData.displayName == "Toto-Ysondre",
     "with the name exactly as it was typed")
 ns.restoreAllowed(removedKey, removedData)
-equal(SanctuaryDB.manualWhitelist.toto.displayName, "Toto-Ysondre",
+equal(SanctuaryDB.manualWhitelist["toto-ysondre"].displayName, "Toto-Ysondre",
     "and restoring puts back the same record, date included")
 -- The two lists are exclusive, decision 104. Blocking a name takes it out of the
 -- allowed list and hands the entry back, so the whole gesture can be undone at
@@ -3961,7 +4143,7 @@ equal(SanctuaryDB.manualWhitelist.toto.displayName, "Toto-Ysondre",
 do
     local blockOk, blockKey, _, _, displaced = ns.addBlocked("Toto-Ysondre")
     equal(blockOk, true, "the same name can be blocked instead")
-    equal(SanctuaryDB.manualWhitelist.toto, nil, "which takes it out of the allowed list")
+    equal(SanctuaryDB.manualWhitelist["toto-ysondre"], nil, "which takes it out of the allowed list")
     check(type(displaced) == "table" and displaced.list == "allowed",
         "and says which list it came out of")
     check(type(displaced.data) == "table" and displaced.data.displayName == "Toto-Ysondre",
@@ -3978,7 +4160,7 @@ do
     equal(ns.hasAlwaysBlockedEntries(), false, "the blocked list is empty again")
     equal(select(1, ns.getCharacterDecision("Toto-Ysondre")), false, "and the decision follows")
 end
-ns.removeAllowed("toto")
+ns.removeAllowed("toto-ysondre")
 ns.restoreAllowed(removedKey, removedData)
 equal(select(1, ns.addPattern("  Te St ")), true, "a pattern is normalised")
 equal(SanctuaryDB.keywords[1], "test", "to lower case with no spaces")
@@ -4631,6 +4813,10 @@ GameTooltip = setmetatable({}, { __index = function(t, k)
     rawset(t, k, fn)
     return fn
 end })
+-- Recorded rather than swallowed: a chip's label is cut to the width of its row,
+-- so the tooltip is where the whole of a name can be read -- and that makes it a
+-- surface the harness has to be able to ask about.
+function GameTooltip:SetText(text) rawset(self, "__lastText", text) end
 
 local createdWidgets = {}
 
@@ -5234,16 +5420,21 @@ check(testAnswerFor("Toto"):find(ns.L["LIST_MANUAL"], 1, true) ~= nil,
     "a name added by hand is answered as such")
 check(testAnswerFor("Bnetchar"):find("RealFriend#1234", 1, true) ~= nil,
     "a Battle.net friend's character names the account")
+check(testAnswerFor("RealFriend#1234"):find("RealFriend#1234-", 1, true) == nil,
+    "while the account itself gets no realm bolted on: an account is on none")
 check(testAnswerFor("Officer-TestRealm"):find(ns.L["LIST_GUILD"], 1, true) ~= nil,
     "a guild member is answered as a guild member")
 check(testAnswerFor("Xxxxxxx-Ysondre"):find(ns.L["LIST_BLOCKED"], 1, true) ~= nil,
     "a blocked name is answered as blocked")
 check(testAnswerFor("Superspam"):find("spam", 1, true) ~= nil,
     "a pattern match names the pattern")
-check(testAnswerFor("Zorglub"):find(string.format(ns.L["TEST_UNKNOWN_BLOCKED"], "Zorglub"), 1, true) ~= nil,
+-- Answered on the qualified name, never on the bare one: typing "Zorglub" on
+-- TestRealm asks about Zorglub-TestRealm, and decision 119 makes that the only
+-- character the answer covers -- so the sentence has to say which one it is.
+check(testAnswerFor("Zorglub"):find(string.format(ns.L["TEST_UNKNOWN_BLOCKED"], "Zorglub-TestRealm"), 1, true) ~= nil,
     "an unknown name is blocked while question 1 filters strangers")
 SanctuaryDB.filters.scope = "blockedOnly"
-check(testAnswerFor("Zorglub"):find(string.format(ns.L["TEST_UNKNOWN_ALLOWED"], "Zorglub"), 1, true) ~= nil,
+check(testAnswerFor("Zorglub"):find(string.format(ns.L["TEST_UNKNOWN_ALLOWED"], "Zorglub-TestRealm"), 1, true) ~= nil,
     "and allowed in the other mode")
 SanctuaryDB.filters.scope = "strangers"
 -- The last line of the board: blocked wins over a trust source, and the answer
@@ -5258,7 +5449,7 @@ do
     check(overriddenAnswer:find(ns.L["LIST_GUILD"], 1, true) ~= nil,
         "and the answer still names the list it overrides")
 end
-ns.removeBlocked(ns.normalizeBlockedKey("Officer-TestRealm"))
+ns.removeBlocked(ns.normalizeCharacterKey("Officer-TestRealm"))
 equal(ns.describeAccessDecision("").valid, false, "an empty field asks nothing")
 
 -- The tester answers a question about the lists, so it has to be re-asked every
@@ -5267,17 +5458,17 @@ equal(ns.describeAccessDecision("").valid, false, "an empty field asks nothing")
 -- lettre". The name stays in the field; the answer follows the lists.
 testAnswerFor("Freshname")
 check(_G.SanctuaryTestAnswer:GetText():find(
-    string.format(ns.L["TEST_UNKNOWN_BLOCKED"], "Freshname"), 1, true) ~= nil,
+    string.format(ns.L["TEST_UNKNOWN_BLOCKED"], "Freshname-TestRealm"), 1, true) ~= nil,
     "an unknown name is answered as unknown")
 ns.addAllowed("Freshname")
 ns.refreshUI()
 equal(_G.SanctuaryTestInput:GetText(), "Freshname", "adding a name leaves the field alone")
 check(_G.SanctuaryTestAnswer:GetText():find(ns.L["LIST_MANUAL"], 1, true) ~= nil,
     "and the answer is recomputed without a keystroke")
-ns.removeAllowed("freshname")
+ns.removeAllowed("freshname-testrealm")
 ns.refreshUI()
 check(_G.SanctuaryTestAnswer:GetText():find(
-    string.format(ns.L["TEST_UNKNOWN_BLOCKED"], "Freshname"), 1, true) ~= nil,
+    string.format(ns.L["TEST_UNKNOWN_BLOCKED"], "Freshname-TestRealm"), 1, true) ~= nil,
     "and removing it puts the answer back")
 
 -- The cross inside the field, decision 101. It shows only when there is
@@ -5396,23 +5587,30 @@ end
 -- Adding through the field, removing through the cross, and Undo.
 _G.SanctuaryAllowedAddInput:SetText("Titi")
 findRow(allowedPanel, ns.L["PANEL_ADD_BTN"]):Click()
-check(SanctuaryDB.manualWhitelist.titi ~= nil, "the field adds a name")
+check(SanctuaryDB.manualWhitelist["titi-testrealm"] ~= nil, "the field adds a name")
 ns.refreshUI()
 local titiChip = findRow(allowedPanel, "Titi")
 check(titiChip ~= nil, "the added name gets a chip")
+-- Typed bare, shown with its realm. The key carries it (decision 119), so the
+-- panel has to say it: a chip reading "Titi" alone would promise a person that
+-- every Titi there is has been let through, which is not what was written.
+equal(titiChip.label.__text, "Titi-TestRealm", "and the chip names the realm it was engraved on")
+titiChip:GetScript("OnEnter")(titiChip)
+check(tostring(rawget(GameTooltip, "__lastText") or ""):find("Titi-TestRealm", 1, true) ~= nil,
+    "the tooltip repeats it in full, for a chip the row had to cut short")
 titiChip.remove:Click()
-equal(SanctuaryDB.manualWhitelist.titi, nil, "the cross removes it without asking")
+equal(SanctuaryDB.manualWhitelist["titi-testrealm"], nil, "the cross removes it without asking")
 check(_G.SanctuaryUndoLine:IsShown(), "and offers to undo")
 _G.SanctuaryUndoLine.button:Click()
-check(SanctuaryDB.manualWhitelist.titi ~= nil, "undo puts it back")
+check(SanctuaryDB.manualWhitelist["titi-testrealm"] ~= nil, "undo puts it back")
 equal(_G.SanctuaryUndoLine:IsShown(), false, "and the offer goes away")
 
 -- A removal that is not undone expires instead of coming back.
 titiChip = findRow(allowedPanel, "Titi")
 titiChip.remove:Click()
-equal(SanctuaryDB.manualWhitelist.titi, nil, "removed again")
+equal(SanctuaryDB.manualWhitelist["titi-testrealm"], nil, "removed again")
 runTimers(2)
-equal(SanctuaryDB.manualWhitelist.titi, nil, "an expired undo offer restores nothing")
+equal(SanctuaryDB.manualWhitelist["titi-testrealm"], nil, "an expired undo offer restores nothing")
 
 do
 
@@ -5459,8 +5657,8 @@ check(rendered:find("Trusty", 1, true) ~= nil, "and unfolding is where it shows 
 trustHeader = findRow(allowedPanel, ns.L["WL_SOURCE_TRUST"])
 trustHeader:Click()
 
-ns.removeAllowed("handy")
-ns.removeAllowed("trusty")
+ns.removeAllowed("handy-testrealm")
+ns.removeAllowed("trusty-testrealm")
 ns.refreshUI()
 
 end
@@ -5536,7 +5734,7 @@ equal(repaints, 0, "a tick with nothing new repaints nothing")
 watched.label.SetText = savedSetText
 
 -- An entry removed by hand is not resurrected by the next tick.
-ns.removeAllowed("toto")
+ns.removeAllowed("toto-testrealm")
 runTickers()
 check(panelRowTexts(allowedPanel):find("Toto", 1, true) == nil,
     "an entry removed by hand is not put back by the ticker")
@@ -5563,12 +5761,18 @@ check(panelRowTexts(blockedPanel):find(ns.L["BNET_NOT_BLOCKED_HOW"], 1, true) ~=
 
 _G.SanctuaryBlockedAddInput:SetText("Toto")
 check(ns.addBlocked("Toto"), "a name already in the allowed list can be blocked")
-equal(SanctuaryDB.manualWhitelist.toto, nil,
+equal(SanctuaryDB.manualWhitelist["toto-testrealm"], nil,
     "and blocking it takes it out of the allowed list, decision 104")
+-- Typed with no realm, listed with one. The blocked list has carried the realm
+-- in its key since 1.0.0 and showed the bare pseudo anyway, so the panel read
+-- "Toto" over an entry that only ever blocked the Toto of one realm.
+ns.refreshUI()
+check(panelRowTexts(blockedPanel):find("Toto-TestRealm", 1, true) ~= nil,
+    "a blocked name typed bare is listed with the realm it was engraved on")
 local blockedNow, blockedReason = ns.getCharacterDecision("Toto")
 equal(blockedNow, true, "the decision changes immediately")
 equal(blockedReason, "blocked_name", "and names the list that decided")
-ns.removeBlocked(ns.normalizeBlockedKey("Toto"))
+ns.removeBlocked(ns.normalizeCharacterKey("Toto"))
 equal(select(1, ns.getCharacterDecision("Toto")), true,
     "removing it leaves an unknown name, which the strangers mode still filters")
 ns.addAllowed("Toto")
@@ -5630,7 +5834,7 @@ local longChip = findRow(panel, "Averylongpseudonameindeed")
 check(longChip:GetWidth() > shortChip:GetWidth(), "a longer name gets a wider chip")
 
 -- Longer than the row itself: the label is cut, the chip is not overrun.
-ns.removeBlocked(ns.normalizeBlockedKey("Averylongpseudonameindeed"))
+ns.removeBlocked(ns.normalizeCharacterKey("Averylongpseudonameindeed"))
 local huge = string.rep("Verylongname", 12)
 ns.addBlocked(huge)
 ns.refreshUI()
@@ -5643,8 +5847,8 @@ check((hugeChip.label:GetWidth() or 0) > 0
     "and the cross still has its room, which is the overlap that was reported")
 check(hugeChip.label:GetWidth() < hugeChip.label:GetStringWidth(),
     "the name itself is cut rather than written past the chip")
-ns.removeBlocked(ns.normalizeBlockedKey(huge))
-ns.removeBlocked(ns.normalizeBlockedKey("Ana"))
+ns.removeBlocked(ns.normalizeCharacterKey(huge))
+ns.removeBlocked(ns.normalizeCharacterKey("Ana"))
 ns.refreshUI()
 
 -- The hints. Both fields, both panels: a hint is bounded by the box it sits in.
@@ -5682,22 +5886,23 @@ local panel = _G.SanctuaryPanelBlocked
 local undo = _G.SanctuaryUndoLine
 
 ns.addAllowed("Bothways")
-equal(SanctuaryDB.manualWhitelist.bothways ~= nil, true, "a name is allowed by hand")
+equal(SanctuaryDB.manualWhitelist["bothways-testrealm"] ~= nil, true, "a name is allowed by hand")
 
 nameBox:SetText("Bothways")
 panel.nameBtn:Click()
-local blockedKey = ns.normalizeBlockedKey("Bothways")
+local blockedKey = ns.normalizeCharacterKey("Bothways")
 check(SanctuaryDB.blockedNames[blockedKey] ~= nil, "blocking it writes the blocked entry")
-equal(SanctuaryDB.manualWhitelist.bothways, nil, "and takes the allowed one away")
+equal(SanctuaryDB.manualWhitelist["bothways-testrealm"], nil, "and takes the allowed one away")
 equal(undo:IsShown(), true, "the strip says a name was displaced")
-check(undo.label:GetText():find("Bothways", 1, true) ~= nil, "naming it")
+check(undo.label:GetText():find("Bothways-TestRealm", 1, true) ~= nil,
+    "naming it, realm and all, like the two panels it moved between")
 check(undo.label:GetText():find(ns.L["TILE_ALLOWED"], 1, true) ~= nil,
     "and the list it came out of")
 equal(nameBox.note:IsShown(), false, "and nothing was refused")
 
 undo.button:Click()
 equal(SanctuaryDB.blockedNames[blockedKey], nil, "Annuler takes the new entry back out")
-check(SanctuaryDB.manualWhitelist.bothways ~= nil, "and puts the old one back")
+check(SanctuaryDB.manualWhitelist["bothways-testrealm"] ~= nil, "and puts the old one back")
 equal(undo:IsShown(), false, "the offer goes with it")
 
 -- The other direction, through the allowed panel.
@@ -5707,17 +5912,17 @@ ns.OpenPanel("allowed")
 local allowedBox = _G.SanctuaryAllowedAddInput
 allowedBox:SetText("Otherway")
 _G.SanctuaryPanelAllowed.addBtn:Click()
-check(SanctuaryDB.manualWhitelist.otherway ~= nil, "allowing a blocked name writes the entry")
-equal(SanctuaryDB.blockedNames[ns.normalizeBlockedKey("Otherway")], nil,
+check(SanctuaryDB.manualWhitelist["otherway-testrealm"] ~= nil, "allowing a blocked name writes the entry")
+equal(SanctuaryDB.blockedNames[ns.normalizeCharacterKey("Otherway")], nil,
     "and takes the blocked one away")
 check(undo.label:GetText():find(ns.L["TILE_BLOCKED"], 1, true) ~= nil,
     "the strip names the blocked list this time")
 undo.button:Click()
-check(SanctuaryDB.blockedNames[ns.normalizeBlockedKey("Otherway")] ~= nil,
+check(SanctuaryDB.blockedNames[ns.normalizeCharacterKey("Otherway")] ~= nil,
     "and Annuler puts the block back")
-equal(SanctuaryDB.manualWhitelist.otherway, nil, "taking the allowance away with it")
-ns.removeBlocked(ns.normalizeBlockedKey("Otherway"))
-ns.removeAllowed("bothways")
+equal(SanctuaryDB.manualWhitelist["otherway-testrealm"], nil, "taking the allowance away with it")
+ns.removeBlocked(ns.normalizeCharacterKey("Otherway"))
+ns.removeAllowed("bothways-testrealm")
 ns.ClosePanel()
 
 -- The right-click menu writes through the same two functions, so it inherits
@@ -5728,12 +5933,12 @@ ns.addAllowed("Menuboth")
 local entries = ns.buildPlayerMenuEntries({ name = "Menuboth", server = "TestRealm" })
 equal(#entries, 2, "the menu offers its two entries")
 entries[2].action()
-equal(SanctuaryDB.manualWhitelist.menuboth, nil,
+equal(SanctuaryDB.manualWhitelist["menuboth-testrealm"], nil,
     "blocking from the menu takes the name out of the allowed list too")
 equal(undo:IsShown(), true, "and offers the same undo")
 undo.button:Click()
-check(SanctuaryDB.manualWhitelist.menuboth ~= nil, "which puts both halves back")
-ns.removeAllowed("menuboth")
+check(SanctuaryDB.manualWhitelist["menuboth-testrealm"] ~= nil, "which puts both halves back")
+ns.removeAllowed("menuboth-testrealm")
 
 -- A Battle.net friend refused from the menu says so out loud: nothing is
 -- written, and the person is told where to do it instead.
@@ -5744,7 +5949,7 @@ do
     local bnetEntries = ns.buildPlayerMenuEntries({ name = "Bnetchar", server = "Ysondre" })
     bnetEntries[2].action()
     ns.printMsg = savedPrint
-    equal(SanctuaryDB.blockedNames[ns.normalizeBlockedKey("Bnetchar-Ysondre")], nil,
+    equal(SanctuaryDB.blockedNames[ns.normalizeCharacterKey("Bnetchar-Ysondre")], nil,
         "nothing is written for a Battle.net friend")
     equal(#printed, 1, "and the refusal is said once")
     equal(printed[1], ns.L["BNET_NOT_BLOCKED"] .. " " .. ns.L["BNET_NOT_BLOCKED_HOW"],
@@ -5935,7 +6140,7 @@ for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) 
         .. localeName .. ")")
 end
 
-ns.removeBlocked(ns.normalizeBlockedKey("Acceptedname"))
+ns.removeBlocked(ns.normalizeCharacterKey("Acceptedname"))
 ns.ClosePanel()
 runTimers(3)
 
@@ -6336,24 +6541,24 @@ do
     menuEntries = ns.buildPlayerMenuEntries({ name = "Menuprobe", server = "Ysondre" })
     check(menuEntries[1].text:find(ns.L["MENU_ALLOW"], 1, true) ~= nil, "the first entry allows")
     menuEntries[1].action()
-    local menuKey = ns.normalizeName("Menuprobe-Ysondre")
+    local menuKey = ns.findAllowedKey("Menuprobe-Ysondre")
     check(SanctuaryDB.manualWhitelist[menuKey] ~= nil, "the click writes the allowed list")
     equal(SanctuaryDB.manualWhitelist[menuKey].source, "menu",
         "recording that the right-click menu added it")
     ns.addAllowed("Handtyped")
-    equal(SanctuaryDB.manualWhitelist.handtyped.source, nil,
+    equal(SanctuaryDB.manualWhitelist["handtyped-testrealm"].source, nil,
         "while a name with no stated origin stays a plain hand entry")
     ns.addAllowed("Menutwo", "menu")
-    equal(SanctuaryDB.manualWhitelist.menutwo.source, "menu",
+    equal(SanctuaryDB.manualWhitelist["menutwo-testrealm"].source, "menu",
         "and the origin travels on the direct call")
     -- Still counted among the names she added: she did add it, with two clicks
     -- instead of by typing. Only the automatic trust entries stand apart.
     local before = ns.getListCounts().allowed.manual
-    ns.removeAllowed("menutwo")
+    ns.removeAllowed("menutwo-testrealm")
     equal(ns.getListCounts().allowed.manual, before - 1,
         "a name added from the menu counts as one she added, not as automatic trust")
     ns.removeAllowed(menuKey)
-    ns.removeAllowed("handtyped")
+    ns.removeAllowed("handtyped-testrealm")
 end
 
 equal(#ns.buildPlayerMenuEntries({ name = "Victim" }), 0, "the player themselves gets nothing")
