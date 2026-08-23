@@ -5650,7 +5650,7 @@ equal(ns.getListCounts().blocked.names, beforeNames, "and nothing was written to
 check(panelRowTexts(panel):find(ns.L["REFUSED_NAME"], 1, true) ~= nil,
     "and the sentence is under the field it answers")
 
--- The exact string step D.7 asks for, on the exact gesture it asks for, because
+-- The exact string step D.7b asks for, on the exact gesture it asks for, because
 -- that is the one that came back "aucun retour, blocage ou autre": a BattleTag
 -- with no space in it, pasted into the Pseudos field, submitted with the button.
 nameBox:SetText("Truc#1234")
