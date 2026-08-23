@@ -1183,10 +1183,14 @@ local function acquireJournalRow(parent)
     local row = table.remove(journal.rowPool)
     if not row then
         row = CreateFrame("Button", nil, parent)
-        row:SetSize(innerWidth() - 10, 18)
         row.label = newLabel(row, "", FONT_BODY, C.soft)
         row.label:SetPoint("LEFT", row, "LEFT", 0, 0)
     end
+    -- On every acquisition, not only on creation: a pooled row kept the width of
+    -- the window it was first drawn in, so after a resize the clickable strip of
+    -- a group header was the old width -- too short to click at the right of a
+    -- widened window, and sticking out of a narrowed one.
+    row:SetSize(innerWidth() - 10, 18)
     row:SetParent(parent)
     row:Show()
     journal.rows[#journal.rows + 1] = row
@@ -2441,6 +2445,37 @@ local function applyViewport(frameHeight, width)
     local active = tabFrames[activeTab]
     if active then active:SetHeight(contentHeight) end
     if undoLine then undoLine:SetWidth(innerWidth()) end
+    -- The two scrolling areas that live inside a screen. Nothing above reaches
+    -- them: this pass hands the live width to the frame, the content area, the
+    -- five screens, the drawer and the undo strip, and stopped there -- so the
+    -- Journal and the Diagnostics results kept the width they were built at.
+    -- Dragged down to 500, they still measured 744 and 404 and hung a couple of
+    -- hundred pixels outside the window, with nothing to scroll sideways to
+    -- reach them (there is no horizontal scrolling here, by design); dragged out
+    -- to 900, they left the room they had been given empty. Two screens out of
+    -- five, and A6 asks the columns to share the width between 500x380 and
+    -- 900x700.
+    --
+    -- Guarded because this runs from the window's own OnSizeChanged, which is
+    -- installed before the screens are built.
+    if journal.scroll then
+        journal.scroll:SetViewportSize(innerWidth(), journal.scroll:GetHeight())
+    end
+    if diagnostics.resultScroll then
+        -- The results column keeps its distance from the list beside it: the
+        -- list starts at PAD and is 320 wide, the column at PAD + 330, so the
+        -- column gets the inner width less 340, and the text inside it 10 less
+        -- again -- the same two numbers the screen was built with.
+        diagnostics.resultScroll:SetViewportSize(innerWidth() - 340,
+            diagnostics.resultScroll:GetHeight())
+        if diagnostics.resultText then
+            diagnostics.resultText:SetWidth(innerWidth() - 350)
+        end
+        -- What the child measured was measured against the old width: a result
+        -- that wrapped over two lines at 540 wraps over four at 124, and the bar
+        -- and the wheel read that height.
+        resizeDiagnosticResults()
+    end
     contentScroll:RefreshBar()
     -- The panels are not inside the content area, so nothing above resizes them:
     -- they answer to the window itself, on the same pass.

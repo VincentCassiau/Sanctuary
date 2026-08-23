@@ -6507,6 +6507,42 @@ ns.OpenPanel("blocked")
 check(_G.SanctuaryPanelBlocked:GetWidth() < widthOf(),
     "the drawer leaves something of the window beside it at the narrowest width")
 ns.ClosePanel()
+
+-- The two scrolling areas that live inside a screen follow the width too. Built
+-- at 780 and never resized, the Journal still measured 744 and the Diagnostics
+-- results 404 in a 500 px window -- two of the five screens hanging a couple of
+-- hundred pixels outside it, with no horizontal scrolling to reach what was cut
+-- off -- and kept those same widths when the window was dragged out to 900. A6
+-- asks the columns to share the width between the two bounds.
+do
+    local content = _G.SanctuaryContentScroll
+    local journalScroll = _G.SanctuaryJournalScroll
+    local resultScroll = _G.SanctuaryDiagResultScroll
+    check(journalScroll ~= nil, "the journal's list is reachable")
+    check(resultScroll ~= nil, "and the diagnostics results column")
+    -- Their left insets: the journal starts at PAD, the results column at the
+    -- far side of the 320 px list of buttons.
+    local journalInset, resultInset = 18, 18 + 330
+    local narrowJournal = journalScroll:GetWidth()
+    local narrowResults = resultScroll:GetWidth()
+    check(journalInset + narrowJournal <= content:GetWidth(),
+        "at 500 the journal fits inside the content area")
+    check(resultInset + narrowResults <= content:GetWidth(),
+        "and so does the diagnostics results column")
+    now = now + 5
+    gripDown(grip)
+    mainFrame:SetSize(900, 560)
+    gripUp(grip)
+    check(journalScroll:GetWidth() > narrowJournal,
+        "widening the window widens the journal")
+    check(resultScroll:GetWidth() > narrowResults,
+        "and the results column with it")
+    check(journalInset + journalScroll:GetWidth() <= content:GetWidth(),
+        "the journal still fits at 900")
+    check(resultInset + resultScroll:GetWidth() <= content:GetWidth(),
+        "and so do the results")
+end
+
 now = now + 5
 gripDown(grip)
 mainFrame:SetSize(860, 560)
