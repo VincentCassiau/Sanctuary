@@ -1276,6 +1276,13 @@ Sanctuary.whitelistSources = {}
 Sanctuary.whitelistLabels = {}
 Sanctuary.bnetWhitelistSources = {}
 Sanctuary.bnetWhitelistLabels = {}
+-- Which of those account keys an ACCOUNT really named: a display name carrying
+-- a "#", a Battle.net friend read off the roster. The account cache has a second
+-- writer -- the display name of a manual CHARACTER entry, which is how a
+-- one-word account name typed into the allowed field lets its whispers through
+-- -- and that half must never answer for a WoW character name. `classifyName`
+-- is the reader; `isBNetWhitelisted`, which serves CHAT_MSG_BN_WHISPER, is not.
+Sanctuary.bnetWhitelistAccountKeys = {}
 -- Battle.net identity, both ways. Sanctuary already reads which character each
 -- friend is on; recording it here is what lets the always-blocked list and the
 -- name tester resolve an account from a character and back.
@@ -1318,6 +1325,12 @@ end
 local function rebuildWhitelist()
     local cache = {}
     local bnetCache = {}
+    -- Filled beside `bnetCache`, never merged into it: which keys of that cache
+    -- an account really named. Not a flag on the source table, because the
+    -- source table is first-writer-wins and either writer can come first -- a
+    -- friend whose account name is one word must go on answering whether or not
+    -- somebody also typed that word into the allowed field.
+    local bnetAccountKeys = {}
     -- Attribution is built alongside the decision cache, never inside it. The
     -- Whitelist tab has to say *why* someone gets through, and rebuilding a
     -- second time to answer that would double the cost of every decision.
@@ -1400,10 +1413,16 @@ local function rebuildWhitelist()
             displayName or (type(name) == "string" and name or nil))
     end
 
-    local function addBNetAccountName(name, source, displayName)
+    -- `namesAnAccount` tells the two writers of this cache apart. True for a
+    -- text that names an account and nothing else -- a "#" tag typed into the
+    -- allowed field, a friend off the Battle.net roster. False for the display
+    -- name of a manual CHARACTER entry, fed in so a one-word account name typed
+    -- into that field still lets its whispers through.
+    local function addBNetAccountName(name, source, displayName, namesAnAccount)
         local normalized = normalizeBNetName(name)
         if normalized then
             bnetCache[normalized] = true
+            if namesAnAccount then bnetAccountKeys[normalized] = true end
             noteSource(bnetSources, bnetSourceLabels, normalized, source or "manual",
                 displayName or (type(name) == "string" and name or nil))
         end
@@ -1440,7 +1459,7 @@ local function rebuildWhitelist()
         if accountName then
             noteSource(sources, sourceLabels, normalizeBNetName(accountName), source, label)
             if manualEntryAllowsBNet(data) then
-                addBNetAccountName(accountName, source, label)
+                addBNetAccountName(accountName, source, label, true)
             end
             return
         end
@@ -1458,6 +1477,13 @@ local function rebuildWhitelist()
         -- The display name still feeds the ACCOUNT cache: typing a one-word
         -- Battle.net account name into the allowed field is the documented way
         -- to let its whispers through, and that half has no realm to engrave.
+        --
+        -- Fed WITHOUT `namesAnAccount`: nothing here proves the person meant an
+        -- account rather than the character they typed. A bare display name
+        -- lands under a bare key, and `classifyName` reading that key would
+        -- undo decision 119 through the back door -- after a transfer, an entry
+        -- engraved "Kadaj-Ysondre" would go on answering for the Kadaj of the
+        -- new realm. Only the Battle.net channel reads this half.
         if manualEntryAllowsBNet(data) then
             addBNetAccountName((type(data) == "table" and data.displayName) or key,
                 source, label)
@@ -1496,7 +1522,7 @@ local function rebuildWhitelist()
         for i = 1, numFriends do
             local info = getBNetFriendInfo(i)
             if info then
-                addBNetAccountName(info.accountName, "bnet")
+                addBNetAccountName(info.accountName, "bnet", nil, true)
                 local gameInfo = info.gameAccountInfo
                 if gameInfo and gameInfo.characterName and gameInfo.characterName ~= "" then
                     addCharacterName(gameInfo.characterName, "bnet", info.accountName)
@@ -1577,6 +1603,7 @@ local function rebuildWhitelist()
     Sanctuary.whitelistLabels = sourceLabels
     Sanctuary.bnetWhitelistSources = bnetSources
     Sanctuary.bnetWhitelistLabels = bnetSourceLabels
+    Sanctuary.bnetWhitelistAccountKeys = bnetAccountKeys
     Sanctuary.bnetCharacterByAccount = characterByAccount
     Sanctuary.bnetCharacterDisplayByAccount = characterDisplayByAccount
     Sanctuary.bnetAccountByCharacter = accountByCharacter
@@ -1720,8 +1747,23 @@ local function classifyName(name)
         return { verdict = "always_allowed", list = source, detail = label }
     end
 
+    -- Last resort: the account half. A Battle.net account has no realm, so its
+    -- key is the whole display name -- and a name is asked here only when the
+    -- character caches above have said nobody.
+    --
+    -- Restricted to the keys an account really named (`bnetWhitelistAccountKeys`)
+    -- and that restriction is the whole of it: the same cache is also fed from
+    -- the display name of a manual CHARACTER entry, so that a one-word account
+    -- name typed into the allowed field lets its whispers through. Read here
+    -- too, that half made a realm-less "Kadaj" answer for an entry engraved
+    -- "kadaj-ysondre" -- decision 119's re-rooting, walked around through the
+    -- account door, and always in the direction that lets a stranger in. The
+    -- Battle.net channel is untouched: `isBNetWhitelisted` reads the cache
+    -- itself and knows nothing of this table.
     local accountKey = normalizeBNetName(name)
-    local bnetSource = accountKey and Sanctuary.bnetWhitelistSources[accountKey] or nil
+    local namesAnAccount = accountKey and Sanctuary.bnetWhitelistAccountKeys
+        and Sanctuary.bnetWhitelistAccountKeys[accountKey] == true
+    local bnetSource = namesAnAccount and Sanctuary.bnetWhitelistSources[accountKey] or nil
     if bnetSource then
         local label = Sanctuary.bnetWhitelistLabels[accountKey] or name
         return { verdict = "always_allowed", list = bnetSource, detail = label }
