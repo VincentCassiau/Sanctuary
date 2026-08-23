@@ -624,24 +624,26 @@ end
 -- there would shadow this and silently hand `normalizeName` a nil global.
 local splitCharacterName
 
--- The key shape of the allowed list and of the whitelist caches: the pseudo
--- half, lower-cased, no realm.
+-- The key shape of the AUTOMATIC whitelist sources -- guild, character friends,
+-- Battle.net friends, the current group: the pseudo half, lower-cased, no realm.
 --
--- Cut by `splitCharacterName`, the same rule the blocked list and the patterns
--- use, so the three lists can never disagree about where a pseudo ends. Its own
--- rule used to strip spaces instead of cutting on them, and to cut on a hyphen
--- only when a character came first, which wrote on the allowed side exactly the
--- entries `addBlocked` refuses: "Toto Ysondre" was keyed "totoysondre" and
--- "-Toto" was keyed "-toto" -- keys no name coming out of the game ever matches.
--- The person read the label in the panel, saw it counted in the tile, and the
--- friend they had just allowed went on being filtered with no popup, no sound
--- and no chat line. An allowed player keeps WoW's own behaviour: that is the
--- product rule this broke.
+-- Cut by `splitCharacterName`, the same rule the two hand-written lists and the
+-- patterns use, so nothing can disagree about where a pseudo ends. Its own rule
+-- used to strip spaces instead of cutting on them, and to cut on a hyphen only
+-- when a character came first, which wrote exactly the entries `addBlocked`
+-- refuses: "Toto Ysondre" was keyed "totoysondre" and "-Toto" was keyed "-toto"
+-- -- keys no name coming out of the game ever matches. The person read the label
+-- in the panel, saw it counted in the tile, and the friend they had just allowed
+-- went on being filtered with no popup, no sound and no chat line. An allowed
+-- player keeps WoW's own behaviour: that is the product rule this broke.
 --
--- Realm-less on purpose, unlike the blocked list. Dropping the realm here can
--- only allow somebody by mistake, never block somebody by mistake -- and of the
--- two, only the second one hurts. Rosters also hand over bare names often enough
--- that demanding a realm would lose friends the add-on is meant to let through.
+-- Realm-less on purpose, and only here. What the person types into either panel
+-- is keyed by `normalizeCharacterKey` with its realm (decision 119); a roster is
+-- not, because a roster answers again every time it changes -- the transfer that
+-- strands a typed entry cannot strand it -- and because rosters hand over bare
+-- names often enough that demanding a realm would lose friends the add-on is
+-- meant to let through. The known residue is stated in the brief: a guild mate's
+-- namesake on another realm is covered by the guild entry.
 --
 -- Answers nil when nothing usable is left ("-", " - "), and every caller refuses
 -- the input rather than inventing an entry for it.
@@ -666,8 +668,10 @@ end
 -- The allowed field takes both, and both used to be keyed by `normalizeName`,
 -- which cuts at the first space: "Real Friend#1234" was keyed "real", and the
 -- stranger Real-Ysondre -- any Real, on any realm -- walked in silently, chat,
--- invites and all. That is not the realm-less over-allowance decision 82
--- accepted; the person named an account, and this is how we know.
+-- invites and all. Cut by `normalizeCharacterKey` it fares no better, only more
+-- quietly: "real-friend#1234" is a key no event of the game can ever produce, so
+-- the account it names would stop being allowed at all. The person named an
+-- account, and this is how we know.
 local function isAccountName(name)
     return type(name) == "string" and name:find("#", 1, true) ~= nil
 end
@@ -846,7 +850,8 @@ ns.getPreset = getPreset
 -- two separates the pseudo from the realm; the realm may hold more of them and
 -- keeps them until `normalizeRealm` folds them away. Answers the two halves,
 -- pseudo lower-cased, realm exactly as it was handed over (nil when there is
--- none).
+-- none), and third the pseudo spelled the way it was handed over -- what a panel
+-- puts on a chip, since a key is folded and a name on screen is not.
 --
 -- Leading and trailing separators go first. "Toto-" is the hyphen left under the
 -- fingers, not a realm: read literally it used to build the key "toto--testrealm",
@@ -871,9 +876,10 @@ function splitCharacterName(name)
     if clean == "" then return nil end
     local namePart, realmPart = clean:match("^([^%s%-]+)[%s%-](.*)$")
     if not namePart then namePart = clean end
+    local typedPart = namePart
     namePart = foldCase(namePart)
     if namePart == "" then return nil end
-    return namePart, realmPart
+    return namePart, realmPart, typedPart
 end
 
 -- The one shape of a pattern, at the write and at the read alike. `addPattern`
@@ -984,10 +990,17 @@ function ns.isSelf(sender)
 end
 
 
--- One key shape for the exact-name list, and it always carries a realm:
+-- One key shape for both hand-written lists, and it always carries a realm:
 -- "name-realm". A name typed with no realm means the realm the player is on --
 -- what WoW itself shows in an invite box when the other player shares it -- so
 -- the key says which realm rather than standing for all of them at once.
+--
+-- The realm is engraved at the write and never read back from the game
+-- afterwards (decision 119): "imagine la personne change de serveur, en interne
+-- on va re-rooter avec le nouveau serveur, c'est pas bon". An entry names a
+-- character on a realm, not "whoever bears that name where I happen to stand".
+-- The blocked list has been keyed this way since 1.0.0; the allowed list is the
+-- half this rule was generalised for, and there is deliberately no second one.
 --
 -- Where the two halves come from is `splitCharacterName`, the one rule the
 -- pattern test shares: a key and a pattern can never disagree about where a
@@ -998,7 +1011,7 @@ end
 -- before the world is entered: no invitation, whisper or name test reaches this
 -- code that early, and a key invented then would be an entry no later lookup
 -- could match.
-local function normalizeBlockedKey(name)
+local function normalizeCharacterKey(name)
     local namePart, realmPart = splitCharacterName(name)
     if not namePart then return nil end
     local realm = normalizeRealm(realmPart) or normalizeRealm(getPlayerRealm())
@@ -1013,7 +1026,7 @@ end
 -- somebody else's Toto, on another realm, had been blocked.
 local function isBlockedName(name)
     if not SanctuaryDB or type(SanctuaryDB.blockedNames) ~= "table" then return nil end
-    local key = normalizeBlockedKey(name)
+    local key = normalizeCharacterKey(name)
     if not key then return nil end
     if SanctuaryDB.blockedNames[key] then return key end
     return nil
@@ -1058,7 +1071,7 @@ local function bnetAccountForCharacter(name)
     local map = Sanctuary.bnetAccountByCharacter
     if not map then return nil end
 
-    local fullKey = normalizeBlockedKey(name)
+    local fullKey = normalizeCharacterKey(name)
     if fullKey then
         local account = map[fullKey]
         if account then return account end
@@ -1102,7 +1115,7 @@ end
 local function bnetAccountBlockingCharacter(name)
     local map = Sanctuary.bnetAccountByCharacter
     if map then
-        local fullKey = normalizeBlockedKey(name)
+        local fullKey = normalizeCharacterKey(name)
         if fullKey then
             local account = map[fullKey]
             if account then return account end
@@ -1149,22 +1162,29 @@ local function isAlwaysBlocked(name)
 end
 
 -- The key `ns.addAllowed` would write for this text -- an account keyed whole,
--- anything else keyed on its pseudo half -- and nil when nothing usable is left.
+-- a character keyed "pseudo-realm" -- and nil when nothing usable is left.
 --
--- One rule, one place, exactly like the blocked side just below. The right-click
--- menu has to ask "is this person already allowed", and it used to answer with
--- `ns.normalizeName` alone: an account allowed by hand ("Real Friend#1234") is
--- keyed whole, so the menu looked up "real", found nothing, and offered to allow
--- somebody who already was.
+-- One rule, one place, exactly like the blocked side just above -- and since
+-- decision 119 it is literally the same rule: a character typed into "Toujours
+-- autorises" is keyed with its realm, engraved at the write, just as one typed
+-- into "Toujours bloques" is. A bare key stood for the same pseudo on every
+-- realm at once, which a server transfer then re-rooted onto whatever realm the
+-- player had moved to.
+--
+-- The account is the one entry with no realm, and there is nothing to engrave:
+-- a Battle.net account is not on a realm at all. Keyed whole, the way the
+-- account cache keys it -- cut, "Real Friend#1234" became "real" and allowed
+-- every Real of every realm without a word.
+--
 -- On `ns` for the same reason `ns.isSelf` is, one screen up: one caller here,
 -- one caller in the interface, and no register to spare.
 function ns.findAllowedKey(name)
     local clean = stripWoWFormatting(name)
     if not clean or clean:gsub("%s", "") == "" then return nil end
-    return isAccountName(clean) and normalizeBNetName(clean) or normalizeName(clean)
+    return isAccountName(clean) and normalizeBNetName(clean) or normalizeCharacterKey(clean)
 end
 
-ns.normalizeBlockedKey = normalizeBlockedKey
+ns.normalizeCharacterKey = normalizeCharacterKey
 -- The KEY that answers, not just whether one does: the right-click menu has to
 -- remove the entry the lookup actually found, and it asks here rather than
 -- deriving the key itself so that the menu and the filters can never disagree
@@ -1317,13 +1337,24 @@ local function rebuildWhitelist()
         end
     end
 
+    -- The automatic sources, and only those: a roster name, keyed on its bare
+    -- pseudo. The manual entries have their own writer just below.
     local function addCharacterName(name, source, displayName)
         local normalized = normalizeName(name)
-        if normalized then
-            cache[normalized] = true
-            noteSource(sources, sourceLabels, normalized, source or "manual",
-                displayName or (type(name) == "string" and name or nil))
-        end
+        if not normalized then return end
+        -- A contact the person also typed by hand keeps their own entry, and
+        -- gets one line, not two. First-writer-wins used to do that on its own,
+        -- when both halves were keyed the same way; since decision 119 the
+        -- manual key carries a realm and the roster key cannot, so the same
+        -- person would show up twice -- once under "Added by you", once in the
+        -- roster group -- and be counted twice in the tile. Asked on the
+        -- qualified key, so a namesake on ANOTHER realm is left alone: he is
+        -- not the person who was typed in.
+        local manualKey = normalizeCharacterKey(name)
+        if manualKey and sources[manualKey] then return end
+        cache[normalized] = true
+        noteSource(sources, sourceLabels, normalized, source,
+            displayName or (type(name) == "string" and name or nil))
     end
 
     local function addBNetAccountName(name, source, displayName)
@@ -1371,14 +1402,22 @@ local function rebuildWhitelist()
             return
         end
 
-        addCharacterName(key, source, label)
-        if type(data) == "table" then
-            addCharacterName(data.displayName, source, label)
-            if manualEntryAllowsBNet(data) then
-                addBNetAccountName(data.displayName or key, source, label)
-            end
-        elseif manualEntryAllowsBNet(data) then
-            addBNetAccountName(key, source, label)
+        -- The stored key goes in as it stands, and nothing here derives a second
+        -- one. `ns.addAllowed` engraved the realm when the person typed the name
+        -- (decision 119); re-cutting the display name at every rebuild would
+        -- hand the cache a key built from the realm the player is on NOW, which
+        -- is exactly the re-rooting the decision forbids -- the entry would
+        -- follow them across a transfer instead of staying on the character it
+        -- names. `classifyName` reads this key shape first.
+        cache[key] = true
+        noteSource(sources, sourceLabels, key, source, label)
+
+        -- The display name still feeds the ACCOUNT cache: typing a one-word
+        -- Battle.net account name into the allowed field is the documented way
+        -- to let its whispers through, and that half has no realm to engrave.
+        if manualEntryAllowsBNet(data) then
+            addBNetAccountName((type(data) == "table" and data.displayName) or key,
+                source, label)
         end
     end
 
@@ -1438,7 +1477,7 @@ local function rebuildWhitelist()
                     -- two namesakes apart -- and it is only recorded when the
                     -- roster actually gave a realm, so an offline friend is
                     -- never claimed to be playing on ours.
-                    local fullKey = qualified and normalizeBlockedKey(qualified) or nil
+                    local fullKey = qualified and normalizeCharacterKey(qualified) or nil
                     local bareKey = normalizeName(characterName)
                     if accountKey then
                         characterByAccount[accountKey] = characterName
@@ -1582,6 +1621,31 @@ ensureWhitelistCache = function()
     end
 end
 
+-- Which trust source answers for this character, and under which key. Two key
+-- shapes share the one cache since decision 119: what the person typed, keyed
+-- "pseudo-realm" by `ns.addAllowed` and read back exactly as it was written, and
+-- the automatic sources, keyed on the bare pseudo by `normalizeName` because a
+-- roster re-answers whenever it changes.
+--
+-- The qualified key is asked first, and that order is the rule, not a detail: a
+-- name the person typed by hand keeps its own label when a roster happens to
+-- hold them too, which is what the panel and the tester both promise.
+--
+-- The bare fallback is what lets the automatic sources answer at all. It cannot
+-- widen a typed entry: a manual key always carries its "-realm" and a roster key
+-- never can, since `splitCharacterName` cuts the pseudo at the first separator.
+-- So a harasser on another realm who shares a pseudo with a name in "Toujours
+-- autorises" is not allowed by it -- which is the whole of decision 119.
+local function findWhitelistSource(name)
+    local sources = Sanctuary.whitelistSources
+    if not sources then return nil, nil end
+    local fullKey = normalizeCharacterKey(name)
+    if fullKey and sources[fullKey] then return sources[fullKey], fullKey end
+    local bareKey = normalizeName(name)
+    if bareKey and sources[bareKey] then return sources[bareKey], bareKey end
+    return nil, nil
+end
+
 -- Which of the three tiers a name falls into, and why. The whole 1.0.0 model is
 -- this function: always blocked, else always allowed, else unknown -- and only
 -- the third tier depends on a setting.
@@ -1598,15 +1662,14 @@ local function classifyName(name)
 
     ensureWhitelistCache()
 
-    local characterKey = normalizeName(name)
-    local source = characterKey and Sanctuary.whitelistSources[characterKey] or nil
+    local source, characterKey = findWhitelistSource(name)
     if source then
         local label = Sanctuary.whitelistLabels[characterKey]
-        -- The labels are keyed on the bare name and keep their first writer, which
-        -- for two Battle.net friends playing a namesake means one account is
-        -- printed for both -- and the one printed can be the account the person
-        -- has just blocked, shown as the REASON the other one is allowed. The
-        -- "Name-Realm" keys stay distinct, so ask the account map instead.
+        -- A roster label is keyed on the bare name and keeps its first writer,
+        -- which for two Battle.net friends playing a namesake means one account
+        -- is printed for both -- and the one printed can be the account the
+        -- person has just blocked, shown as the REASON the other one is allowed.
+        -- The "Name-Realm" keys stay distinct, so ask the account map instead.
         if source == "bnet" then
             local account = bnetAccountForCharacter(name)
             if account then label = account end
@@ -1907,15 +1970,15 @@ function ns.describeAccessDecision(name)
     --
     -- The manual allowed list is not excluded here, and must not be. Decision
     -- 104 makes the two lists exclusive at the write -- putting a name in one
-    -- takes it out of the other, on the key that write uses -- but the allowed
-    -- list is realm-less by decision 82, so allowing a bare "Toto" cannot
-    -- displace "Toto-Hyjal" from the blocked list: it does not name him. That
-    -- residue is the one way a person can still read a name on both panels, and
-    -- when it happens this is the line that says which of the two is in force.
+    -- takes it out of the other -- and since decision 119 both sides compute
+    -- that on the same realm-qualified key, so allowing "Toto" really does
+    -- displace the blocked "Toto" of the player's own realm. What the two lists
+    -- can still hold at once is a PATTERN matching a name somebody allowed, and
+    -- a trust source the person does not administer: this is the line that says
+    -- which of the two is in force.
     local overridden, overriddenDetail = nil, nil
     if classification.verdict == "always_blocked" then
-        local characterKey = normalizeName(name)
-        local source = characterKey and Sanctuary.whitelistSources[characterKey]
+        local source, characterKey = findWhitelistSource(name)
         if source and source ~= "bnet" then
             overridden = source
             overriddenDetail = Sanctuary.whitelistLabels[characterKey]
@@ -2055,10 +2118,13 @@ function ns.addAllowed(name, source)
     if not SanctuaryDB then return false end
     local clean = stripWoWFormatting(name)
     if not clean or clean:gsub("%s", "") == "" then return false end
-    -- Keyed on the pseudo half, cut by the one rule the blocked list uses, and
-    -- refused outright when nothing is left of it -- "-" writes here no more
-    -- than it writes there. The field is the same on both panels ("Name or
-    -- Name-Realm"), so the two sides had no business reading it differently.
+    -- Keyed "pseudo-realm" by the one rule the blocked list uses, and refused
+    -- outright when nothing is left of it -- "-" writes here no more than it
+    -- writes there. The field is the same on both panels ("Name or Name-Realm"),
+    -- so the two sides have no business reading it differently -- and since
+    -- decision 119 they no longer do: the realm is engraved here, at the write,
+    -- from what was typed or else from the realm the player is on right now, and
+    -- never read back from the game afterwards.
     --
     -- Unless what was typed is an account: a "#" is a Battle.net tag and no
     -- pseudo carries one, so such an entry is keyed whole, the way the account
@@ -2111,7 +2177,7 @@ function ns.addAllowed(name, source)
     -- gesture back -- this entry out, that one in. Undoing one half alone would
     -- put the two lists back into the state this rule exists to end.
     local displaced = nil
-    local blockedKey = normalizeBlockedKey(clean)
+    local blockedKey = normalizeCharacterKey(clean)
     if blockedKey and SanctuaryDB.blockedNames and SanctuaryDB.blockedNames[blockedKey] then
         displaced = {
             list = "blocked", key = blockedKey,
@@ -2205,7 +2271,7 @@ function ns.addBlocked(name, source)
     -- add-on that will not let somebody block their harasser.
     ns.ensureWhitelist()
     if bnetAccountBlockingCharacter(clean) then return false, nil, nil, "account" end
-    local key = normalizeBlockedKey(clean)
+    local key = normalizeCharacterKey(clean)
     if not key then return false, nil, nil, "name" end
     SanctuaryDB.blockedNames = SanctuaryDB.blockedNames or {}
     if SanctuaryDB.blockedNames[key] then
