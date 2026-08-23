@@ -724,15 +724,25 @@ end
 -- Keyword blacklist: blocks names containing any suspect keyword.
 -- Private on purpose since 0.4.0: isAlwaysBlocked is the only caller, so a
 -- pattern and an exact blocked name can never be tested by different code.
+--
+-- The pseudo half only, cut by the one rule the key builder uses. The panel
+-- promises exactly that -- "a pattern is a piece of text: any name containing it
+-- is blocked", "text to look for in names" -- and searching the whole string
+-- broke the promise in the worst direction. Every name reaching a decision in a
+-- random dungeon arrives realm-qualified, so the pattern "illidan" matched
+-- "Healer-Illidan" on his realm alone: an allowed player -- a friend, a group
+-- member, a dungeon companion -- cut off with no popup, no sound and no chat
+-- line, and the always-blocked door beats every allow list, so nothing caught
+-- him. A realm is not a pseudo and was never what the person typed a pattern
+-- against.
 local function matchesKeyword(name)
     if not name or not SanctuaryDB or not SanctuaryDB.keywords then return false, nil end
-    local cleanName = stripWoWFormatting(name)
-    if not cleanName then return false, nil end
+    local nameOnly = splitCharacterName(name)
+    if not nameOnly then return false, nil end
 
-    local lowerName = cleanName:lower():gsub("%s", "")
     for _, keyword in ipairs(SanctuaryDB.keywords) do
         local cleanKeyword = tostring(keyword or ""):lower():gsub("%s", "")
-        if cleanKeyword ~= "" and lowerName:find(cleanKeyword, 1, true) then
+        if cleanKeyword ~= "" and nameOnly:find(cleanKeyword, 1, true) then
             return true, keyword
         end
     end

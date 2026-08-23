@@ -2838,6 +2838,53 @@ equal(why, "keyword", "and is still reported as a pattern")
 equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Spammerguy-TestRealm"), true,
     "a pattern discards a whisper with the filter unticked")
 
+-- C2a -- a pattern is looked for in the pseudo, and never in the realm. The
+-- panel promises exactly that ("any name containing it is blocked", "text to
+-- look for in names"); read against the whole string, a pattern matched the
+-- realm half instead. In a random dungeon every name arrives realm-qualified, so
+-- the pattern "illidan" cut off every companion from Illidan -- allowed players,
+-- silenced with no popup, no sound and no chat line, and the always-blocked door
+-- beats every allow list, so nothing caught them.
+resetModelState()
+inGroup = true
+inInstance = true
+currentInstanceType = "party"
+groupMembers = { "Healer-Illidan" }
+SanctuaryDB.keywords = { "illidan" }
+ns.invalidateWhitelist()
+
+equal(ns.classifyName("Healer-Illidan").verdict, "always_allowed",
+    "a dungeon companion FROM Illidan is not somebody the pattern names")
+for _, event in ipairs({ "CHAT_MSG_PARTY", "CHAT_MSG_INSTANCE_CHAT" }) do
+    equal(dispatchChatFilter(event, "pull now", "Healer-Illidan"), false,
+        event .. " leaves his message alone")
+end
+-- The pseudo half still answers, exactly as the panel says it does.
+equal(ns.classifyName("Illidanx-TestRealm").verdict, "always_blocked",
+    "while a pseudo containing the pattern is blocked")
+equal(select(2, ns.getCharacterDecision("Illidanx-TestRealm")), "keyword",
+    "and reported as a pattern")
+equal(dispatchChatFilter("CHAT_MSG_PARTY", "spam", "Illidanx-TestRealm"), true,
+    "so his group message is the one that goes")
+
+-- And on the invitation path, where being wrong is silent. Both are guild
+-- members, so only the pattern can separate them: the one it names is refused,
+-- the one whose realm merely spells it is left to WoW.
+resetModelState()
+guildMembers = { "Healer-Illidan", "Illidanx-TestRealm" }
+inGuild = true
+SanctuaryDB.keywords = { "illidan" }
+ns.invalidateWhitelist()
+do
+    local before = declinedGroups
+    fire("PARTY_INVITE_REQUEST", "Healer-Illidan")
+    runTimers(3)
+    equal(declinedGroups, before, "an invitation from Illidan is not refused")
+    fire("PARTY_INVITE_REQUEST", "Illidanx-TestRealm")
+    runTimers(3)
+    equal(declinedGroups, before + 1, "while the one the pattern names is")
+end
+
 -- C2b -- every entry of the blocked list carries a realm, spelled one way.
 -- Two faults lived here. A bare key stood for every realm at once, so blocking
 -- one harasser cut off his namesake in the player's own guild -- in silence, the
