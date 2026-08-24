@@ -509,8 +509,10 @@ local function newDropdown(parent, name, width, rows, get, set)
     applyBackdrop(list, C.panel, C.accent)
     list:Hide()
     list:SetScript("OnHide", function()
-        -- Escape closes it through UISpecialFrames without going through
-        -- `closeOpenDropdown`, so the record of what is open is cleared here.
+        -- The list is registered in UISpecialFrames below, so it can be hidden
+        -- without going through `closeOpenDropdown` -- by Escape, or by anything
+        -- else that hides it. The record of what is open is cleared here so it
+        -- is right whichever way the list went away.
         if openDropdown == field then openDropdown = nil end
     end)
     field.list = list
@@ -567,9 +569,10 @@ local function newDropdown(parent, name, width, rows, get, set)
     end)
 
     if name and UISpecialFrames then
-        -- Escape closes the last frame registered here that is showing, which is
-        -- the list whenever it is open -- so Escape shuts the list before it
-        -- shuts the window.
+        -- Registered so that Escape closes the list. Whether the same Escape
+        -- also closes the main window, which is registered here too, has not
+        -- been observed in a client and is not assumed: both OnHide handlers
+        -- clear `openDropdown`, so either outcome leaves a coherent state.
         tinsert(UISpecialFrames, name .. "List")
     end
 
