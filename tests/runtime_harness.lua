@@ -6148,6 +6148,17 @@ local function newWidget(kind, name, parent, template)
     end
     function w:SetScrollChild(child) self.__scrollChild = child end
     function w:GetScrollChild() return self.__scrollChild end
+    -- Recorded rather than auto-stubbed: what the grip may do to the window is
+    -- four numbers the client is handed once and never asked about again, so a
+    -- silent stub let the vertical travel go to zero with every test green.
+    function w:SetResizeBounds(minWidth, minHeight, maxWidth, maxHeight)
+        self.__resizeBounds = { minWidth, minHeight, maxWidth, maxHeight }
+    end
+    function w:GetResizeBounds()
+        local bounds = self.__resizeBounds
+        if not bounds then return nil end
+        return bounds[1], bounds[2], bounds[3], bounds[4]
+    end
     function w:Click()
         local onClick = self.__scripts.OnClick
         if onClick then onClick(self) end
@@ -8281,11 +8292,14 @@ ns.refreshUI()
 equal(mainFrame:GetWidth(), 780, "the window opens at its design width")
 
 -- Dragging the grip switches to a remembered size; double-clicking goes back.
--- Both slots are read back now, decision 98.
-SanctuaryDB.uiSize = { 640, 940 }
+-- Both slots are read back now, decision 98. Smaller than the height the window
+-- OPENS at, on purpose: that is the whole of what the grip is for downwards, and
+-- clamping a remembered size to the opening height gave it back on the next
+-- opening -- the drag simply did not survive the window being closed.
+SanctuaryDB.uiSize = { 640, 520 }
 mainFrame:Hide()
 mainFrame:Show()
-equal(mainFrame:GetHeight(), 940, "a remembered size is applied on opening")
+equal(mainFrame:GetHeight(), 520, "a remembered size smaller than the window is applied on opening")
 equal(mainFrame:GetWidth(), 640, "its width included")
 SanctuaryDB.uiSize = nil
 mainFrame:Hide()
@@ -8566,12 +8580,15 @@ gripDown(grip)
 mainFrame:SetSize(860, 940)
 gripUp(grip)
 
--- Downwards too: shrinking is the direction that spilled content off-screen.
+-- Downwards too: shrinking is the direction that spilled content off-screen, and
+-- the direction the grip lost when both of its bounds were brought down to the
+-- screen. Below the height the window opens at, which is where a drag downwards
+-- goes.
 now = now + 5
 gripDown(grip)
-mainFrame:SetSize(780, 890)
+mainFrame:SetSize(780, 520)
 gripUp(grip)
-equal(mainFrame:GetHeight(), 890, "a drag downwards is kept")
+equal(mainFrame:GetHeight(), 520, "a drag downwards is kept")
 equal(viewportOf(), expectedViewport(), "and the content area shrinks with it")
 
 -- During the drag, not only on release: the window's own size handler carries
@@ -8905,60 +8922,119 @@ do
 end
 
 
--- A.2 -- the smallest window holds the WHOLE home screen.
+-- A.2 -- the home screen scrolls, and the grip keeps a vertical travel.
 --
--- The bound the visual pass found too small: at the minimum height the home
--- screen was cut in the middle of question 3, "Vos listes" and the tester were
--- off the bottom, and there was no bar to reach them with. The minimum is
--- measured on that screen, at the minimum WIDTH -- the width where the note
--- under question 3 wraps and the screen is at its tallest -- so this is the
--- check that fails the day the home screen grows again, the way it did when
--- question 3 was inserted. A height of 0 is asked for on purpose: what gets
--- applied is the bound itself, not a copy of it written here.
+-- Decision 134: the window opens at the tallest the client's screen allows, the
+-- home screen scrolls under it with a bar that reaches the tester, and the other
+-- screens -- shorter -- do not scroll. The height is read off the screen, never
+-- off a design constant: a Retail client at the default UI scale measures 768
+-- units, and the design asks for 908.
+--
+-- The travel is the part nothing was watching. `SetResizeBounds` had no double
+-- in this harness, so applying the screen to BOTH bounds -- which collapses them
+-- onto the same number on every screen of 954 units or less -- was a green run
+-- and a window a person could only widen.
 do
-    local kept = SanctuaryDB.uiSize
+    local keptScreen, keptSize = UIParent.GetHeight, SanctuaryDB.uiSize
     SanctuaryDB.filters.preset = "all"
-    for _, width in ipairs({ 500, 780, 900 }) do
-        SanctuaryDB.uiSize = { width, 0 }
+    SanctuaryDB.uiSize = nil
+    -- What the window leaves the screen for the tab strip hanging under it: the
+    -- strip's 22 px of overhang, counted on both sides of the centring, plus a
+    -- breathing edge. The block further down measures that overhang on the strip
+    -- itself; here it is the reserve that is being read back.
+    local reserve = 2 * (22 + 10)
+    for _, screen in ipairs({ 600, 768, 900 }) do
+        UIParent.GetHeight = function() return screen end
         _G["SanctuaryTab_protection"]:Click()
         ns.refreshUI()
+        equal(mainFrame:GetHeight(), screen - reserve,
+            "at " .. screen .. " units the window opens as tall as the screen allows")
+
+        local minWidth, minHeight, maxWidth, maxHeight = mainFrame:GetResizeBounds()
+        equal(minWidth, 500, "the grip keeps its narrowest width at " .. screen)
+        equal(maxWidth, 900, "and its widest")
+        check(maxHeight <= screen - reserve,
+            "the tallest the grip may drag to fits the screen at " .. screen
+                .. " (" .. tostring(maxHeight) .. ")")
+        check(minHeight < maxHeight, "and the grip still has a vertical travel at "
+            .. screen .. " (" .. tostring(minHeight) .. " to " .. tostring(maxHeight) .. ")")
+
         local scroll = _G.SanctuaryContentScroll
-        local needed = scroll:GetScrollChild():GetHeight() or 0
+        local child = scroll:GetScrollChild():GetHeight() or 0
         local viewport = scroll:GetHeight() or 0
-        check(needed <= viewport, "at the smallest height the home screen fits at "
-            .. width .. " (" .. needed .. " <= " .. viewport .. ")")
-        equal(scroll.bar:IsShown(), false, "so nothing on it scrolls at " .. width)
-        -- The tester is the last row of the screen, and it is what was off the
-        -- bottom in the capture. Its own anchor, plus the padding the tab frames
-        -- are offset by and the height of the field itself.
+        check(child > viewport, "the home screen is taller than the window at " .. screen
+            .. " (" .. child .. " over " .. viewport .. ")")
+        equal(scroll.bar:IsShown(), true, "so it has a bar to say so at " .. screen)
+        -- The tester is the last row of the screen: what matters now is not that
+        -- it is on show, it is that the bar goes far enough down to reach it.
+        -- Its own anchor, plus the padding the tab frames are offset by and the
+        -- height of the field itself.
         local _, _, _, _, testerY = _G.SanctuaryTestInput:GetPoint()
-        check(18 - (testerY or 0) + 24 <= viewport,
-            "and the tester at the bottom of it is inside the window at " .. width)
+        check(18 - (testerY or 0) + 24 <= child,
+            "and the bar reaches the tester at the bottom of it at " .. screen)
     end
-    SanctuaryDB.uiSize = kept
+
+    -- The far end of the range: 954 units is the tallest screen on which the two
+    -- bounds used to meet, so it is the last one where the travel could be lost
+    -- again without anything else moving.
+    UIParent.GetHeight = function() return 954 end
+    ns.refreshUI()
+    local _, tallMin, _, tallMax = mainFrame:GetResizeBounds()
+    check(tallMin < tallMax,
+        "at 954 units -- the last screen the two bounds used to meet on -- the "
+            .. "grip still has a travel (" .. tostring(tallMin) .. " to " .. tostring(tallMax) .. ")")
+
+    -- The other screens are shorter than the window they are given, and a bar
+    -- beside a screen with nothing under it is the fault this lot came from
+    -- (constat G.4). Measured on the client's own screen, 768 units.
+    UIParent.GetHeight = function() return 768 end
+    for _, tab in ipairs({ "journal", "advanced", "about", "diagnostics" }) do
+        _G["SanctuaryTab_" .. tab]:Click()
+        ns.refreshUI()
+        local scroll = _G.SanctuaryContentScroll
+        equal(scroll.bar:IsShown(), false, tab .. " is shorter than its window and does not scroll")
+    end
+
+    -- And where the room IS there, nothing scrolls at all: the whole home screen
+    -- fits, bar included, which is what a lowered UI scale buys.
+    UIParent.GetHeight = function() return 1200 end
+    _G["SanctuaryTab_protection"]:Click()
+    ns.refreshUI()
+    local scroll = _G.SanctuaryContentScroll
+    check((scroll:GetScrollChild():GetHeight() or 0) <= (scroll:GetHeight() or 0),
+        "on a screen with the room the whole home screen is in the window")
+    equal(scroll.bar:IsShown(), false, "and there is nothing to scroll")
+
+    UIParent.GetHeight = keptScreen
+    SanctuaryDB.uiSize = keptSize
+    _G["SanctuaryTab_protection"]:Click()
     ns.refreshUI()
 end
 
--- A.2 again, from the other side: the bound is asked for, the screen has the
--- last word. The design's minimum is 890 px of window; how many of those units a
--- client has is decided by the UI scale -- 768 on a default Retail setup -- and a
--- minimum taller than the screen would be a window nobody can reach the bottom
--- of. Where the room is not there, the content scrolls instead.
+-- A.2 again, from the other side: a client that says nothing about its screen
+-- gets the height that was asked for. `fitToScreen` reads `UIParent:GetHeight`,
+-- and a widget that answers nil, 0 or a string is a widget whose answer has to
+-- be dropped -- taking it at face value would open the window at the floor of
+-- the fit, 300 px, on a client that had simply not been asked yet.
 do
     local kept = UIParent.GetHeight
-    UIParent.GetHeight = function() return 600 end
     _G["SanctuaryTab_protection"]:Click()
     ns.refreshUI()
-    check(mainFrame:GetHeight() <= 600 - 20,
-        "a screen too short for the design bound gets a window that fits it anyway")
-    local scroll = _G.SanctuaryContentScroll
-    check((scroll:GetScrollChild():GetHeight() or 0) > (scroll:GetHeight() or 0),
-        "and the home screen scrolls there rather than being cut off")
-    equal(scroll.bar:IsShown(), true, "with a bar to say so")
+    local asked = mainFrame:GetHeight()
+    check(asked >= 820 + 40 + 30,
+        "with no screen to fit, the window is as tall as the home screen asked ("
+            .. tostring(asked) .. ")")
+    for _, answer in ipairs({ "nil", 0, -100, "tall" }) do
+        UIParent.GetHeight = function()
+            if answer == "nil" then return nil end
+            return answer
+        end
+        ns.refreshUI()
+        equal(mainFrame:GetHeight(), asked,
+            "an unusable screen height (" .. tostring(answer) .. ") is dropped, not applied")
+    end
     UIParent.GetHeight = kept
     ns.refreshUI()
-    check(mainFrame:GetHeight() >= 820 + 40 + 30,
-        "and the design bound comes back on a screen that has the room")
 end
 
 -- A.2, third side: the tester's ANSWER is measured, not reserved.

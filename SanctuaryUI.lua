@@ -61,17 +61,27 @@ local FONT_TITLE, FONT_SECTION, FONT_DESC, FONT_BODY = 16, 14, 13, 12
 -- `innerWidth()` and never from the number it was built at.
 local DEFAULT_WIDTH = 780
 local MIN_FRAME_WIDTH, MAX_FRAME_WIDTH = 500, 900
--- The height bounds are not a taste: the home screen is the tallest thing in
--- this window that never folds, and A.2 asks for the whole of it -- five
--- questions, the tester and its answer -- to be on screen at the SMALLEST size
--- the grip allows, at the smallest width, which is the width where the note
--- under question 3 wraps and the screen is at its tallest. 820 is that
--- measurement plus a margin, and the harness fails the day the screen grows past
--- it (which is what happened when question 3 was inserted). Beyond the maximum --
--- "I choose" unfolded is taller than either bound -- the content scrolls, which
--- is also what the manual mode needs when the window is made smaller than what
--- is in it.
+-- The height the window ASKS for when it opens. The home screen is the tallest
+-- thing here that never folds -- five questions, the tester and its answer --
+-- and 820 is that screen measured at the smallest width, the width where the
+-- note under question 3 wraps and the screen is at its tallest. Every screen
+-- opens in that same window rather than the window jumping size from tab to tab.
+--
+-- What the window GETS is the screen's to decide, never this number: a Retail
+-- client at the default UI scale measures 768 units, which leaves 704 px of
+-- window for 890 asked, so the home screen scrolls there and its bar says so
+-- (decision 134 -- "on a jamais parle de rendre la page d'accueil non
+-- scrollable"). The other screens are shorter than the window they are given and
+-- do not scroll.
 local MIN_HEIGHT, MAX_HEIGHT = 820, 900
+-- The smallest window the grip may drag to, which is NOT the height above. The
+-- content scrolls (decision 3), so a person may make the window smaller than
+-- what is in it; and a floor set at the height the window OPENS at is a floor
+-- that meets the ceiling on every screen with less room than that -- 954 units
+-- and below, so every default Retail client -- leaving the grip no vertical
+-- travel at all (decision 98: the horizontal adds itself to the vertical, it
+-- does not replace it).
+local GRIP_MIN_HEIGHT = 380
 local HEADER_HEIGHT = 40
 local TAB_HEIGHT = 22
 -- How far the current tab climbs into the frame, and how thick its underline is
@@ -102,6 +112,7 @@ local UNDO_INSET, UNDO_GAP, UNDO_BTN_WIDTH = 8, 12, 90
 -- What the whole window may measure in height, header and bottom strip included.
 local MIN_FRAME_HEIGHT = MIN_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
 local MAX_FRAME_HEIGHT = MAX_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
+local GRIP_MIN_FRAME_HEIGHT = GRIP_MIN_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
 local UNDO_SECONDS = 6
 -- The sentence a refused entry gets. It answers for the panel, not for the box,
 -- so it runs the panel's own text width -- the one the descriptions above it
@@ -2073,10 +2084,13 @@ end
 
 refreshTab.diagnostics = function()
     ns.RefreshStranded()
-    -- The two columns fill whatever they are given, so this screen never asks
-    -- for more than the shortest window: what it needs is a floor, and
-    -- `applyTabHeight` hands it the rest.
-    return MIN_HEIGHT - PAD
+    -- The two columns fill whatever they are given, so what this screen asks for
+    -- is its own floor -- the band of buttons above them and the shortest column
+    -- it may be reduced to -- and `applyTabHeight` hands it the rest. Asking for
+    -- the height the WINDOW opens at made the screen taller than the viewport on
+    -- a client that cannot hold it, so the columns filled the window and a bar
+    -- came up beside them at the same time.
+    return DIAG_COLUMN_TOP + DIAG_MIN_COLUMN
 end
 
 -- ============================================================================
@@ -3001,6 +3015,30 @@ local function fitToScreen(frameHeight)
     return math.min(frameHeight, math.max(SCREEN_FLOOR, available - SCREEN_MARGIN))
 end
 
+-- What the grip is allowed to do, in height. The screen brings the CEILING down
+-- to what it holds; the floor stays the design's, so there is always a travel
+-- between the two. Applying the screen to BOTH bounds is what took the vertical
+-- resize away: on any screen of 954 units or less the two collapsed onto the
+-- same number and the grip only moved sideways. The floor follows the screen in
+-- the one case where it would otherwise cross the ceiling -- a screen too short
+-- to hold even the floor -- because bounds handed over inverted are bounds the
+-- client is free to read either way round.
+local function heightBounds()
+    local maxHeight = fitToScreen(MAX_FRAME_HEIGHT)
+    return math.min(GRIP_MIN_FRAME_HEIGHT, maxHeight), maxHeight
+end
+
+-- Posted again on every refresh, not once at build time: the bounds are read off
+-- the screen, and the screen changes under the window when the UI scale does.
+local function applyResizeBounds()
+    if not mainFrame then return end
+    local minHeight, maxHeight = heightBounds()
+    -- Both axes, decision 98. Under pcall because SetResizeBounds is the Retail
+    -- spelling and a missing method must not take the window down with it.
+    pcall(mainFrame.SetResizeBounds, mainFrame,
+        MIN_FRAME_WIDTH, minHeight, MAX_FRAME_WIDTH, maxHeight)
+end
+
 local function applyViewport(frameHeight, width)
     if not contentScroll or not contentFrame then return end
     -- The live width, taken before anything measures itself: `innerWidth` and
@@ -3050,20 +3088,29 @@ local function applyHeight(height)
     -- `resolveWidth` refreshes `manualSize` from SavedVariables on the way past,
     -- which is what the height below reads too.
     local width = resolveWidth()
-    local needed = math.max(MIN_HEIGHT, height or MIN_HEIGHT)
-    fittedNeed = needed
+    -- What the screen on show actually drew, which is what the content area has
+    -- to be able to reach -- and nothing more. Floored at the height the window
+    -- opens at, a screen shorter than its window was handed a content area
+    -- taller than the viewport: About came up with a bar beside it and 190 px of
+    -- nothing to scroll through (constat G.4, on a client where the window is
+    -- cut down to the screen).
+    fittedNeed = height or 0
+    local needed = math.max(MIN_HEIGHT, fittedNeed)
     local frameHeight
     if manualSize then
         -- A settings file written before the bounds existed -- or before the
         -- width was ever applied -- can carry anything at all, so this is
-        -- clamped exactly like the width.
-        frameHeight = manualSize[2] or MIN_FRAME_HEIGHT
-        frameHeight = math.min(MAX_FRAME_HEIGHT, math.max(MIN_FRAME_HEIGHT, frameHeight))
+        -- clamped exactly like the width, and to the bounds the GRIP has: a
+        -- remembered size is where a person left the grip, and clamping it to
+        -- the opening height would undo the drag on the next opening.
+        frameHeight = manualSize[2] or GRIP_MIN_FRAME_HEIGHT
+        frameHeight = math.min(MAX_FRAME_HEIGHT, math.max(GRIP_MIN_FRAME_HEIGHT, frameHeight))
     else
         local bounded = math.min(MAX_HEIGHT, needed)
         frameHeight = bounded + HEADER_HEIGHT + CONTENT_BOTTOM
     end
     frameHeight = fitToScreen(frameHeight)
+    applyResizeBounds()
     mainFrame:SetSize(width, frameHeight)
     applyViewport(frameHeight, width)
 end
@@ -3160,11 +3207,7 @@ local function createMainFrame()
     mainFrame:EnableMouse(true)
     mainFrame:SetMovable(true)
     mainFrame:SetResizable(true)
-    -- Both axes now, decision 98. Under pcall because SetResizeBounds is the
-    -- Retail spelling and a missing method must not take the window down with it.
-    pcall(mainFrame.SetResizeBounds, mainFrame,
-        MIN_FRAME_WIDTH, fitToScreen(MIN_FRAME_HEIGHT),
-        MAX_FRAME_WIDTH, fitToScreen(MAX_FRAME_HEIGHT))
+    applyResizeBounds()
     mainFrame:SetClampedToScreen(true)
     mainFrame:Hide()
     applyBackdrop(mainFrame, C.panel, C.border, 2)
