@@ -8961,6 +8961,72 @@ do
         "and the design bound comes back on a screen that has the room")
 end
 
+-- A.2, third side: the tester's ANSWER is measured, not reserved.
+--
+-- The row kept a flat 40 px for a sentence that wraps, and beside the field the
+-- sentence had `innerWidth() - 360` to wrap into -- 104 px at the smallest
+-- window. A blocked guild mate's verdict ran seven lines and 84 px there, the
+-- screen answered a height that had never heard of the other 44, and since the
+-- content area is `max(that height, viewport)` there was no travel and no bar
+-- either: the answer was simply cut off. The brief asks for the tester AND its
+-- answer at the minimum size, so what is checked is the bottom of the sentence,
+-- not the top of the field.
+do
+    local kept = SanctuaryDB.uiSize
+    local keptGuild, keptInGuild = guildMembers, inGuild
+    guildMembers = { "Ombrelune-ConseildesOmbres" }
+    inGuild = true
+    ns.invalidateWhitelist()
+    ns.addBlocked("Ombrelune-ConseildesOmbres")
+
+    SanctuaryDB.uiSize = { 500, 890 }
+    _G["SanctuaryTab_protection"]:Click()
+    ns.refreshUI()
+    local scroll = _G.SanctuaryContentScroll
+    local field, answer = _G.SanctuaryTestInput, _G.SanctuaryTestAnswer
+
+    field:SetText("Ombrelune-ConseildesOmbres")
+    field:GetScript("OnTextChanged")(field)
+    check((answer:GetText() or ""):find(ns.L["LIST_GUILD"], 1, true) ~= nil,
+        "the longest answer the tester has: blocked, over a guild mate")
+    check((answer:GetStringHeight() or 0) > 12,
+        "and at the smallest width it takes more than one line")
+
+    -- The criterion of the brief, on the bottom of the SENTENCE rather than on
+    -- the top of the field: 18 px of padding the tab frames are offset by, the
+    -- answer's own anchor, and the height it measures.
+    local viewport = scroll:GetHeight() or 0
+    local _, _, _, _, answerY = answer:GetPoint()
+    local bottom = 18 - (answerY or 0) + (answer:GetStringHeight() or 0)
+    check(bottom <= viewport or scroll.bar:IsShown(),
+        "the bottom of the answer is inside the window, or there is a bar to "
+            .. "reach it with (" .. bottom .. " vs " .. viewport .. ")")
+
+    -- And the mechanism under it. The content area is `max(what the screen
+    -- answered, the viewport)` and the answer never goes below the minimum
+    -- bound, so on the folded screen the viewport swallows the difference. On
+    -- "I choose" unfolded -- taller than either bound, which is why it scrolls
+    -- at all -- what the screen answered IS the content area, and the sentence's
+    -- lines show up in it. Reserved at a flat 40, these two numbers were equal.
+    local keptPreset = SanctuaryDB.filters.preset
+    SanctuaryDB.filters.preset = "custom"
+    ns.refreshUI()
+    local withAnswer = scroll:GetScrollChild():GetHeight() or 0
+    field:SetText("")
+    field:GetScript("OnTextChanged")(field)
+    local withoutAnswer = scroll:GetScrollChild():GetHeight() or 0
+    check(withAnswer > withoutAnswer,
+        "a wrapping answer makes the screen taller by the lines it takes ("
+            .. withAnswer .. " vs " .. withoutAnswer .. ")")
+    SanctuaryDB.filters.preset = keptPreset
+
+    ns.removeBlocked(ns.normalizeCharacterKey("Ombrelune-ConseildesOmbres"))
+    guildMembers, inGuild = keptGuild, keptInGuild
+    ns.invalidateWhitelist()
+    SanctuaryDB.uiSize = kept
+    ns.refreshUI()
+end
+
 
 end)()
 

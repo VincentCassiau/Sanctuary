@@ -895,6 +895,10 @@ local ROW_HEIGHT = 24
 -- of them. `.cbr.sub { padding-left:26px }` of the mock-up is the indent a box
 -- takes when it belongs to the box above it.
 local CHECK_SIZE, SUB_INDENT = 18, 26
+-- The tester's own row: the 24 px field, hung 4 px above the line the label sits
+-- on, plus the gap its answer keeps below it. What the answer itself takes is
+-- measured, never reserved -- it is only there while a name is being tested.
+local TEST_ROW = 28
 
 local function buildProtectionTab(parent)
     protection.frame = parent
@@ -1151,6 +1155,12 @@ local function buildProtectionTab(parent)
     protection.testInput:SetScript("OnTextChanged", function(self)
         self:RefreshHint()
         ns.RefreshTestAnswer(self:GetText())
+        -- And the screen again, because the answer is what the bottom of it is
+        -- measured from: a longer verdict has to be given its lines -- or the
+        -- bar to reach them with -- rather than being written into a layout
+        -- already fixed. The pass re-reads the same field, so this cannot come
+        -- back round: nothing in it writes to the box.
+        if ns.refreshUI then ns.refreshUI() end
     end)
 end
 
@@ -1242,8 +1252,10 @@ applyTabWidth.protection = function()
     -- answers the height the fold needs, which the refresh below reads.
     protection.q4Anchor:SetWidth(width)
     protection.layoutChoose(width)
-    -- The tester's sentence starts at PAD + 360 and runs to the right margin.
-    protection.testAnswer:SetWidth(math.max(60, width - 360))
+    -- The tester's answer is a sentence under the field, not a label beside it:
+    -- it runs the whole width, it wraps, and the height the screen is measured
+    -- from comes out of this number.
+    protection.testAnswer:SetWidth(width)
     protection.testInput:RefreshNoteWidth()
 end
 
@@ -1415,17 +1427,35 @@ refreshTab.protection = function()
     protection.testLabel:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
     protection.testInput:ClearAllPoints()
     protection.testInput:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD + 130, y + 4)
-    protection.testAnswer:ClearAllPoints()
-    protection.testAnswer:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD + 360, y)
-    y = y - 40
 
     -- Read again, from the name still in the field. The answer is a read of the
     -- two lists and this is the pass every write ends on -- adding a name,
     -- removing one, undoing, closing the drawer -- so a tested pseudo used to
     -- keep an answer the lists had stopped agreeing with, and the only way to
-    -- see the new one was to add or remove a letter.
+    -- see the new one was to add or remove a letter. Before the measurement
+    -- below and never after it: a height taken from the sentence that was there
+    -- a moment ago is the height of the wrong sentence.
     if protection.testInput and ns.RefreshTestAnswer then
         ns.RefreshTestAnswer(protection.testInput:GetText())
+    end
+    y = y - TEST_ROW
+
+    -- The answer under the field, over the whole width, and MEASURED.
+    --
+    -- Beside the field it had `innerWidth() - 360` to wrap into -- 104 px at the
+    -- smallest window, which does not hold "Pseudo-Royaume" on a line at all --
+    -- and the row reserved a flat 40 px for a sentence that takes as many lines
+    -- as the column leaves it. A blocked guild mate's verdict ran to seven lines
+    -- there, and the screen answered the height it had not measured: the sentence
+    -- fell off the bottom of a window whose content was exactly its own viewport,
+    -- so there was no bar to reach it with either. Measured like the note under
+    -- question 3, and nothing is reserved while the field is empty -- the answer
+    -- only exists during a test, and A.2 asks the minimum height to hold the home
+    -- screen, not a sentence that is not on it.
+    protection.testAnswer:ClearAllPoints()
+    protection.testAnswer:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
+    if (protection.testAnswer:GetText() or "") ~= "" then
+        y = y - math.max(NOTE_LINE, protection.testAnswer:GetStringHeight() or NOTE_LINE)
     end
 
     return -y + PAD
