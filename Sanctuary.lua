@@ -6660,6 +6660,86 @@ local function formatPopupDiagnosticResult(result)
 end
 
 -- ----------------------------------------------------------------------------
+-- Channel spam, through the path the game uses
+-- ----------------------------------------------------------------------------
+
+-- The anti-spam is the one thing a solo session cannot ask for: it needs a
+-- stranger repeating themselves in a public channel, which is the Trade
+-- channel's mood and nobody's schedule. This sends three copies of one line
+-- through the real code -- the registered filter, then the event handler, with
+-- a different `lineID` each time, exactly as WoW dispatches three messages --
+-- so the button answers what a spammer would produce, and the recording carries
+-- the same MASK_SPAM_REPEAT entries a real one would leave.
+--
+-- Scoped, published on `ns`: the chunk is close to Lua's register ceiling.
+do
+
+local spamProbeSerial = 0
+
+function ns.runChannelSpamDiagnostic(argText)
+    local name = type(argText) == "string"
+        and (argText:gsub("^%s+", ""):gsub("%s+$", "")) or ""
+    if name == "" then name = "SanctuaryTest" end
+
+    local row
+    for _, candidate in ipairs(ns.CHAT_KINDS or {}) do
+        if candidate.kind == "channel" then row = candidate end
+    end
+    if not row or type(row.filter) ~= "function" or type(handlers[row.event]) ~= "function" then
+        return { available = false, reason = "channel_path_missing" }
+    end
+
+    local result = {
+        available = true,
+        name = name,
+        antiSpam = ns.isAntiSpamEnabled(),
+        intervalSeconds = ns.getAntiSpamInterval(),
+        channelMode = isFilterOn("channelMode") or "none",
+        covered = ns.isChannelSpamCovered(),
+        shown = 0,
+        hidden = 0,
+        journalled = 0,
+    }
+
+    local before = (SanctuaryDB and SanctuaryDB.log and #SanctuaryDB.log) or 0
+    local message = "Sanctuary anti-spam probe"
+    for _ = 1, 3 do
+        spamProbeSerial = spamProbeSerial + 1
+        local lineID = 990000 + spamProbeSerial
+        local hidden = row.filter(nil, row.event, message, name,
+            "", "General", "", "", 0, 1, "General", "", lineID)
+        if hidden then
+            result.hidden = result.hidden + 1
+        else
+            result.shown = result.shown + 1
+        end
+        handlers[row.event](message, name,
+            "", "General", "", "", 0, 1, "General", "", lineID)
+    end
+    result.journalled = ((SanctuaryDB and SanctuaryDB.log and #SanctuaryDB.log) or 0) - before
+
+    debugLog("SPAM_TEST", result)
+    return result
+end
+
+function ns.formatChannelSpamDiagnosticResult(result)
+    if not result.available then
+        return string.format("Diagnostic channel spam: ERROR (%s)", result.reason or "unknown")
+    end
+    return string.format(
+        "Diagnostic channel spam %s: antispam=%s window=%ss channels=%s covered=%s"
+        .. " shown=%d hidden=%d journal=+%d",
+        result.name,
+        result.antiSpam and "on" or "off",
+        tostring(result.intervalSeconds),
+        tostring(result.channelMode),
+        result.covered and "yes" or "no",
+        result.shown, result.hidden, result.journalled)
+end
+
+end
+
+-- ----------------------------------------------------------------------------
 -- Diagnostic catalogue (debug panel)
 -- ----------------------------------------------------------------------------
 
@@ -6682,6 +6762,17 @@ ns.DIAGNOSTIC_CATALOG = {
         argDefault = "SanctuaryTest",
         run = function(argText)
             return { text = formatSimulationResult(simulateInvite(argText or "")) }
+        end,
+    },
+    {
+        id = "sim_channel_spam",
+        labelKey = "DIAG_SIMULATE_SPAM",
+        argKey = "DIAG_ARG_NAME",
+        argDefault = "SanctuaryTest",
+        tipKey = "DIAG_TIP_SPAM",
+        run = function(argText)
+            return { text = ns.formatChannelSpamDiagnosticResult(
+                ns.runChannelSpamDiagnostic(argText or "")) }
         end,
     },
     {

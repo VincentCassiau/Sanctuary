@@ -4988,6 +4988,39 @@ do
     SanctuaryDB.debugEnabled = false
 end
 
+-- The Diagnostics button. It exists because a solo session cannot ask a
+-- stranger to repeat themselves in the Trade channel, and it is only worth
+-- anything if it takes the real path: the registered filter, then the event
+-- handler, three physical messages.
+do
+    armAntiSpam(300)
+    SanctuaryDB.debugEnabled = true
+    ns.resetDebugLog()
+    local result = ns.runChannelSpamDiagnostic("SanctuaryTest")
+    equal(result.available, true, "the channel path the probe needs is reachable")
+    equal(result.shown, 1, "the first copy shows")
+    equal(result.hidden, 2, "and the two repeats are hidden")
+    equal(result.journalled, 1, "leaving one Journal entry behind")
+    equal(countDebug("MASK_SPAM_REPEAT"), 2, "with two hidden-repeat recordings")
+    local entry = SanctuaryDB.log[#SanctuaryDB.log]
+    equal(entry.type, "channel", "the entry is a channel one")
+    equal(entry.count, 3, "counting the three times the line arrived")
+    check(ns.getLogEntryDisplayType(entry)
+        :find(string.format(ns.L["LOGS_SPAM_BADGE"], 3), 1, true) ~= nil,
+        "and it reads on screen as a folded one")
+    check(ns.formatChannelSpamDiagnosticResult(result):find("hidden=2", 1, true) ~= nil,
+        "the line the panel shows says how many were hidden")
+
+    armAntiSpam(300)
+    SanctuaryDB.antiSpam.enabled = false
+    local off = ns.runChannelSpamDiagnostic("")
+    equal(off.shown, 3, "with the anti-spam off the three copies show")
+    equal(off.hidden, 0, "none of them is hidden")
+    equal(off.journalled, 0, "and nothing is journalled")
+    equal(off.name, "SanctuaryTest", "an empty field falls back to the test pseudo")
+    SanctuaryDB.debugEnabled = false
+end
+
 resetModelState()
 
 end
@@ -7723,8 +7756,9 @@ equal(resultText and resultText:GetText(), ns.L["DIAG_RESULT_EMPTY"],
 -- branches on the data it is testing cannot notice that data disappearing.
 local SENSITIVE_DIAGNOSTIC_ID = "sim_bnetfriend"
 local MANUAL_DIAGNOSTIC_IDS = { "diag_sound_open", "diag_sound_invite" }
-local BULK_DIAGNOSTIC_IDS = { "sim_invite", "sim_bnet", "diag_chat", "diag_chat_lockdown",
-    "diag_popup_invite", "diag_popup_duel", "diag_popup_guild", "diag_popup_list" }
+local BULK_DIAGNOSTIC_IDS = { "sim_invite", "sim_channel_spam", "sim_bnet", "diag_chat",
+    "diag_chat_lockdown", "diag_popup_invite", "diag_popup_duel", "diag_popup_guild",
+    "diag_popup_list" }
 
 local sensitiveCount, manualCount = 0, 0
 for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG) do
