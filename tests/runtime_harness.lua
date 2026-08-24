@@ -4992,6 +4992,178 @@ resetModelState()
 
 end
 
+-- C20 -- the Journal folds the repetitions of one day into one entry.
+do
+
+local SPAMMY = "Spammy-TestRealm"
+
+local function clean(day)
+    resetModelState()
+    ns.clearJournal()
+    setHarnessDay(day or "2026-08-24")
+    now = now + 5
+end
+
+-- Two identical blocks on one day are one line, with a count and a range.
+clean()
+ns.logBlock("channel", SPAMMY, "buy gold now", nil, nil)
+now = now + 5
+ns.logBlock("channel", SPAMMY, "buy gold now", nil, nil)
+equal(#SanctuaryDB.log, 1, "the same line twice in a day is one entry")
+equal(SanctuaryDB.log[1].count, 2, "counted twice")
+equal(SanctuaryDB.log[1].t2 - SanctuaryDB.log[1].t, 5, "and dated from the first to the last")
+now = now + 5
+ns.logBlock("channel", SPAMMY, "buy gold now", nil, nil)
+equal(#SanctuaryDB.log, 1, "a third one is still one entry")
+equal(SanctuaryDB.log[1].count, 3, "counted three times")
+equal(SanctuaryDB.log[1].t2 - SanctuaryDB.log[1].t, 10, "with the range grown to the last one")
+
+-- Tomorrow is another entry: the fold is bounded to the day, decision 125.
+setHarnessDay("2026-08-25")
+now = now + 5
+ns.logBlock("channel", SPAMMY, "buy gold now", nil, nil)
+equal(#SanctuaryDB.log, 2, "the same line the next day opens a new entry")
+equal(SanctuaryDB.log[2].count, nil, "which counts as one, and says nothing about it")
+setHarnessDay("2026-08-24")
+
+-- What is not the same entry.
+do
+    local DISTINCT = {
+        { what = "another type",  type = "say",     name = SPAMMY,             msg = "buy gold now" },
+        { what = "another pseudo", type = "channel", name = "Other-TestRealm",  msg = "buy gold now" },
+        { what = "another realm",  type = "channel", name = "Spammy-Ysondre",   msg = "buy gold now" },
+        { what = "another message", type = "channel", name = SPAMMY,            msg = "buy gold NOW" },
+    }
+    for _, case in ipairs(DISTINCT) do
+        clean()
+        ns.logBlock("channel", SPAMMY, "buy gold now", nil, nil)
+        now = now + 5
+        ns.logBlock(case.type, case.name, case.msg, nil, nil)
+        equal(#SanctuaryDB.log, 2, "a block with " .. case.what .. " is its own entry")
+    end
+end
+
+-- The one-second dedupe, corrected. Two DIFFERENT lines from one person inside a
+-- second were two things said; two invitations inside a second are one event
+-- seen twice, and that is the behaviour this release inherited and keeps.
+clean()
+ns.logBlock("channel", SPAMMY, "first thing", nil, nil)
+ns.logBlock("channel", SPAMMY, "second thing", nil, nil)
+equal(#SanctuaryDB.log, 2, "two different lines in the same second are two entries")
+
+clean()
+ns.logBlock("groupInvite", "Knocker-TestRealm", nil, nil, nil)
+ns.logBlock("groupInvite", "Knocker-TestRealm", nil, nil, nil)
+equal(#SanctuaryDB.log, 1, "two invitations in the same second are one entry")
+
+-- An entry with no message is not folded either: nothing tells two of them
+-- apart, so counting them together would hide how often somebody knocked.
+clean()
+ns.logBlock("duel", "Knocker-TestRealm", nil, nil, nil)
+now = now + 5
+ns.logBlock("duel", "Knocker-TestRealm", nil, nil, nil)
+equal(#SanctuaryDB.log, 2, "two duels a few seconds apart stay two entries")
+
+-- A hidden repeat costs nothing outside the Journal: not a session count, not a
+-- verbose line, and so not a five-minute summary either.
+do
+    local channelRow
+    for _, row in ipairs(ns.CHAT_KINDS) do
+        if row.kind == "channel" then channelRow = row end
+    end
+    clean()
+    SanctuaryDB.antiSpam.enabled = true
+    SanctuaryDB.antiSpam.intervalSeconds = 300
+    SanctuaryDB.notifications.mode = "verbose"
+    SanctuaryCharDB.sessionStats.blockedCount = 0
+    local message = "buy my gold, honestly"
+    deliverChatMessage("filters_first", 3, "CHAT_MSG_CHANNEL",
+        channelPayload(message, SPAMMY, 810001))
+    equal(#SanctuaryDB.log, 0, "the copy that is shown is not journalled")
+    now = now + 10
+    chatMessages = {}
+    deliverChatMessage("filters_first", 3, "CHAT_MSG_CHANNEL",
+        channelPayload(message, SPAMMY, 810002))
+    equal(#SanctuaryDB.log, 1, "the copy that is hidden opens one entry")
+    equal(SanctuaryDB.log[1].type, "channel", "under its own type, untouched")
+    equal(SanctuaryDB.log[1].count, 2,
+        "counting the times the line arrived, the copy that was shown included")
+    equal(SanctuaryCharDB.sessionStats.blockedCount, 0, "and nothing is counted for the session")
+    equal(#chatMessages, 0, "nothing is printed in the chat")
+    now = now + 10
+    deliverChatMessage("filters_first", 3, "CHAT_MSG_CHANNEL",
+        channelPayload(message, SPAMMY, 810003))
+    equal(#SanctuaryDB.log, 1, "a second hidden copy folds into the same entry")
+    equal(SanctuaryDB.log[1].count, 3, "and adds one to the count")
+    equal(SanctuaryCharDB.sessionStats.blockedCount, 0, "still counting nothing")
+    -- The five-minute summary reads that counter and nothing else, so it stays
+    -- silent through the whole thing.
+    SanctuaryDB.notifications.mode = "minimal"
+    chatMessages = {}
+    now = now + 1000
+    runTickers()
+    equal(#chatMessages, 0, "and the five-minute summary has nothing to say")
+    SanctuaryDB.notifications.mode = "silent"
+
+    -- With the Journal switched off nothing is written -- and the anti-spam
+    -- goes on hiding, because hiding is not journalling.
+    clean()
+    SanctuaryDB.antiSpam.enabled = true
+    SanctuaryDB.logging.enabled = false
+    local quiet = "nothing to record here"
+    deliverChatMessage("filters_first", 3, "CHAT_MSG_CHANNEL",
+        channelPayload(quiet, SPAMMY, 811001))
+    now = now + 10
+    local hidden = deliverChatMessage("filters_first", 3, "CHAT_MSG_CHANNEL",
+        channelPayload(quiet, SPAMMY, 811002))
+    equal(hidden[1], true, "the repeat is still hidden with the Journal off")
+    equal(#SanctuaryDB.log, 0, "and nothing is written")
+    SanctuaryDB.logging.enabled = true
+end
+
+-- A full journal. Rotation drops the oldest entries, and only those leave the
+-- index: what stays goes on folding, which is the very case the fold was asked
+-- for.
+clean()
+SanctuaryDB.logging.maxEntries = 3
+ns.logBlock("channel", SPAMMY, "line one", nil, nil)
+now = now + 5
+ns.logBlock("channel", SPAMMY, "line two", nil, nil)
+now = now + 5
+ns.logBlock("channel", SPAMMY, "line three", nil, nil)
+equal(#SanctuaryDB.log, 3, "three entries fill a journal of three")
+now = now + 5
+ns.logBlock("channel", SPAMMY, "line four", nil, nil)
+equal(#SanctuaryDB.log, 3, "a fourth rotates the oldest out")
+equal(SanctuaryDB.log[1].msg, "line two", "and it is the oldest that goes")
+now = now + 5
+ns.logBlock("channel", SPAMMY, "line one", nil, nil)
+equal(#SanctuaryDB.log, 3, "the evicted line comes back as a new entry")
+equal(SanctuaryDB.log[3].count, nil, "counted once, not folded into an entry nobody can reach")
+now = now + 5
+ns.logBlock("channel", SPAMMY, "line three", nil, nil)
+equal(#SanctuaryDB.log, 3, "and an entry still in the journal goes on folding")
+local stillThere
+for _, entry in ipairs(SanctuaryDB.log) do
+    if entry.msg == "line three" then stillThere = entry end
+end
+equal(stillThere and stillThere.count, 2, "with one more occurrence on it")
+SanctuaryDB.logging.maxEntries = 5000
+
+-- Emptying the journal empties what folds into it.
+clean()
+ns.logBlock("channel", SPAMMY, "buy gold now", nil, nil)
+ns.clearJournal()
+now = now + 5
+ns.logBlock("channel", SPAMMY, "buy gold now", nil, nil)
+equal(#SanctuaryDB.log, 1, "after a clear the same line opens a new entry")
+equal(SanctuaryDB.log[1].count, nil, "counted once")
+
+resetModelState()
+setHarnessDay("2026-06-20")
+
+end
+
 -- ===========================================================================
 -- SECTION: no dead entry -- what the person typed reaches what the game says
 -- ===========================================================================
@@ -8352,6 +8524,11 @@ for _, state in ipairs(STATES) do
             now = now + 2
             whisperTab.chatTarget = sender.name
             local label = row.event .. ", " .. sender.label .. ", " .. state.label
+            -- Every case sends the same line from the same person, and the
+            -- Journal now folds those into one entry with a count. Emptied
+            -- between cases, "one interaction, one line" is what it measures
+            -- again -- which is the parity this block is about.
+            ns.clearJournal()
             local beforeLog = #SanctuaryDB.log
             local beforeCount = SanctuaryCharDB.sessionStats.blockedCount
             local beforeLines = #chatMessages
@@ -8446,6 +8623,7 @@ for _, case in ipairs(BNET_CASES) do
     now = now + 2
     bnetTab.chatTarget = case.account
     local label = "a Battle.net whisper from " .. case.label
+    ns.clearJournal()
     local beforeLog = #SanctuaryDB.log
     local beforeClosed = #closedChatFrames
 
@@ -8486,6 +8664,7 @@ for _, case in ipairs(SYSTEM_CASES) do
     local message = string.format(ERR_INVITED_ALREADY_IN_GROUP_SS, case.name, case.name)
 
     local discard = dispatchChatFilter("CHAT_MSG_SYSTEM", message)
+    ns.clearJournal()
     local beforeLog = #SanctuaryDB.log
     fire("CHAT_MSG_SYSTEM", message)
     equal(#SanctuaryDB.log - beforeLog, discard and 1 or 0,

@@ -2482,7 +2482,10 @@ StaticPopupDialogs["SANCTUARY_CLEAR_LOG"] = {
     button2 = L["LOGS_CLEAR_NO"],
     OnAccept = function()
         if not SanctuaryDB then return end
-        wipe(SanctuaryDB.log)
+        -- Through the core, never `wipe` from here: what the Journal merges on
+        -- is an index the core keeps, and emptying the list without it would
+        -- leave entries nobody can reach still collecting occurrences.
+        ns.clearJournal()
         ns.printSuccess(L["LOG_CLEARED"])
         if ns.refreshUI then ns.refreshUI() end
     end,

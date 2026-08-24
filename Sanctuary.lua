@@ -2804,22 +2804,155 @@ end
 
 local logBlock
 do
-local lastLogKey = ""
+local lastLogKey, lastLogBase = "", ""
 local lastLogTime = 0
 
-logBlock = function(blockType, sourceName, message, guid, keyword)
+-- What the Journal merges on.
+--
+-- The same message, from the same person, on the same day, is ONE entry with a
+-- count and a time range -- not four hundred lines pushing everything else off
+-- the front of the log, which is what the session of 24/08 found ("journal
+-- pollué par le spam /2"). Bounded to the day, decision 125: the same line
+-- tomorrow is a new entry, so a range never spans a night and "is this person
+-- still at it" stays readable at a glance.
+--
+-- Two runtime tables, and neither ever reaches SavedVariables: the entry of a
+-- key, and the key of an entry. The second is what lets rotation drop exactly
+-- the entries it evicted. Emptying the whole index at each rotation would leave
+-- it permanently empty on a full journal -- the very case the merge exists for.
+local mergeIndex, mergeKeyOf = {}, {}
+local indexedLog, indexedCount, indexedDay = nil, 0, nil
+
+-- One alert per level per session. `PLAYER_ENTERING_WORLD` fires at every
+-- loading screen, so without a lock the message would come back at each dungeon
+-- door.
+local journalAlerted = { almost = false, full = false }
+
+local function forgetJournalIndex(log)
+    mergeIndex, mergeKeyOf = {}, {}
+    indexedLog, indexedCount, indexedDay = log, log and #log or 0, nil
+end
+
+-- Three ways the index stops describing the log, read here rather than hooked
+-- from everywhere: the table itself was replaced, entries went away behind our
+-- back, or the day turned over and yesterday's keys can no longer match.
+local function ensureJournalIndex(today)
+    local log = SanctuaryDB and SanctuaryDB.log
+    if log ~= indexedLog or (log and #log < indexedCount) then
+        forgetJournalIndex(log)
+    end
+    if today ~= indexedDay then
+        mergeIndex, mergeKeyOf = {}, {}
+        indexedDay = today
+    end
+end
+
+-- Emptying the journal empties what describes it. Every path that clears the
+-- log goes through here -- the interface's confirmation dialog included -- so
+-- an index pointing at entries nobody can reach any more is not a state that
+-- exists.
+function ns.clearJournal()
+    if not SanctuaryDB or type(SanctuaryDB.log) ~= "table" then return end
+    wipe(SanctuaryDB.log)
+    forgetJournalIndex(SanctuaryDB.log)
+    -- A journal that has just been emptied is not nearly full any more: the
+    -- next loading screen may warn again if it fills up again.
+    journalAlerted.almost, journalAlerted.full = false, false
+end
+
+-- "Your journal is filling up", once per level per session, at load and at
+-- every loading screen (decision 128: 90 %, and the text names the Advanced
+-- tab so nobody hunts for a setting). Nothing is said mid-session when the
+-- threshold is crossed: that was not asked for, and a warning arriving in the
+-- middle of a fight is exactly the kind of noise this add-on exists to remove.
+function ns.checkJournalCapacityAlert()
+    if not SanctuaryDB or type(SanctuaryDB.log) ~= "table" then return end
+    if not isEnabled() then return end
+    if not SanctuaryDB.logging or SanctuaryDB.logging.enabled ~= true then return end
+
+    local maxEntries = math.max(1, SanctuaryDB.logging.maxEntries or 5000)
+    local count = #SanctuaryDB.log
+    if count >= maxEntries then
+        if journalAlerted.full then return end
+        journalAlerted.full = true
+        printMsg(COLOR_WARN .. string.format(L["LOGS_ALERT_FULL"], count) .. COLOR_RESET)
+    elseif count >= math.ceil(maxEntries * 0.9) then
+        if journalAlerted.almost then return end
+        journalAlerted.almost = true
+        printMsg(COLOR_WARN .. string.format(L["LOGS_ALERT_ALMOST_FULL"], count, maxEntries) .. COLOR_RESET)
+    end
+end
+
+-- What a block costs outside the journal: the session counter the five-minute
+-- summary reads, and the line the verbose mode prints. A repeat the anti-spam
+-- hid pays neither -- it was never a block, only a copy of one that had already
+-- been shown -- and those two omissions are the whole of "no visible or audible
+-- trace" for it.
+local function accountForBlock(blockType, sourceText, maskedRepeat)
+    if maskedRepeat then return end
+    if SanctuaryCharDB then
+        SanctuaryCharDB.sessionStats.blockedCount =
+            (SanctuaryCharDB.sessionStats.blockedCount or 0) + 1
+        local byType = SanctuaryCharDB.sessionStats.blockedByType
+        byType[blockType] = (byType[blockType] or 0) + 1
+    end
+    if SanctuaryDB.notifications.mode == "verbose" then
+        printMsg(string.format(L["BLOCKED_VERBOSE"],
+            COLOR_HIGHLIGHT .. blockType .. COLOR_RESET,
+            COLOR_HIGHLIGHT .. (sourceText or "?") .. COLOR_RESET))
+    end
+end
+
+-- `options` carries what only the anti-spam needs: `maskedRepeat`, and
+-- `firstEpoch`, the moment the copy that WAS shown arrived. The count reads as
+-- the number of times the line arrived (decision 132, Q2), so the first hidden
+-- copy opens its entry at two.
+logBlock = function(blockType, sourceName, message, guid, keyword, options)
     if not SanctuaryDB then return end
     if not SanctuaryDB.logging.enabled then return end
 
     local sourceText = safeText(sourceName, nil, nil)
+    local messageText = safeText(message, nil, nil)
+    local msgKey = ns.normalizeSpamText(messageText) or ""
+    local maskedRepeat = type(options) == "table" and options.maskedRepeat == true
 
-    -- Dedup: skip if same event logged within 1 second
-    local logKey = blockType .. ":" .. (sourceText or "")
-    local now = GetTime()
-    if logKey == lastLogKey and (now - lastLogTime) < 1 then
+    local today = date("%Y-%m-%d")
+    ensureJournalIndex(today)
+
+    -- Only an entry carrying both a pseudo and a message can be merged: an
+    -- invitation, a duel or a trade has nothing to tell two of them apart, and
+    -- counting them together would hide how many times somebody knocked.
+    local mergeKey
+    local characterKey = sourceText and normalizeCharacterKey(sourceText)
+    if characterKey and msgKey ~= "" then
+        mergeKey = today .. "\0" .. blockType .. "\0" .. characterKey .. "\0" .. msgKey
+    end
+
+    local existing = mergeKey and mergeIndex[mergeKey]
+    if existing then
+        -- One occurrence more is a counter, not noise: the one-second dedupe
+        -- below guards the CREATION of an entry and is never asked about a
+        -- merge.
+        existing.count = (existing.count or 1) + 1
+        existing.t2 = time()
+        accountForBlock(blockType, sourceText, maskedRepeat)
         return
     end
-    lastLogKey = logKey
+
+    -- Dedup: skip if the same event was logged within 1 second. The message is
+    -- part of the key now, so two DIFFERENT lines from one person in the same
+    -- second are two entries -- they were two things said. An entry with no
+    -- message keeps the old key exactly: nothing distinguishes two of them, and
+    -- the popup-backed invitation paths lean on that, one of them writing the
+    -- system line and the richer event write following within the second.
+    local logKey = blockType .. ":" .. (sourceText or "") .. ":" .. msgKey
+    local logBase = blockType .. ":" .. (sourceText or "")
+    local now = GetTime()
+    if (now - lastLogTime) < 1
+        and (logKey == lastLogKey or (msgKey == "" and logBase == lastLogBase)) then
+        return
+    end
+    lastLogKey, lastLogBase = logKey, logBase
     lastLogTime = now
 
     local playerName = UnitName("player")
@@ -2844,25 +2977,51 @@ logBlock = function(blockType, sourceName, message, guid, keyword)
         sourceRealm = r
     end
 
+    -- The first arrival dates the entry. For a hidden repeat that is the copy
+    -- the person actually read, which is what makes the range on screen say
+    -- something -- it opened when they saw it, not when Sanctuary started
+    -- hiding it.
+    local firstEpoch = (type(options) == "table" and tonumber(options.firstEpoch)) or time()
     local entry = {
-        t     = time(),
-        d     = date("%Y-%m-%d %H:%M:%S"),
+        t     = firstEpoch,
+        d     = date("%Y-%m-%d %H:%M:%S", firstEpoch),
         type  = blockType,
         name  = cleanName,
         realm = sourceRealm,
         guid  = guid or "",
-        msg   = safeText(message, nil, nil),
+        msg   = messageText,
         char  = (playerName or "?") .. "-" .. (charRealm or "?"),
         keyword = keyword or nil,
     }
+    -- Two fields an ordinary entry does not carry, so a settings file written
+    -- by an earlier build reads exactly as it did: no `count` means one.
+    if maskedRepeat then
+        entry.count = 2
+        entry.t2 = time()
+    end
 
     table.insert(SanctuaryDB.log, entry)
+    if mergeKey then
+        mergeIndex[mergeKey] = entry
+        mergeKeyOf[entry] = mergeKey
+    end
 
     -- Rotation without allocating a second multi-thousand-entry table.
     local maxEntries = math.max(1, SanctuaryDB.logging.maxEntries or 5000)
     local overflow = #SanctuaryDB.log - maxEntries
     if overflow > 0 then
         local oldCount = #SanctuaryDB.log
+        -- The evicted entries leave the index with them, and only they do: an
+        -- entry that is gone must never be handed one more occurrence, and the
+        -- ones that stay must go on merging.
+        for i = 1, overflow do
+            local evicted = SanctuaryDB.log[i]
+            local evictedKey = evicted and mergeKeyOf[evicted]
+            if evictedKey then
+                mergeKeyOf[evicted] = nil
+                if mergeIndex[evictedKey] == evicted then mergeIndex[evictedKey] = nil end
+            end
+        end
         for i = 1, oldCount - overflow do
             SanctuaryDB.log[i] = SanctuaryDB.log[i + overflow]
         end
@@ -2870,21 +3029,9 @@ logBlock = function(blockType, sourceName, message, guid, keyword)
             SanctuaryDB.log[i] = nil
         end
     end
+    indexedCount = #SanctuaryDB.log
 
-    -- Session stats
-    if SanctuaryCharDB then
-        SanctuaryCharDB.sessionStats.blockedCount =
-            (SanctuaryCharDB.sessionStats.blockedCount or 0) + 1
-        local byType = SanctuaryCharDB.sessionStats.blockedByType
-        byType[blockType] = (byType[blockType] or 0) + 1
-    end
-
-    -- Verbose notification: print each block in chat
-    if SanctuaryDB.notifications.mode == "verbose" then
-        printMsg(string.format(L["BLOCKED_VERBOSE"],
-            COLOR_HIGHLIGHT .. blockType .. COLOR_RESET,
-            COLOR_HIGHLIGHT .. (sourceText or "?") .. COLOR_RESET))
-    end
+    accountForBlock(blockType, sourceText, maskedRepeat)
 end
 
 end
@@ -6796,6 +6943,11 @@ function handlers.ADDON_LOADED(addonName)
     refreshInviteSoundMuteState()
     installGuildInviteFrameGuard()
 
+    -- Said once the SavedVariables are in place, and idempotent: this is the
+    -- other half of the same call in PLAYER_ENTERING_WORLD, which fires at
+    -- every loading screen.
+    ns.checkJournalCapacityAlert()
+
     -- Debug: capture snapshot at load time (if debug was already enabled)
     captureDebugSnapshot("load")
     -- The manifest is not gated on debug mode: a settings file has to say which
@@ -6825,6 +6977,8 @@ function handlers.PLAYER_ENTERING_WORLD()
         wipe(SanctuaryCharDB.groupTracker)
     end
     hasEnteredWorld = true
+    -- Locked per level per session, so a dungeon run does not repeat it.
+    ns.checkJournalCapacityAlert()
     refreshGroupTracker()
     refreshInviteSoundMuteState()
     installGuildInviteFrameGuard()
