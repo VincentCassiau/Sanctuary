@@ -2530,7 +2530,12 @@ function ns.getLogEntryDisplayDate(entry)
     local stamp = (type(entry) == "table" and entry.d) or "?"
     local last = (type(entry) == "table" and tonumber(entry.t2)) or nil
     if not last then return stamp end
-    return string.format(L["LOGS_TIME_RANGE"], stamp, date("%H:%M:%S", last))
+    -- Under pcall like every other date read in this add-on: the number comes
+    -- out of a settings file, and a journal line is not worth taking the tab
+    -- down for.
+    local ok, text = pcall(date, "%H:%M:%S", last)
+    if not ok then return stamp end
+    return string.format(L["LOGS_TIME_RANGE"], stamp, text)
 end
 end
 

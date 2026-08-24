@@ -496,11 +496,15 @@ local function newDropdown(parent, name, width, rows, get, set)
     field.caret:SetPoint("RIGHT", field, "RIGHT", -8, 0)
     field.enabled = true
 
-    local list = CreateFrame("Frame", name and (name .. "List") or nil, parent, "BackdropTemplate")
+    -- NOT a child of the screen, and that is load-bearing: the five screens live
+    -- inside a ScrollFrame, which clips what it holds. A list opening near the
+    -- bottom of the visible area would be cut at the viewport's edge, with no
+    -- way to reach the rows below it. Anchored to the field all the same, so it
+    -- follows the window and the scrolling.
+    local list = CreateFrame("Frame", name and (name .. "List") or nil,
+        UIParent or parent, "BackdropTemplate")
     list:SetSize(width or 140, #rows * DROPDOWN_ROW_HEIGHT + 8)
-    -- Over everything the screen already holds: the list opens on top of the
-    -- question under it, and a list drawn behind the cards is a list nobody can
-    -- click.
+    -- Over the window itself, which sits at DIALOG.
     list:SetFrameStrata("FULLSCREEN_DIALOG")
     applyBackdrop(list, C.panel, C.accent)
     list:Hide()
@@ -548,12 +552,6 @@ local function newDropdown(parent, name, width, rows, get, set)
         self.enabled = enabled and true or false
         if not self.enabled then closeOpenDropdown() end
         self:Refresh()
-    end
-
-    function field:SetDropdownWidth(newWidth)
-        self:SetWidth(newWidth)
-        list:SetWidth(newWidth)
-        for _, option in ipairs(self.rows) do option:SetWidth(newWidth - 8) end
     end
 
     field:SetScript("OnClick", function(self)
