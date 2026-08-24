@@ -6048,15 +6048,47 @@ local function newWidget(kind, name, parent, template)
         if not entry then return nil end
         return entry.point, entry.relativeTo, entry.relativePoint, entry.x, entry.y
     end
-    function w:SetText(text) self.__text = text end
+    -- Like the client: the cursor lands after the last character written, and
+    -- the view follows the cursor -- which is exactly why a field narrower than
+    -- its own value shows the END of it until something sends it back (A.9).
+    function w:SetText(text)
+        self.__text = text
+        self.__cursor = #tostring(text or "")
+    end
     function w:GetText() return self.__text end
     function w:Insert(text) self.__text = (self.__text or "") .. tostring(text) end
-    function w:GetStringHeight() return 12 end
+    -- A stand-in that wraps. A flat 12 answered for a sentence of any length, so
+    -- every layout measured from `GetStringHeight` measured one line whatever
+    -- the window was -- and the home screen's own height, which the minimum size
+    -- of the window is now derived from, is one of them. Newlines are counted,
+    -- and a bounded FontString that wraps takes as many lines as its natural
+    -- width needs. `GetStringWidth` counts BYTES, so accented French measures
+    -- wider than it draws: this over-estimates rather than under-estimates,
+    -- which is the safe direction for a height bound.
+    function w:GetStringHeight()
+        local text = self.__text or ""
+        if text == "" then return 12 end
+        local lines = 1
+        for _ in text:gmatch("\n") do lines = lines + 1 end
+        local width = self:GetWidth() or 0
+        if width > 0 and self.__wordWrap ~= false then
+            lines = lines + math.max(0, math.ceil(self:GetStringWidth() / width) - 1)
+        end
+        return lines * 12
+    end
+    -- Recorded, because "which end of its own text a narrow field shows" is what
+    -- constat A.9 is about, and a stub that answers nothing cannot say.
+    function w:SetCursorPosition(position) self.__cursor = position end
+    function w:GetCursorPosition() return self.__cursor or 0 end
     -- A stand-in with one property that matters: it grows with the text. The
     -- chips measure themselves through it, so a name too long for its row is a
     -- case a check can set up rather than a screenshot somebody has to read.
     function w:GetStringWidth() return #(self.__text or "") * 7 end
     function w:SetWordWrap(value) self.__wordWrap = value and true or false end
+    -- Recorded, because "does changing screen put the shared frame back at the
+    -- top" is a question only the offset can answer (constat G.4).
+    function w:SetVerticalScroll(value) self.__verticalScroll = value end
+    function w:GetVerticalScroll() return self.__verticalScroll or 0 end
     function w:GetFont() return "Fonts\\FRIZQT__.TTF", 12, "" end
     -- Recorded rather than stubbed: what a texture is filled with, and whether
     -- it was rounded, is exactly what "the box is invisible" and "the radio is a
