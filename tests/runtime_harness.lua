@@ -5021,6 +5021,62 @@ do
     SanctuaryDB.debugEnabled = false
 end
 
+-- And the button is only worth clicking if the line reaches the chat. The
+-- filter is called outside the dispatch that owns the ChatFrames, so nothing
+-- but the diagnostic itself can write the copies it keeps -- which is exactly
+-- what "one line appears in the chat" is checked against here, in the three
+-- states the button can be clicked in.
+do
+    local probeText = ns.L["DIAG_SPAM_PROBE_MSG"]
+    local function countProbeLines(from)
+        local count = 0
+        for index = from + 1, #chatMessages do
+            local line = chatMessages[index]
+            if type(line) == "string" and line:find(probeText, 1, true) then
+                count = count + 1
+            end
+        end
+        return count
+    end
+
+    -- Anti-spam on: one copy shown, one line written, two repeats that write
+    -- nothing at all -- and no block counted for them. The throttle outlives
+    -- `resetModelState`, and the block above has just shown this very line, so
+    -- the clock is walked past the window first.
+    now = now + 400
+    armAntiSpam(300)
+    local before = #chatMessages
+    local blockedBefore = SanctuaryCharDB.sessionStats.blockedCount or 0
+    local result = ns.runChannelSpamDiagnostic("SanctuaryTest")
+    equal(result.shown, 1, "the anti-spam shows one of the three copies")
+    equal(countProbeLines(before), result.shown,
+        "and exactly that many probe lines reach the chat")
+    equal(#chatMessages - before, 1, "with nothing else printed alongside them")
+    equal(result.written, result.shown, "the result says as much")
+    equal(SanctuaryCharDB.sessionStats.blockedCount or 0, blockedBefore,
+        "and a hidden repeat is still not a block")
+
+    -- Anti-spam off: three copies shown, three lines.
+    armAntiSpam(300)
+    SanctuaryDB.antiSpam.enabled = false
+    before = #chatMessages
+    result = ns.runChannelSpamDiagnostic("SanctuaryTest")
+    equal(result.shown, 3, "with the anti-spam off the three copies show")
+    equal(countProbeLines(before), result.shown, "and all three reach the chat")
+    equal(#chatMessages - before, 3, "with nothing else printed alongside them")
+
+    -- Channels all filtered: the three copies are blocked as a stranger's, so
+    -- none of them is written.
+    armAntiSpam(300)
+    SanctuaryDB.filters.channelMode = "all"
+    before = #chatMessages
+    result = ns.runChannelSpamDiagnostic("SanctuaryTest")
+    equal(result.shown, 0, "with the channels all filtered nothing shows")
+    equal(countProbeLines(before), result.shown, "and no probe line reaches the chat")
+    equal(result.written, 0, "the result says nothing was written")
+    resetModelState()
+end
+
 resetModelState()
 
 end

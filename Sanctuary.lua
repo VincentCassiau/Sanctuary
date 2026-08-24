@@ -6676,6 +6676,13 @@ end
 -- so the button answers what a spammer would produce, and the recording carries
 -- the same MASK_SPAM_REPEAT entries a real one would leave.
 --
+-- One thing the real dispatch does that this cannot: write the line. WoW calls
+-- the filter and then writes the copies the filter kept; here the filter is
+-- called directly, outside the dispatch that owns the ChatFrames, so nothing
+-- would ever appear on screen. The copies the filter keeps are written from
+-- here instead -- and only those, since "a hidden repeat leaves no visible
+-- trace" is exactly what the click is meant to show.
+--
 -- Scoped, published on `ns`: the chunk is close to Lua's register ceiling.
 do
 
@@ -6703,11 +6710,12 @@ function ns.runChannelSpamDiagnostic(argText)
         covered = ns.isChannelSpamCovered(),
         shown = 0,
         hidden = 0,
+        written = 0,
         journalled = 0,
     }
 
     local before = (SanctuaryDB and SanctuaryDB.log and #SanctuaryDB.log) or 0
-    local message = "Sanctuary anti-spam probe"
+    local message = L["DIAG_SPAM_PROBE_MSG"]
     for _ = 1, 3 do
         spamProbeSerial = spamProbeSerial + 1
         local lineID = 990000 + spamProbeSerial
@@ -6717,6 +6725,10 @@ function ns.runChannelSpamDiagnostic(argText)
             result.hidden = result.hidden + 1
         else
             result.shown = result.shown + 1
+            if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
+                printMsg(string.format(L["DIAG_SPAM_PROBE_LINE"], name, message))
+                result.written = result.written + 1
+            end
         end
         handlers[row.event](message, name,
             "", "General", "", "", 0, 1, "General", "", lineID)
@@ -6733,13 +6745,13 @@ function ns.formatChannelSpamDiagnosticResult(result)
     end
     return string.format(
         "Diagnostic channel spam %s: antispam=%s window=%ss channels=%s covered=%s"
-        .. " shown=%d hidden=%d journal=+%d",
+        .. " shown=%d hidden=%d written=%d journal=+%d",
         result.name,
         result.antiSpam and "on" or "off",
         tostring(result.intervalSeconds),
         tostring(result.channelMode),
         result.covered and "yes" or "no",
-        result.shown, result.hidden, result.journalled)
+        result.shown, result.hidden, result.written, result.journalled)
 end
 
 end
