@@ -8158,21 +8158,35 @@ do
     SanctuaryDB.logging.enabled = savedLogging
 end
 
--- Eight blocks stacked into a 300 px column. The child of that scroll used to be
+-- Eight blocks written into the column. The child of that scroll used to be
 -- sized once, at build time, so RefreshBar measured a range of zero: the wheel
 -- scrolled nothing, the bar never appeared, and everything past the first screen
 -- was unreachable -- while step C.1 of the session asks the tester to read every
--- block.
+-- block. The column takes the whole height of the window now (constat C.1), so
+-- what proves the resize is that the child FOLLOWS the text, and the bar is
+-- proved against a viewport short enough to need one.
 local resultScroll = _G.SanctuaryDiagResultScroll
-check((resultScroll.child:GetHeight() or 0) > (resultScroll:GetHeight() or 0),
-    "after running them all the content is taller than the column")
-equal(resultScroll.bar:IsShown(), true, "so the bar is there to say the column scrolls")
+local filledHeight = resultScroll.child:GetHeight() or 0
 findButtonByLabel(diagContent, ns.L["DIAG_CLEAR"]):Click()
+check((resultScroll.child:GetHeight() or 0) < filledHeight,
+    "clearing the results gives the column its height back")
 check((resultScroll.child:GetHeight() or 0) <= (resultScroll:GetHeight() or 0),
     "and once cleared it does not pretend to scroll")
 equal(resultScroll.bar:IsShown(), false, "with no bar left over")
 -- Put the panel back the way the rest of this section found it.
 runAllBtn:Click()
+check((resultScroll.child:GetHeight() or 0) >= filledHeight,
+    "and running them all measures the eight blocks again")
+do
+    local keptWidth, keptHeight = resultScroll:GetWidth(), resultScroll:GetHeight()
+    resultScroll:SetViewportSize(keptWidth, 60)
+    check((resultScroll.child:GetHeight() or 0) > 60,
+        "eight blocks are taller than a 60 px column")
+    equal(resultScroll.bar:IsShown(), true, "so the bar is there to say the column scrolls")
+    resultScroll:SetViewportSize(keptWidth, (resultScroll.child:GetHeight() or 0) + 40)
+    equal(resultScroll.bar:IsShown(), false, "and goes away when the column is tall enough")
+    resultScroll:SetViewportSize(keptWidth, keptHeight)
+end
 
 -- The two sound buttons, one after the other: two distinct sounds.
 playedSounds = {}
@@ -8835,6 +8849,48 @@ do
     ns.removeAllowed(ns.normalizeCharacterKey("Labelone"))
     ns.removeBlocked(ns.normalizeCharacterKey("Labeltwo"))
     ns.removePattern("labelthree")
+end
+
+
+-- A.8 -- the diagnostics screen takes the whole window (constat C.1).
+do
+    _G["SanctuaryTab_diagnostics"]:Click()
+    for _, height in ipairs({ 0, 940 }) do
+        SanctuaryDB.uiSize = { 780, height }
+        ns.refreshUI()
+        local scroll = _G.SanctuaryContentScroll
+        local viewport = scroll:GetHeight() or 0
+        local list, results = _G.SanctuaryDiagListScroll, _G.SanctuaryDiagResultScroll
+        -- 60 px of header and buttons above the two columns, 18 of padding under
+        -- them: everything else is theirs. Built at a flat 300 and never
+        -- revisited, they left the bottom half of the window empty and the
+        -- reading of eight blocks inside a half-height box.
+        equal(list:GetHeight(), viewport - 60 - 18,
+            "the catalogue column fills the window it is in")
+        equal(results:GetHeight(), list:GetHeight(),
+            "and the results column matches it, whatever the window measures")
+        equal(scroll.bar:IsShown(), false,
+            "so the screen itself never scrolls inside the window")
+    end
+    SanctuaryDB.uiSize = nil
+    ns.refreshUI()
+end
+
+-- A.9 -- a field narrower than its own value shows the START of it.
+do
+    _G["SanctuaryTab_diagnostics"]:Click()
+    ns.refreshUI()
+    local field = _G.SanctuaryDiagArg_sim_invite
+    check(field ~= nil, "the invitation simulation has its field")
+    check((field:GetText() or ""):len() > 0, "with a value in it")
+    equal(field:GetCursorPosition(), 0,
+        "shown from the start of the text, not from its end -- capture 15")
+    field:SetText("SanctuaryTestOtherName")
+    field:SetCursorPosition(12)
+    field:GetScript("OnEditFocusLost")(field)
+    equal(field:GetCursorPosition(), 0, "and it goes back there when the field is left")
+    field:SetText("SanctuaryTest")
+    field:ShowFromStart()
 end
 
 

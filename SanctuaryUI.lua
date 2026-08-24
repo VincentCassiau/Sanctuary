@@ -468,6 +468,17 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
         return self
     end
 
+    -- A field narrower than its own text shows the END of it: `SetText` leaves
+    -- the cursor after the last character and the client scrolls to follow it,
+    -- so "SanctuaryTest" in a 90 px box read "ctuaryTest". At rest the beginning
+    -- is what names the value, so the view goes back to it whenever nobody is
+    -- typing in the field.
+    function box:ShowFromStart()
+        if self.SetCursorPosition then self:SetCursorPosition(0) end
+        return self
+    end
+    box:SetScript("OnEditFocusLost", function(self) self:ShowFromStart() end)
+
     box:SetScript("OnTextChanged", function(self) self:RefreshHint() end)
     box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     if onEnter then
@@ -743,6 +754,11 @@ local refreshTab = {}
 -- Each entry guards itself, because `applyViewport` runs from the window's own
 -- OnSizeChanged, which is installed before the screens are built.
 local applyTabWidth = {}
+-- And the same for the height, for the one screen whose content is not a stack
+-- of rows but two columns that fill whatever room they are given. A screen tells
+-- the refresh how tall it needs to be; this is the other direction -- the window
+-- telling a screen how tall it has ended up.
+local applyTabHeight = {}
 local undoState = nil
 local undoLine
 local listTicker = nil
@@ -1831,6 +1847,10 @@ end
 local diagnostics = {}
 
 local DIAG_RESULT_LINE_HEIGHT = 14
+-- The header line and the three buttons above the two columns, and the shortest
+-- a column is ever drawn. Everything below the buttons is the columns' room, so
+-- these two numbers are the whole of "the screen uses the window" (constat C.1).
+local DIAG_COLUMN_TOP, DIAG_MIN_COLUMN = 60, 120
 
 -- The result column is a single FontString that grows with every run. Its scroll
 -- child was sized once at build time, so `RefreshBar` measured a range of zero,
@@ -1932,8 +1952,9 @@ local function buildDiagnosticsTab(parent)
     diagnostics.restoreBtn:SetPoint("LEFT", diagnostics.clearBtn, "RIGHT", 10, 0)
     diagnostics.restoreBtn:Hide()
 
-    local listScroll = newScroll(parent, "SanctuaryDiagListScroll", 320, 300)
-    listScroll:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, -60)
+    local listScroll = newScroll(parent, "SanctuaryDiagListScroll", 320, DIAG_MIN_COLUMN)
+    listScroll:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, -DIAG_COLUMN_TOP)
+    diagnostics.listScroll = listScroll
     local listChild = listScroll.child
     local rowY = 0
     for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG) do
@@ -1947,6 +1968,9 @@ local function buildDiagnosticsTab(parent)
             input:SetPoint("RIGHT", row, "RIGHT", 0, 0)
             input:SetText(entry.argDefault or "")
             input:RefreshHint()
+            -- 90 px of field for "SanctuaryTest": what a person reads beside
+            -- "Simuler une invitation" has to be the start of the value.
+            input:ShowFromStart()
             -- Kept so the width pass can reach them: they are made in a loop and
             -- nothing else on the screen holds a reference.
             diagnostics.argInputs[#diagnostics.argInputs + 1] = input
@@ -1963,8 +1987,9 @@ local function buildDiagnosticsTab(parent)
     end
     listChild:SetHeight(math.max(1, -rowY))
 
-    local resultScroll = newScroll(parent, "SanctuaryDiagResultScroll", width - 340, 300)
-    resultScroll:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + 330, -60)
+    local resultScroll = newScroll(parent, "SanctuaryDiagResultScroll", width - 340,
+        DIAG_MIN_COLUMN)
+    resultScroll:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + 330, -DIAG_COLUMN_TOP)
     diagnostics.resultScroll = resultScroll
     diagnostics.resultText = newLabel(resultScroll.child, L["DIAG_RESULT_EMPTY"], FONT_BODY, C.soft)
     diagnostics.resultText:SetPoint("TOPLEFT", resultScroll.child, "TOPLEFT", 0, 0)
@@ -1991,9 +2016,27 @@ applyTabWidth.diagnostics = function()
     resizeDiagnosticResults()
 end
 
+-- Both columns take the whole of what is left under the buttons. They were built
+-- 300 px tall and nothing ever revisited that, so in a window twice as tall the
+-- screen was a band of buttons and two half-height boxes with the rest of the
+-- window empty under them -- "on doit scroll dans une demi modale" (constat
+-- C.1). Sized here rather than in the refresh because the viewport is what the
+-- window knows and a screen does not.
+applyTabHeight.diagnostics = function(viewport)
+    if not diagnostics.resultScroll or not diagnostics.listScroll then return end
+    local height = math.max(DIAG_MIN_COLUMN,
+        (viewport or DIAG_MIN_COLUMN) - DIAG_COLUMN_TOP - PAD)
+    diagnostics.listScroll:SetViewportSize(320, height)
+    diagnostics.resultScroll:SetViewportSize(innerWidth() - 340, height)
+    resizeDiagnosticResults()
+end
+
 refreshTab.diagnostics = function()
     ns.RefreshStranded()
-    return 400
+    -- The two columns fill whatever they are given, so this screen never asks
+    -- for more than the shortest window: what it needs is a floor, and
+    -- `applyTabHeight` hands it the rest.
+    return MIN_HEIGHT - PAD
 end
 
 -- ============================================================================
@@ -2929,6 +2972,10 @@ local function applyViewport(frameHeight, width)
     -- and neither a tab change nor a refresh would have caught it -- the widths
     -- below are posted once, at build time, and nothing else ever revisits them.
     for _, applyWidth in pairs(applyTabWidth) do applyWidth() end
+    -- And what a screen can only know once the window has been measured: the
+    -- viewport it actually has. Same rule as the widths -- every screen, not the
+    -- one on show.
+    for _, applyHeightOf in pairs(applyTabHeight) do applyHeightOf(viewport) end
     contentScroll:RefreshBar()
     -- The panels are not inside the content area, so nothing above resizes them:
     -- they answer to the window itself, on the same pass.
