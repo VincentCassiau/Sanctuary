@@ -61,7 +61,17 @@ local FONT_TITLE, FONT_SECTION, FONT_DESC, FONT_BODY = 16, 14, 13, 12
 -- `innerWidth()` and never from the number it was built at.
 local DEFAULT_WIDTH = 780
 local MIN_FRAME_WIDTH, MAX_FRAME_WIDTH = 500, 900
-local MIN_HEIGHT, MAX_HEIGHT = 380, 700
+-- The height bounds are not a taste: the home screen is the tallest thing in
+-- this window that never folds, and A.2 asks for the whole of it -- five
+-- questions, the tester and its answer -- to be on screen at the SMALLEST size
+-- the grip allows, at the smallest width, which is the width where the note
+-- under question 3 wraps and the screen is at its tallest. 820 is that
+-- measurement plus a margin, and the harness fails the day the screen grows past
+-- it (which is what happened when question 3 was inserted). Beyond the maximum --
+-- "I choose" unfolded is taller than either bound -- the content scrolls, which
+-- is also what the manual mode needs when the window is made smaller than what
+-- is in it.
+local MIN_HEIGHT, MAX_HEIGHT = 820, 900
 local HEADER_HEIGHT = 40
 local TAB_HEIGHT = 22
 -- How far the current tab climbs into the frame, and how thick its underline is
@@ -2938,6 +2948,20 @@ local function resolveWidth()
     return math.min(MAX_FRAME_WIDTH, math.max(MIN_FRAME_WIDTH, width))
 end
 
+-- The room the client actually has. The bounds above are the design's, measured
+-- on the home screen; how many of those units a screen holds is decided by the
+-- UI scale -- 768 on a default Retail setup, more when the scale is lowered --
+-- and a window whose MINIMUM is taller than the screen is a window nobody can
+-- reach the bottom of, whatever the grip allows. So the bounds are asked for and
+-- the screen has the last word: where it cannot hold them, the content scrolls,
+-- which is what the scroll area is for.
+local SCREEN_MARGIN, SCREEN_FLOOR = 20, 300
+local function fitToScreen(frameHeight)
+    local available = UIParent and UIParent.GetHeight and UIParent:GetHeight()
+    if type(available) ~= "number" or available <= 0 then return frameHeight end
+    return math.min(frameHeight, math.max(SCREEN_FLOOR, available - SCREEN_MARGIN))
+end
+
 local function applyViewport(frameHeight, width)
     if not contentScroll or not contentFrame then return end
     -- The live width, taken before anything measures itself: `innerWidth` and
@@ -3000,6 +3024,7 @@ local function applyHeight(height)
         local bounded = math.min(MAX_HEIGHT, needed)
         frameHeight = bounded + HEADER_HEIGHT + CONTENT_BOTTOM
     end
+    frameHeight = fitToScreen(frameHeight)
     mainFrame:SetSize(width, frameHeight)
     applyViewport(frameHeight, width)
 end
@@ -3089,7 +3114,7 @@ local function createMainFrame()
     if mainFrame then return mainFrame end
 
     mainFrame = CreateFrame("Frame", "SanctuaryMainFrame", UIParent, "BackdropTemplate")
-    mainFrame:SetSize(frameWidth, MIN_HEIGHT + HEADER_HEIGHT)
+    mainFrame:SetSize(frameWidth, fitToScreen(MIN_FRAME_HEIGHT))
     mainFrame:SetPoint("CENTER")
     mainFrame:SetFrameStrata("DIALOG")
     mainFrame:SetFrameLevel(100)
@@ -3099,7 +3124,8 @@ local function createMainFrame()
     -- Both axes now, decision 98. Under pcall because SetResizeBounds is the
     -- Retail spelling and a missing method must not take the window down with it.
     pcall(mainFrame.SetResizeBounds, mainFrame,
-        MIN_FRAME_WIDTH, MIN_FRAME_HEIGHT, MAX_FRAME_WIDTH, MAX_FRAME_HEIGHT)
+        MIN_FRAME_WIDTH, fitToScreen(MIN_FRAME_HEIGHT),
+        MAX_FRAME_WIDTH, fitToScreen(MAX_FRAME_HEIGHT))
     mainFrame:SetClampedToScreen(true)
     mainFrame:Hide()
     applyBackdrop(mainFrame, C.panel, C.border, 2)

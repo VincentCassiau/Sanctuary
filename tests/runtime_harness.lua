@@ -8266,7 +8266,7 @@ local aboutHeight = mainFrame:GetHeight()
 _G["SanctuaryTab_protection"]:Click()
 local protectionHeight = mainFrame:GetHeight()
 check(protectionHeight >= aboutHeight, "the tallest screen is at least as tall as the shortest")
-check(protectionHeight <= 700 + 40 + 30, "and the fitted height stays within its bounds")
+check(protectionHeight <= 900 + 40 + 30, "and the fitted height stays within its bounds")
 
 -- "I choose" unfolded is taller than the fitted bound. The screen must stay
 -- reachable: the content area scrolls instead of being cut off.
@@ -8282,10 +8282,10 @@ equal(mainFrame:GetWidth(), 780, "the window opens at its design width")
 
 -- Dragging the grip switches to a remembered size; double-clicking goes back.
 -- Both slots are read back now, decision 98.
-SanctuaryDB.uiSize = { 640, 520 }
+SanctuaryDB.uiSize = { 640, 940 }
 mainFrame:Hide()
 mainFrame:Show()
-equal(mainFrame:GetHeight(), 520, "a remembered size is applied on opening")
+equal(mainFrame:GetHeight(), 940, "a remembered size is applied on opening")
 equal(mainFrame:GetWidth(), 640, "its width included")
 SanctuaryDB.uiSize = nil
 mainFrame:Hide()
@@ -8315,14 +8315,14 @@ local expectedViewport = function() return mainFrame:GetHeight() - 40 - 30 end
 
 now = now + 5
 gripDown(grip)
-mainFrame:SetSize(860, 560)
+mainFrame:SetSize(860, 940)
 gripUp(grip)
 equal(SanctuaryDB.uiSize[1], 860, "a diagonal drag records the width it was dragged to")
-equal(SanctuaryDB.uiSize[2], 560, "and the height")
+equal(SanctuaryDB.uiSize[2], 940, "and the height")
 equal(viewportOf(), expectedViewport(), "and the content area follows on release")
 equal(widthOf(), 860, "the content area is as wide as the window")
 equal(mainFrame:GetWidth(), 860, "which keeps the width that was asked for")
-equal(mainFrame:GetHeight(), 560, "and the height that was asked for")
+equal(mainFrame:GetHeight(), 940, "and the height that was asked for")
 -- The columns share the extra pixels: "les colonnes se repartissent". Every
 -- frame in this window was BUILT at 780 and none of them read a live width, so
 -- what the grip moved was the frame alone -- the screen inside it stayed the
@@ -8465,7 +8465,7 @@ do
 
     now = now + 5
     gripDown(grip)
-    mainFrame:SetSize(500, 560)
+    mainFrame:SetSize(500, 940)
     gripUp(grip)
     equal(content:GetWidth(), 500, "the window is at its narrowest bound")
     local narrow = sweep()
@@ -8532,7 +8532,7 @@ do
 
     now = now + 5
     gripDown(grip)
-    mainFrame:SetSize(500, 560)
+    mainFrame:SetSize(500, 940)
     gripUp(grip)
     local narrowRoom = 500 - 18 * 2
     check(labelEnd(enable) <= narrowRoom,
@@ -8549,7 +8549,7 @@ do
     for _, width in ipairs({ 780, 900 }) do
         now = now + 5
         gripDown(grip)
-        mainFrame:SetSize(width, 560)
+        mainFrame:SetSize(width, 940)
         gripUp(grip)
         equal(row(showMsg), row(enable),
             "at " .. width .. " the two Journal boxes share one row")
@@ -8563,25 +8563,25 @@ end
 
 now = now + 5
 gripDown(grip)
-mainFrame:SetSize(860, 560)
+mainFrame:SetSize(860, 940)
 gripUp(grip)
 
 -- Downwards too: shrinking is the direction that spilled content off-screen.
 now = now + 5
 gripDown(grip)
-mainFrame:SetSize(780, 450)
+mainFrame:SetSize(780, 890)
 gripUp(grip)
-equal(mainFrame:GetHeight(), 450, "a drag downwards is kept")
+equal(mainFrame:GetHeight(), 890, "a drag downwards is kept")
 equal(viewportOf(), expectedViewport(), "and the content area shrinks with it")
 
 -- During the drag, not only on release: the window's own size handler carries
 -- the new height to the content area.
-mainFrame:SetHeight(600)
+mainFrame:SetHeight(960)
 mainFrame:GetScript("OnSizeChanged")(mainFrame)
 equal(viewportOf(), expectedViewport(), "the content follows while the grip is still down")
 now = now + 5
 gripDown(grip)
-mainFrame:SetSize(700, 560)
+mainFrame:SetSize(700, 940)
 gripUp(grip)
 mainFrame:Hide()
 mainFrame:Show()
@@ -8602,10 +8602,21 @@ equal(SanctuaryDB.uiSize, nil, "a double-click forgets the remembered size for g
 -- And the fitted mode is really back: the height follows the screen again, and
 -- the width goes back to the one the window is designed at.
 _G["SanctuaryTab_about"]:Click()
-equal(mainFrame:GetHeight(), 380 + 40 + 30, "the shortest screen is back to its fitted height")
+equal(mainFrame:GetHeight(), 820 + 40 + 30, "the shortest screen is back to its fitted height")
 equal(mainFrame:GetWidth(), 780, "and to the design width")
+local shortestFitted = mainFrame:GetHeight()
+-- Every screen that does not fold fits the shortest window now: the minimum was
+-- measured ON the home screen (A.2), so there is nothing left for the fitted
+-- mode to grow for -- except the one fold there is.
 _G["SanctuaryTab_protection"]:Click()
-check(mainFrame:GetHeight() > 380 + 40 + 30, "and a taller screen makes the window taller again")
+equal(mainFrame:GetHeight(), shortestFitted,
+    "the home screen fits that same window, folded boxes aside")
+SanctuaryDB.filters.preset = "custom"
+ns.refreshUI()
+check(mainFrame:GetHeight() > shortestFitted,
+    "and unfolding the detailed boxes makes the window taller again")
+SanctuaryDB.filters.preset = "all"
+ns.refreshUI()
 
 end
 
@@ -8891,6 +8902,63 @@ do
     equal(field:GetCursorPosition(), 0, "and it goes back there when the field is left")
     field:SetText("SanctuaryTest")
     field:ShowFromStart()
+end
+
+
+-- A.2 -- the smallest window holds the WHOLE home screen.
+--
+-- The bound the visual pass found too small: at the minimum height the home
+-- screen was cut in the middle of question 3, "Vos listes" and the tester were
+-- off the bottom, and there was no bar to reach them with. The minimum is
+-- measured on that screen, at the minimum WIDTH -- the width where the note
+-- under question 3 wraps and the screen is at its tallest -- so this is the
+-- check that fails the day the home screen grows again, the way it did when
+-- question 3 was inserted. A height of 0 is asked for on purpose: what gets
+-- applied is the bound itself, not a copy of it written here.
+do
+    local kept = SanctuaryDB.uiSize
+    SanctuaryDB.filters.preset = "all"
+    for _, width in ipairs({ 500, 780, 900 }) do
+        SanctuaryDB.uiSize = { width, 0 }
+        _G["SanctuaryTab_protection"]:Click()
+        ns.refreshUI()
+        local scroll = _G.SanctuaryContentScroll
+        local needed = scroll:GetScrollChild():GetHeight() or 0
+        local viewport = scroll:GetHeight() or 0
+        check(needed <= viewport, "at the smallest height the home screen fits at "
+            .. width .. " (" .. needed .. " <= " .. viewport .. ")")
+        equal(scroll.bar:IsShown(), false, "so nothing on it scrolls at " .. width)
+        -- The tester is the last row of the screen, and it is what was off the
+        -- bottom in the capture. Its own anchor, plus the padding the tab frames
+        -- are offset by and the height of the field itself.
+        local _, _, _, _, testerY = _G.SanctuaryTestInput:GetPoint()
+        check(18 - (testerY or 0) + 24 <= viewport,
+            "and the tester at the bottom of it is inside the window at " .. width)
+    end
+    SanctuaryDB.uiSize = kept
+    ns.refreshUI()
+end
+
+-- A.2 again, from the other side: the bound is asked for, the screen has the
+-- last word. The design's minimum is 890 px of window; how many of those units a
+-- client has is decided by the UI scale -- 768 on a default Retail setup -- and a
+-- minimum taller than the screen would be a window nobody can reach the bottom
+-- of. Where the room is not there, the content scrolls instead.
+do
+    local kept = UIParent.GetHeight
+    UIParent.GetHeight = function() return 600 end
+    _G["SanctuaryTab_protection"]:Click()
+    ns.refreshUI()
+    check(mainFrame:GetHeight() <= 600 - 20,
+        "a screen too short for the design bound gets a window that fits it anyway")
+    local scroll = _G.SanctuaryContentScroll
+    check((scroll:GetScrollChild():GetHeight() or 0) > (scroll:GetHeight() or 0),
+        "and the home screen scrolls there rather than being cut off")
+    equal(scroll.bar:IsShown(), true, "with a bar to say so")
+    UIParent.GetHeight = kept
+    ns.refreshUI()
+    check(mainFrame:GetHeight() >= 820 + 40 + 30,
+        "and the design bound comes back on a screen that has the room")
 end
 
 
