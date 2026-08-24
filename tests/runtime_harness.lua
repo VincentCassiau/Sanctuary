@@ -8595,6 +8595,121 @@ check(mainFrame:GetHeight() > 380 + 40 + 30, "and a taller screen makes the wind
 
 end
 
+-- ---------------------------------------------------------------------------
+-- What the session and the visual pass sent back (chantiers A and B)
+-- ---------------------------------------------------------------------------
+
+-- A scope of its own: the enclosing chunk is at Lua's ceiling of 200 locals.
+;(function()
+
+-- A.1 -- the undo strip is bounded, and Annuler is never the half that is cut.
+do
+    local undo = _G.SanctuaryUndoLine
+    local longName = "Ombrelune-ConseildesOmbres"
+    SanctuaryDB.uiSize = { 500, 0 }
+    ns.refreshUI()
+    ns.addAllowed(longName)
+    ns.OpenPanel("blocked")
+    _G.SanctuaryBlockedAddInput:SetText(longName)
+    _G.SanctuaryPanelBlocked.nameBtn:Click()
+    equal(undo:IsShown(), true, "moving a long name puts the strip up")
+
+    local point, relativeTo = undo.button:GetPoint()
+    equal(point, "RIGHT", "Annuler is anchored on the strip's right edge")
+    equal(relativeTo, undo, "on the strip itself, not on the end of the sentence")
+    -- 8 px at each end, 12 between the sentence and the button. Anchored to the
+    -- end of the sentence, a name of any length pushed the button through the
+    -- right border and left half an Annuler nobody could click.
+    check((undo.label:GetWidth() or 0) + (undo.button:GetWidth() or 0) + 8 * 2 + 12
+        <= (undo:GetWidth() or 0) + 1, "and the sentence gets only what is left of the row")
+    check((undo.label:GetWidth() or 0) < (undo.label:GetStringWidth() or 0),
+        "so a sentence too long for the row is the half that is cut")
+    equal(undo.label.__wordWrap, false, "on one line, not folded over the tabs")
+    undo:GetScript("OnEnter")(undo)
+    check(tostring(rawget(GameTooltip, "__lastText") or ""):find(longName, 1, true) ~= nil,
+        "and the whole of it is readable on the tooltip")
+
+    -- The short variant -- "<name> retire" -- answers to the same rule.
+    undo.button:Click()
+    ns.ClosePanel()
+    ns.removeAllowed(ns.normalizeCharacterKey(longName))
+    ns.addAllowed(longName)
+    ns.OpenPanel("allowed")
+    ns.refreshUI()
+    local chip
+    local function walk(widget)
+        for _, childWidget in ipairs(widget.__children or {}) do
+            if childWidget.remove and childWidget.label
+                and tostring(childWidget.label.__text or ""):find(longName, 1, true) then
+                chip = chip or childWidget
+            end
+            walk(childWidget)
+        end
+    end
+    walk(_G.SanctuaryPanelAllowed)
+    check(chip ~= nil, "the long name has a chip to remove")
+    chip.remove:Click()
+    equal(undo:IsShown(), true, "removing it puts the short sentence up")
+    check((undo.label:GetWidth() or 0) + (undo.button:GetWidth() or 0) + 8 * 2 + 12
+        <= (undo:GetWidth() or 0) + 1, "bounded the same way")
+    undo.button:Click()
+    ns.ClosePanel()
+    ns.removeAllowed(ns.normalizeCharacterKey(longName))
+    ns.removeBlocked(ns.normalizeCharacterKey(longName))
+    SanctuaryDB.uiSize = nil
+    ns.refreshUI()
+end
+
+-- A.3 -- the shared scroll frame goes back to the top when the screen changes.
+do
+    SanctuaryDB.filters.preset = "custom"
+    SanctuaryDB.uiSize = { 500, 0 }
+    _G["SanctuaryTab_protection"]:Click()
+    ns.refreshUI()
+    local scroll = _G.SanctuaryContentScroll
+    scroll:GetScript("OnMouseWheel")(scroll, -1)
+    check((scroll.offset or 0) > 0, "the unfolded home screen can be scrolled down")
+    equal(scroll:GetVerticalScroll(), scroll.offset, "and the frame is where the offset says")
+    _G["SanctuaryTab_about"]:Click()
+    equal(scroll.offset, 0, "changing screen puts the shared frame back at the top")
+    equal(scroll:GetVerticalScroll(), 0, "the frame with it -- About has no bar to come back with")
+    equal(scroll.bar:IsShown(), false, "and About does not pretend to scroll")
+    -- And unconditionally. A short destination has its offset clamped away by
+    -- `RefreshBar` on its own -- that is the About case above -- so the rule
+    -- itself is proved on a destination that COULD hold the offset: put the
+    -- shared frame where a tall screen would have left it, change screen, and
+    -- the home screen still opens at its top rather than half way down.
+    scroll.offset = 40
+    scroll:SetVerticalScroll(40)
+    _G["SanctuaryTab_protection"]:Click()
+    equal(scroll.offset, 0, "a screen never opens where another one was read to")
+    equal(scroll:GetVerticalScroll(), 0, "the frame with it")
+    SanctuaryDB.filters.preset = "all"
+    SanctuaryDB.uiSize = nil
+    ns.refreshUI()
+end
+
+-- A.5 -- clicking beside the drawer closes it in silence.
+do
+    ns.OpenPanel("allowed")
+    local veil = _G.SanctuaryPanelVeil
+    playedSounds = {}
+    veil:GetScript("OnMouseDown")(veil)
+    equal(#playedSounds, 0, "closing the drawer from the veil plays nothing")
+    equal(_G.SanctuaryPanelAllowed:IsShown(), false, "and the drawer is closed")
+    -- The window's own X keeps its sound: that one closes a window, which is the
+    -- gesture the sound belongs to.
+    local closeBtn = findButtonByLabel(mainFrame, "X")
+    check(closeBtn ~= nil, "the window has its X")
+    playedSounds = {}
+    closeBtn:GetScript("OnClick")(closeBtn)
+    equal(#playedSounds, 1, "and closing the window still sounds like closing a window")
+    mainFrame:Show()
+end
+
+
+end)()
+
 
 guildMembers = {}
 bnetFriends = {}

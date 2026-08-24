@@ -85,6 +85,10 @@ local CONTENT_BOTTOM = 30
 -- is an overlay pinned this far above the bottom edge of the frame, and it sits
 -- OVER the panels rather than inside them.
 local UNDO_HEIGHT, UNDO_MARGIN = 22, 6
+-- What the strip spends on anything that is not the sentence: the inset at each
+-- end, the gap before the button, and the button itself. Stated once, because
+-- the sentence gets exactly what is left of the row and nothing else.
+local UNDO_INSET, UNDO_GAP, UNDO_BTN_WIDTH = 8, 12, 90
 -- What the whole window may measure in height, header and bottom strip included.
 local MIN_FRAME_HEIGHT = MIN_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
 local MAX_FRAME_HEIGHT = MAX_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
@@ -642,6 +646,14 @@ local function newScroll(parent, name, width, height)
 
     function scroll:RefreshBar()
         local range = (self.child:GetHeight() or 0) - (self:GetHeight() or 0)
+        -- An offset the content no longer has is a view scrolled past its own
+        -- end, showing nothing: a shorter screen, or a window dragged taller,
+        -- both leave one behind.
+        local reachable = math.max(0, range)
+        if (self.offset or 0) > reachable then
+            self.offset = reachable
+            self:SetVerticalScroll(reachable)
+        end
         if range > 1 then self.bar:Show() else self.bar:Hide() end
     end
 
@@ -769,11 +781,26 @@ local function clearUndo()
     if undoLine then undoLine:Hide() end
 end
 
+-- Annuler's room is taken first, the sentence gets what is left. The strip is
+-- the width of the screen and a qualified pseudo is as long as it likes, so with
+-- the button anchored to the END of the sentence a name of any length pushed it
+-- through the right border: at the 500 px bound "Ombrelune-ConseildesOmbres
+-- retiré de « Toujours autorisés »" left half an Annuler on screen, and half a
+-- button is a button nobody can click.
+local function layoutUndoLine()
+    if not undoLine then return end
+    local room = (undoLine:GetWidth() or 0) - UNDO_INSET * 2 - UNDO_GAP - UNDO_BTN_WIDTH
+    undoLine.label:SetWidth(math.max(40, room))
+end
+
 local function offerUndoLine(text, restore)
     undoState = { restore = restore, at = GetTime() }
     local mine = undoState
     if undoLine then
         undoLine.label:SetText(text)
+        -- Cut at the right edge by the client, so the whole of it has to be
+        -- readable somewhere: the list the name has just left is not it.
+        setTooltip(undoLine, text)
         undoLine:Show()
     end
     C_Timer.After(UNDO_SECONDS, function()
@@ -2845,7 +2872,10 @@ local function applyViewport(frameHeight, width)
     for _, frame in pairs(tabFrames) do frame:SetWidth(frameWidth) end
     local active = tabFrames[activeTab]
     if active then active:SetHeight(contentHeight) end
-    if undoLine then undoLine:SetWidth(innerWidth()) end
+    if undoLine then
+        undoLine:SetWidth(innerWidth())
+        layoutUndoLine()
+    end
     -- And what lives INSIDE a screen. Nothing above reaches it: this pass hands
     -- the live width to the frame, the content area, the five screens, the
     -- drawer and the undo strip, and stopped there -- so every width a screen
@@ -2901,6 +2931,14 @@ local function selectTab(key)
     -- allowed names floating over the Journal is a state the design never had.
     ns.ClosePanel()
     activeTab = key
+    -- The scroll frame is one frame for the five screens, so its offset belongs
+    -- to none of them: a Journal read to the bottom left About showing its own
+    -- bottom -- and About is shorter than the window, so there was no bar and no
+    -- range to scroll back with (constat G.4). Every screen opens at its top.
+    if contentScroll then
+        contentScroll.offset = 0
+        contentScroll:SetVerticalScroll(0)
+    end
     for _, def in ipairs(TAB_DEFS) do
         local frame = tabFrames[def.key]
         if frame then
@@ -3064,8 +3102,10 @@ local function createMainFrame()
     applyBackdrop(panelVeil, C.veil, nil)
     panelVeil:EnableMouse(true)
     panelVeil:EnableMouseWheel(true)
+    -- Silently: clicking beside the drawer is a way out of it, not the closing
+    -- of a window. The "X" in the header keeps its sound -- that one does close
+    -- the window, and it is the gesture the sound belongs to.
     panelVeil:SetScript("OnMouseDown", function()
-        PlaySound(SOUNDKIT.IG_MAINMENU_CLOSE)
         ns.ClosePanel()
     end)
     panelVeil:SetScript("OnMouseUp", function() end)
@@ -3118,14 +3158,20 @@ local function createMainFrame()
     undoLine:SetPoint("BOTTOMLEFT", mainFrame, "BOTTOMLEFT", PAD, UNDO_MARGIN)
     undoLine:SetFrameLevel(LEVEL_OVER_PANEL)
     applyBackdrop(undoLine, C.tile, C.border)
+    -- The strip takes the mouse for its own tooltip, which is where the whole of
+    -- a cut sentence can be read.
+    undoLine:EnableMouse(true)
     undoLine.label = newLabel(undoLine, "", FONT_BODY, C.soft)
-    undoLine.label:SetPoint("LEFT", undoLine, "LEFT", 8, 0)
-    undoLine.button = newButton(undoLine, nil, L["UNDO_BTN"], 90, 18, function()
+    undoLine.label:SetPoint("LEFT", undoLine, "LEFT", UNDO_INSET, 0)
+    -- One line, cut with an ellipsis at the width `layoutUndoLine` gives it.
+    undoLine.label:SetWordWrap(false)
+    undoLine.button = newButton(undoLine, nil, L["UNDO_BTN"], UNDO_BTN_WIDTH, 18, function()
         if undoState and undoState.restore then undoState.restore() end
         clearUndo()
         if ns.refreshUI then ns.refreshUI() end
     end)
-    undoLine.button:SetPoint("LEFT", undoLine.label, "RIGHT", 12, 0)
+    undoLine.button:SetPoint("RIGHT", undoLine, "RIGHT", -UNDO_INSET, 0)
+    layoutUndoLine()
     undoLine:Hide()
 
     -- Grip: dragging switches to manual sizing, double-clicking goes back to
