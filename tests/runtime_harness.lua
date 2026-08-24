@@ -5164,6 +5164,84 @@ setHarnessDay("2026-06-20")
 
 end
 
+-- C21 -- "your journal is filling up", once per level per session.
+do
+
+resetModelState()
+SanctuaryDB.logging.maxEntries = 100
+
+local function fillJournal(count)
+    ns.clearJournal()
+    for index = 1, count do
+        SanctuaryDB.log[index] = { t = index, d = "2026-08-24 00:00:00",
+            type = "channel", name = "Filler" .. index }
+    end
+end
+
+local function said(text)
+    local count = 0
+    for _, line in ipairs(chatMessages) do
+        if line:find(text, 1, true) then count = count + 1 end
+    end
+    return count
+end
+
+local almostAt90 = string.format(ns.L["LOGS_ALERT_ALMOST_FULL"], 90, 100)
+local almostAt100 = string.format(ns.L["LOGS_ALERT_ALMOST_FULL"], 100, 100)
+local fullAt100 = string.format(ns.L["LOGS_ALERT_FULL"], 100)
+
+fillJournal(89)
+chatMessages = {}
+fire("PLAYER_ENTERING_WORLD")
+equal(#chatMessages, 0, "one entry short of nine tenths, nothing is said")
+
+fillJournal(90)
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(said(almostAt90), 1, "at nine tenths the journal says so, once")
+fire("PLAYER_ENTERING_WORLD")
+fire("PLAYER_ENTERING_WORLD")
+fire("PLAYER_ENTERING_WORLD")
+equal(said(almostAt90), 1, "and not again at every loading screen")
+
+-- Full. The rotation is kept (decision 132, Q1), so the text says what happens
+-- now rather than that recording has stopped -- and the nine-tenths line is not
+-- said as well.
+fillJournal(100)
+chatMessages = {}
+fire("PLAYER_ENTERING_WORLD")
+equal(said(fullAt100), 1, "a full journal says it is full")
+equal(said(almostAt100), 0, "and does not also say it is nearly full")
+fire("PLAYER_ENTERING_WORLD")
+equal(said(fullAt100), 1, "once, like the other one")
+
+-- Nothing to record, nothing to warn about.
+fillJournal(100)
+SanctuaryDB.logging.enabled = false
+chatMessages = {}
+fire("PLAYER_ENTERING_WORLD")
+equal(#chatMessages, 0, "with the Journal switched off nothing is said")
+SanctuaryDB.logging.enabled = true
+
+fillJournal(100)
+SanctuaryCharDB.overrides.enabled = false
+chatMessages = {}
+fire("PLAYER_ENTERING_WORLD")
+equal(#chatMessages, 0, "and with Sanctuary switched off nothing is said either")
+SanctuaryCharDB.overrides.enabled = nil
+
+-- Emptying the journal arms it again: it is a different journal now.
+fillJournal(100)
+chatMessages = {}
+fire("PLAYER_ENTERING_WORLD")
+equal(said(fullAt100), 1, "a journal that filled up again warns again")
+
+SanctuaryDB.logging.maxEntries = 5000
+ns.clearJournal()
+resetModelState()
+
+end
+
 -- ===========================================================================
 -- SECTION: no dead entry -- what the person typed reaches what the game says
 -- ===========================================================================
