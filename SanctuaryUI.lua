@@ -1166,7 +1166,12 @@ local function groupLogsByName()
         end
         local group = groups[name]
         group.entries[#group.entries + 1] = entry
-        if entry.t and entry.t > group.lastTime then group.lastTime = entry.t end
+        -- A folded entry is as recent as its LAST occurrence, not as its first:
+        -- sorted on `t` alone, somebody who repeated the same line all evening
+        -- sank to the bottom of the list while they were still at it.
+        local last = math.max(entry.t or 0, entry.t2 or 0)
+        if last > group.lastTime then group.lastTime = last end
+        group.occurrences = (group.occurrences or 0) + (tonumber(entry.count) or 1)
     end
     local sorted = {}
     for _, name in ipairs(order) do
@@ -1184,7 +1189,8 @@ local function buildJournalText()
     lines[#lines + 1] = L["EXPORT_COLUMNS"]
     lines[#lines + 1] = string.rep("-", 50)
     for _, entry in ipairs(SanctuaryDB.log) do
-        local line = escape(entry.d or "?") .. " | " .. escape(ns.getLogEntryDisplayType(entry))
+        local line = escape(ns.getLogEntryDisplayDate(entry))
+            .. " | " .. escape(ns.getLogEntryDisplayType(entry))
             .. " | " .. escape(entry.name or "?")
         if entry.realm and entry.realm ~= "" then line = line .. "-" .. escape(entry.realm) end
         if entry.msg and entry.msg ~= "" then line = line .. " | " .. escape(entry.msg) end
@@ -1334,8 +1340,11 @@ refreshTab.journal = function()
         row:ClearAllPoints()
         row:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
         row.label:SetTextColor(unpack(C.ink))
+        -- What the header counts is how many times this person was blocked, not
+        -- how many lines the list holds: a folded entry stands for several.
         row.label:SetText((expanded and "v " or "> ")
-            .. string.format(L["LOGS_GROUP_HEADER"], group.name, #group.data.entries)
+            .. string.format(L["LOGS_GROUP_HEADER"], group.name,
+                group.data.occurrences or #group.data.entries)
             .. "  " .. string.format(L["LOGS_LAST_ACTIVITY"], formatDate(group.data.lastTime)))
         local groupName = group.name
         row:SetScript("OnClick", function()
@@ -1349,7 +1358,8 @@ refreshTab.journal = function()
                 local line = acquireJournalRow(child)
                 line:ClearAllPoints()
                 line:SetPoint("TOPLEFT", child, "TOPLEFT", 16, y)
-                local text = (entry.d or "?") .. "   " .. ns.getLogEntryDisplayType(entry)
+                local text = ns.getLogEntryDisplayDate(entry) .. "   "
+                    .. ns.getLogEntryDisplayType(entry)
                 if showMessages and entry.msg and entry.msg ~= "" then
                     text = text .. "   " .. entry.msg
                 end

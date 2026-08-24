@@ -2510,8 +2510,27 @@ local LOG_TYPE_KEYS = {
 function ns.getLogEntryDisplayType(entry)
     local blockType = type(entry) == "table" and entry.type or entry
     local key = LOG_TYPE_KEYS[blockType]
-    if key and L[key] then return L[key] end
-    return tostring(blockType or "?")
+    local label = (key and L[key]) or tostring(blockType or "?")
+    -- A folded entry wears its badge on the type it already had. `entry.type`
+    -- is left exactly as it was written: it is what maps to the label above and
+    -- what the export prints, and a "spam" type of its own would be a second
+    -- vocabulary for the same thing.
+    local count = (type(entry) == "table" and tonumber(entry.count)) or nil
+    if count and count >= 2 then
+        label = label .. string.format(L["LOGS_SPAM_BADGE"], count)
+    end
+    return label
+end
+
+-- The date column of one entry, for the tab and for the export alike. A folded
+-- entry says when it opened and when it was last seen; an entry that never
+-- folded says exactly what it always said, so a journal written by an earlier
+-- build reads unchanged.
+function ns.getLogEntryDisplayDate(entry)
+    local stamp = (type(entry) == "table" and entry.d) or "?"
+    local last = (type(entry) == "table" and tonumber(entry.t2)) or nil
+    if not last then return stamp end
+    return string.format(L["LOGS_TIME_RANGE"], stamp, date("%H:%M:%S", last))
 end
 end
 

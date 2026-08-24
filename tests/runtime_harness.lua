@@ -5900,6 +5900,9 @@ local KNOWN_IDENTICAL = {
     TAB_JOURNAL = true, TAB_DIAGNOSTICS = true, KIND_DUEL = true,
     Q3_MINIMAL_TITLE = true, LOG_TYPE_DUEL = true, ABOUT_VERSION = true,
     LOGS_GROUP_HEADER = true, DATE_FORMAT = true, DIAG_ARG_FILTER = true,
+    -- The Journal's badge and its time range: a count, a dash and the word
+    -- SPAM, which French borrows unchanged.
+    LOGS_SPAM_BADGE = true, LOGS_TIME_RANGE = true,
 }
 local unexpected = {}
 for _, key in ipairs(untranslated) do
@@ -7123,6 +7126,57 @@ check(exportFrame ~= nil and exportFrame:IsShown(), "copying the journal opens t
 check(exportFrame.box:GetText():find(ns.L["LOG_TYPE_INVITE"], 1, true) ~= nil,
     "and the copied text carries the same type labels as the tab")
 exportFrame:Hide()
+
+-- A folded entry, on screen and in the export. The badge rides on the type and
+-- the range on the date, both through the core, so the tab and the copy can
+-- never say two different things.
+equal(ns.getLogEntryDisplayType({ type = "channel" }), ns.L["LOG_TYPE_CHANNEL"],
+    "an entry that never folded wears no badge")
+equal(ns.getLogEntryDisplayType({ type = "channel", count = 1 }), ns.L["LOG_TYPE_CHANNEL"],
+    "and neither does one seen once")
+equal(ns.getLogEntryDisplayType({ type = "channel", count = 4 }),
+    ns.L["LOG_TYPE_CHANNEL"] .. string.format(ns.L["LOGS_SPAM_BADGE"], 4),
+    "a folded entry wears the count it stands for")
+equal(ns.getLogEntryDisplayDate({ d = "2026-08-24 14:02:11" }), "2026-08-24 14:02:11",
+    "an entry that never folded shows the date it always showed")
+equal(ns.getLogEntryDisplayDate({ d = "2026-08-24 14:02:11", t2 = 420 }),
+    string.format(ns.L["LOGS_TIME_RANGE"], "2026-08-24 14:02:11", "12:00:00"),
+    "and a folded one shows the range it covers")
+
+wipe(SanctuaryDB.log)
+SanctuaryDB.log = {
+    -- Older by its first occurrence, but still going: it has to sort first.
+    { t = 100, t2 = 900, d = "2026-08-24 14:02:11", type = "channel",
+      name = "Zzzzz", realm = "Royaume", msg = "buy gold", count = 4 },
+    { t = 500, d = "2026-08-24 14:20:00", type = "whisper",
+      name = "Wwwww", realm = "Royaume", msg = "slt" },
+}
+ns.refreshUI()
+rendered = panelRowTexts(journalContent)
+check(rendered:find("Zzzzz-Royaume (4)", 1, true) ~= nil,
+    "a group header counts occurrences, not lines")
+do
+    -- Read off the anchors: the rows come out of a pool, so where they sit is
+    -- the only thing that says which group is on top.
+    local _, _, _, _, folded = findRow(journalContent, "Zzzzz-Royaume"):GetPoint()
+    local _, _, _, _, plain = findRow(journalContent, "Wwwww-Royaume"):GetPoint()
+    check(folded > plain,
+        "and a folded entry is as recent as its last occurrence, not its first")
+end
+findRow(journalContent, "Zzzzz-Royaume"):Click()
+rendered = panelRowTexts(journalContent)
+check(rendered:find(string.format(ns.L["LOGS_SPAM_BADGE"], 4), 1, true) ~= nil,
+    "unfolding shows the badge on the entry itself")
+check(rendered:find(ns.getLogEntryDisplayDate(SanctuaryDB.log[1]), 1, true) ~= nil,
+    "and the range it covers")
+findRow(journalContent, ns.L["LOGS_COPY_BTN"]):Click()
+exportFrame = _G.SanctuaryExportFrame
+check(exportFrame.box:GetText():find(string.format(ns.L["LOGS_SPAM_BADGE"], 4), 1, true) ~= nil,
+    "the export carries the same badge")
+check(exportFrame.box:GetText():find(ns.getLogEntryDisplayDate(SanctuaryDB.log[1]), 1, true) ~= nil,
+    "and the same range")
+exportFrame:Hide()
+findRow(journalContent, "Zzzzz-Royaume"):Click()
 wipe(SanctuaryDB.log)
 
 -- ---------------------------------------------------------------------------
