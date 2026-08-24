@@ -9027,6 +9027,39 @@ do
     ns.refreshUI()
 end
 
+-- A.2, fourth side: the part of the window that is not IN the window.
+--
+-- The tab strip is anchored under the frame's bottom edge, and the window opens
+-- centred, so the room left over is split evenly above and below it: a reserve
+-- of 20 px in total left 10 px under a window that had 22 px of tabs hanging
+-- there, and on a default Retail screen -- 768 units -- the bottom half of every
+-- tab was off the screen with its label cut. Nothing on the frame catches that:
+-- SetClampedToScreen clamps the frame, which was inside the screen all along.
+-- The overhang is read off the strip itself rather than written here, so this
+-- still answers the day a tab changes height; what it measures is the reserve,
+-- and it fails again the day the reserve stops covering both sides of the
+-- centring.
+do
+    local keptScreen, keptSize = UIParent.GetHeight, SanctuaryDB.uiSize
+    SanctuaryDB.uiSize = nil
+    UIParent.GetHeight = function() return 768 end
+    _G["SanctuaryTab_protection"]:Click()
+    ns.refreshUI()
+    -- The current tab climbs by TAB_LIFT and is that much taller, so every tab
+    -- ends on the same edge: its height, less its anchor's own offset.
+    local tab = _G["SanctuaryTab_protection"]
+    local _, _, _, _, tabY = tab:GetPoint()
+    local overhang = (tab:GetHeight() or 0) - (tabY or 0)
+    check(overhang > 0, "the tab strip hangs under the window (" .. overhang .. " px)")
+    local below = (768 - (mainFrame:GetHeight() or 0)) / 2
+    check(below - overhang >= 0,
+        "and on a default Retail screen the whole of it is on the screen ("
+            .. below .. " px of room for " .. overhang .. ")")
+    UIParent.GetHeight = keptScreen
+    SanctuaryDB.uiSize = keptSize
+    ns.refreshUI()
+end
+
 
 end)()
 

@@ -2985,7 +2985,16 @@ end
 -- reach the bottom of, whatever the grip allows. So the bounds are asked for and
 -- the screen has the last word: where it cannot hold them, the content scrolls,
 -- which is what the scroll area is for.
-local SCREEN_MARGIN, SCREEN_FLOOR = 20, 300
+--
+-- What has to be reserved is NOT the window: the tab strip hangs TAB_HEIGHT
+-- below the frame's bottom edge, and the window opens on SetPoint("CENTER"), so
+-- whatever room is left over is split evenly above and below -- half of a
+-- reserve meant for the bottom is spent on the top. The reserve therefore
+-- carries the overhang TWICE, plus a breathing edge, or the strip goes off the
+-- screen and no amount of dragging brings it back (SetClampedToScreen clamps the
+-- frame, and the strip is not in it).
+local SCREEN_EDGE = 10
+local SCREEN_MARGIN, SCREEN_FLOOR = 2 * (TAB_HEIGHT + SCREEN_EDGE), 300
 local function fitToScreen(frameHeight)
     local available = UIParent and UIParent.GetHeight and UIParent:GetHeight()
     if type(available) ~= "number" or available <= 0 then return frameHeight end
