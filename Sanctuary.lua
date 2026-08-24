@@ -2102,6 +2102,29 @@ local function purgeThrottle(now)
     end
 end
 
+-- Drops the throttle record of one pair, and only that one. It exists for the
+-- Diagnostics probe, which sends the same pseudo and the same line on every
+-- click: without this, the first click would arm the window for its own pair
+-- and every later click would be hidden whole, so the button would answer
+-- something different from what it answered a minute earlier. The probe forgets
+-- its own pair right before sending; nothing here reaches a pair a real player
+-- wrote, and no window, count or record of anyone else's is touched.
+function ns.forgetSpamThrottle(sender, msg)
+    local senderKey = normalizeCharacterKey(sender)
+    local msgKey = ns.normalizeSpamText(msg)
+    if not senderKey or not msgKey or msgKey == "" then return false end
+    local bucket = lastShown[senderKey]
+    if not bucket or not bucket[msgKey] then return false end
+    bucket[msgKey] = nil
+    -- The counter follows the table it counts: an identity with nothing left
+    -- must stop weighing on the ceiling `purgeThrottle` enforces.
+    if next(bucket) == nil then
+        lastShown[senderKey] = nil
+        throttleSenders = throttleSenders - 1
+    end
+    return true
+end
+
 -- The whole of the anti-spam verdict, and every condition it rests on, in the
 -- order they are asked. Answers nothing at all unless all of them hold.
 local function evaluateSpam(decision, msg, sender)
@@ -6770,6 +6793,11 @@ function ns.runChannelSpamDiagnostic(argText)
 
     local before = (SanctuaryDB and SanctuaryDB.log and #SanctuaryDB.log) or 0
     local message = L["DIAG_SPAM_PROBE_MSG"]
+    -- Every click sends the same pseudo and the same line, so the previous
+    -- click's shown copy would still be holding the window open and this one
+    -- would be hidden whole. The probe forgets its own pair, and only its own,
+    -- so two clicks a few seconds apart answer the same thing.
+    ns.forgetSpamThrottle(name, message)
     for _ = 1, 3 do
         spamProbeSerial = spamProbeSerial + 1
         local lineID = 990000 + spamProbeSerial

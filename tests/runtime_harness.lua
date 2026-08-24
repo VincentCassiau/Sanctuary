@@ -5077,6 +5077,89 @@ do
     resetModelState()
 end
 
+-- Clicked twice, the button answers twice. The probe sends the same pseudo and
+-- the same line every time, so its own shown copy used to hold the anti-spam
+-- window open and the next click was hidden whole -- shown=0, written=0, not a
+-- word in the chat. Nothing was broken, but the step promises "one line appears
+-- in the chat", so a second click read as a failure of the product. The clock
+-- does not move between the first two clicks here, which is the worst the
+-- window can be asked about.
+do
+    local probeText = ns.L["DIAG_SPAM_PROBE_MSG"]
+    local function countProbeLines(from)
+        local count = 0
+        for index = from + 1, #chatMessages do
+            local line = chatMessages[index]
+            if type(line) == "string" and line:find(probeText, 1, true) then
+                count = count + 1
+            end
+        end
+        return count
+    end
+    local function clickProbe(label)
+        local before = #chatMessages
+        local blockedBefore = SanctuaryCharDB.sessionStats.blockedCount or 0
+        local result = ns.runChannelSpamDiagnostic("SanctuaryTest")
+        equal(result.shown, 1, label .. ": one copy shows")
+        equal(result.hidden, 2, label .. ": and the two repeats are hidden")
+        equal(result.written, 1, label .. ": one line is written")
+        equal(countProbeLines(before), 1, label .. ": and exactly one reaches the chat")
+        equal(#chatMessages - before, 1, label .. ": with nothing else printed alongside it")
+        equal(SanctuaryCharDB.sessionStats.blockedCount or 0, blockedBefore,
+            label .. ": a hidden repeat is still not a block")
+    end
+
+    armAntiSpam(300)
+    clickProbe("first click")
+    clickProbe("second click, same clock")
+    now = now + 10
+    clickProbe("third click, ten seconds later")
+
+    -- The catalogue entry carries neither `sensitive` nor `manual`, so "run them
+    -- all" fires the probe like any other -- and the session opens on that
+    -- button. The click a tester makes right after it is the one that must not
+    -- come back empty.
+    armAntiSpam(300)
+    for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG) do
+        if not entry.sensitive and not entry.manual then
+            ns.runDiagnosticById(entry.id, entry.argDefault)
+        end
+    end
+    clickProbe("a click right after a bulk run")
+
+    -- A real player's window is not the probe's to move. A stranger whose line
+    -- has just been shown is still hidden on the repeat, probe or no probe.
+    armAntiSpam(300)
+    local spammerLine = freshMessage()
+    equal(deliverCopy("filters_first", spammerLine, SPAMMER, nextLine(), "a stranger's copy"),
+        false, "a stranger's first copy shows")
+    ns.runChannelSpamDiagnostic("SanctuaryTest")
+    now = now + 10
+    equal(deliverCopy("filters_first", spammerLine, SPAMMER, nextLine(), "the stranger's repeat"),
+        true, "and their repeat is still hidden after the probe has run")
+
+    -- Covered: the channels are all filtered, so the three copies are blocked as
+    -- a stranger's long before the anti-spam is asked anything, and each of the
+    -- three is a block of its own. There is no probe record to forget here, and
+    -- the second click says exactly what the first did.
+    armAntiSpam(300)
+    SanctuaryDB.filters.channelMode = "all"
+    local before = #chatMessages
+    local blockedBefore = SanctuaryCharDB.sessionStats.blockedCount or 0
+    local covered = ns.runChannelSpamDiagnostic("SanctuaryTest")
+    equal(covered.covered, true, "the result says the channels already cover it")
+    equal(covered.shown, 0, "nothing shows")
+    equal(covered.hidden, 3, "the three copies are hidden")
+    equal(covered.written, 0, "and none of them is written")
+    equal(countProbeLines(before), 0, "no probe line reaches the chat")
+    equal(SanctuaryCharDB.sessionStats.blockedCount or 0, blockedBefore + 3,
+        "the three are counted as the blocks they are")
+    local again = ns.runChannelSpamDiagnostic("SanctuaryTest")
+    equal(again.shown, 0, "a second click still shows nothing")
+    equal(again.hidden, 3, "with the same three hidden")
+    resetModelState()
+end
+
 -- The "xN" counts the times the message ARRIVED (decision 132, Q2), and a copy
 -- shown again once the window has run out is one of those arrivals. Five
 -- arrivals of one line -- shown, hidden, hidden, shown again past the window,
