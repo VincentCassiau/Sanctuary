@@ -8708,6 +8708,38 @@ do
 end
 
 
+-- B.3 -- realm friends are off the allowed panel, and the mechanism stays.
+do
+    charFriends = { "Palz" }
+    ns.invalidateWhitelist()
+    ns.OpenPanel("allowed")
+    ns.refreshUI()
+    -- A group header is a row that folds: "> Name (n)" or "v Name (n)".
+    local headers = {}
+    local function walk(widget)
+        for _, childWidget in ipairs(widget.__children or {}) do
+            local text = childWidget.label and tostring(childWidget.label.__text or "") or ""
+            if text:find("^[>v] ") then headers[#headers + 1] = text end
+            walk(childWidget)
+        end
+    end
+    walk(_G.SanctuaryPanelAllowed)
+    equal(#headers, 3, "three automatic groups on the panel, not four")
+    local joined = table.concat(headers, "\n")
+    for _, key in ipairs({ "WL_SOURCE_BNET", "WL_SOURCE_GUILD", "WL_SOURCE_TRUST" }) do
+        check(joined:find(ns.L[key], 1, true) ~= nil, "and " .. key .. " is one of them")
+    end
+    ns.ClosePanel()
+    -- The mechanism itself is untouched: an old character friend still carries
+    -- the native behaviour, and "Test a pseudo" still names it.
+    local verdict = ns.describeAccessDecision("Palz")
+    equal(verdict.list, "friend", "an old realm friend is still allowed, and still labelled")
+    charFriends = {}
+    ns.invalidateWhitelist()
+    ns.refreshUI()
+end
+
+
 end)()
 
 

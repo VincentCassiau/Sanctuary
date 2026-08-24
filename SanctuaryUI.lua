@@ -2242,10 +2242,17 @@ local function acquireAutoRow(parent, panel)
     return row
 end
 
+-- Realm friends are not here, decision 127: WoW 12.1 has no way left to add a
+-- friend who is not a Battle.net account, so the group was a header reading
+-- "(0)" for everyone, and a heading nobody can ever fill is a question the
+-- reader has to answer for themselves. The MECHANISM stays -- `C_FriendList`
+-- still answers, and an old character friend left in an account's list keeps the
+-- native behaviour and is still named by "Test a pseudo" -- only the group is
+-- off the panel.
 local AUTO_GROUP_LABELS = {
-    bnet = "WL_SOURCE_BNET", friend = "WL_SOURCE_FRIEND",
-    guild = "WL_SOURCE_GUILD", trust = "WL_SOURCE_TRUST",
+    bnet = "WL_SOURCE_BNET", guild = "WL_SOURCE_GUILD", trust = "WL_SOURCE_TRUST",
 }
+local AUTO_GROUP_ORDER = { "bnet", "guild", "trust" }
 
 -- One line under the group header, for the two groups whose rule is not obvious
 -- from their name: automatic trust has a condition, and Battle.net has a limit
@@ -2333,8 +2340,13 @@ local function refreshAllowedPanel(force)
 
     panel.autoSection:ClearAllPoints()
     panel.autoSection:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
-    panel.autoSection.count:SetText("(" .. tostring(counts.allowed.bnet + counts.allowed.friend
-        + counts.allowed.guild + counts.allowed.trust) .. ")")
+    -- Counts what the section shows, and only that: a total including a group
+    -- that is not on the panel is a number nobody can add up.
+    local autoTotal = 0
+    for _, source in ipairs(AUTO_GROUP_ORDER) do
+        autoTotal = autoTotal + (counts.allowed[source] or 0)
+    end
+    panel.autoSection.count:SetText("(" .. tostring(autoTotal) .. ")")
     y = y - 34
 
     -- Automatic groups, folded by default: fifty-six Battle.net accounts are
@@ -2359,7 +2371,7 @@ local function refreshAllowedPanel(force)
     end
     table.sort(trustEntries, function(a, b) return tostring(a.label):lower() < tostring(b.label):lower() end)
 
-    for _, source in ipairs({ "bnet", "friend", "guild", "trust" }) do
+    for _, source in ipairs(AUTO_GROUP_ORDER) do
         local entries, total
         if source == "trust" then
             entries, total = trustEntries, #trustEntries
