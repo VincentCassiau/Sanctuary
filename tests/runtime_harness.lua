@@ -5117,6 +5117,40 @@ do
     SanctuaryDB.debugEnabled = false
 end
 
+-- An entry belongs to the day of its key, and is dated from it. The longest
+-- window reaches back across a night: a copy shown before midnight and repeated
+-- after it opens an entry filed under the new day, and dating it from the shown
+-- copy would print a range spanning the night.
+do
+    armAntiSpam(86400)
+    setHarnessDay("2026-08-24")
+    local message = freshMessage()
+    deliverCopy("filters_first", message, SPAMMER, nextLine(), "the copy shown before midnight")
+    local shownEpoch = time()
+
+    now = now + 100
+    setHarnessDay("2026-08-25")
+    deliverCopy("filters_first", message, SPAMMER, nextLine(), "the repeat after midnight")
+    local entry = SanctuaryDB.log[#SanctuaryDB.log]
+    equal(entry.count, 2, "the repeat of the next day opens its own entry")
+    equal(entry.t, time(), "dated from the day it was filed under")
+    check(entry.t ~= shownEpoch, "and not from the copy shown the day before")
+
+    -- Inside one day nothing changes: the entry still opens on the copy the
+    -- person actually read.
+    armAntiSpam(86400)
+    setHarnessDay("2026-08-25")
+    message = freshMessage()
+    deliverCopy("filters_first", message, SPAMMER, nextLine(), "the shown copy")
+    local sameDayEpoch = time()
+    now = now + 100
+    deliverCopy("filters_first", message, SPAMMER, nextLine(), "the repeat")
+    entry = SanctuaryDB.log[#SanctuaryDB.log]
+    equal(entry.t, sameDayEpoch, "a repeat of the same day still dates from the shown copy")
+    equal(entry.t2, time(), "and the range runs to the last arrival")
+    setHarnessDay("2026-06-20")
+end
+
 resetModelState()
 
 end

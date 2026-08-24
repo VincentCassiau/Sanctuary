@@ -2136,6 +2136,7 @@ local function evaluateSpam(decision, msg, sender)
         decision.spam = "masked"
         decision.hide = true
         decision.shownEpoch = record.epoch
+        decision.shownDay = record.day
     else
         decision.spam = "show"
     end
@@ -2221,7 +2222,10 @@ function ns.commitChatDecision(decision)
             lastShown[decision.senderKey] = bucket
             throttleSenders = throttleSenders + 1
         end
-        bucket[decision.msgKey] = { at = GetTime(), epoch = time() }
+        -- The day is kept with the epoch, and read back when a repeat of the
+        -- next day opens its entry: the Journal files an entry under today and
+        -- must date it from today too.
+        bucket[decision.msgKey] = { at = GetTime(), epoch = time(), day = date("%Y-%m-%d") }
         throttleWrites = throttleWrites + 1
         if throttleWrites >= SPAM_PURGE_EVERY or throttleSenders > SPAM_THROTTLE_MAX then
             throttleWrites = 0
@@ -2258,6 +2262,7 @@ function ns.commitChatDecision(decision)
         ns.logBlock(decision.logType, decision.sender, decision.msg, nil, nil, {
             maskedRepeat = true,
             firstEpoch = decision.shownEpoch,
+            firstDay = decision.shownDay,
         })
     end
 end
@@ -2966,10 +2971,10 @@ local function noteShownArrival(blockType, sourceName, message)
 end
 ns.noteShownArrival = noteShownArrival
 
--- `options` carries what only the anti-spam needs: `maskedRepeat`, and
--- `firstEpoch`, the moment the copy that WAS shown arrived. The count reads as
--- the number of times the line arrived (decision 132, Q2), so the first hidden
--- copy opens its entry at two.
+-- `options` carries what only the anti-spam needs: `maskedRepeat`, `firstEpoch`,
+-- the moment the copy that WAS shown arrived, and `firstDay`, the day it arrived
+-- on. The count reads as the number of times the line arrived (decision 132,
+-- Q2), so the first hidden copy opens its entry at two.
 logBlock = function(blockType, sourceName, message, guid, keyword, options)
     if not SanctuaryDB then return end
     if not SanctuaryDB.logging.enabled then return end
@@ -3044,7 +3049,17 @@ logBlock = function(blockType, sourceName, message, guid, keyword, options)
     -- the person actually read, which is what makes the range on screen say
     -- something -- it opened when they saw it, not when Sanctuary started
     -- hiding it.
+    --
+    -- Unless that copy belongs to another day. The key above is bounded to
+    -- today, so an entry dated from yesterday would sit in today's bag with a
+    -- range spanning the night -- which the merge rule says cannot happen. With
+    -- the longest window on offer, a line shown at 23:58 and repeated at 00:02
+    -- is exactly that case. The day of the shown copy is carried in with it
+    -- rather than derived here: the caller read it from the same clock that
+    -- built the key.
     local firstEpoch = (type(options) == "table" and tonumber(options.firstEpoch)) or time()
+    local firstDay = type(options) == "table" and options.firstDay or nil
+    if firstDay and firstDay ~= today then firstEpoch = time() end
     local entry = {
         t     = firstEpoch,
         d     = date("%Y-%m-%d %H:%M:%S", firstEpoch),
