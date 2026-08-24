@@ -8733,6 +8733,106 @@ do
     ns.refreshUI()
 end
 
+-- A.2 -- the bar on the right is a lift, not a mark. Decision 134 asks for an
+-- "ascenseur visible et fonctionnel", and step D.1 of the session sends the
+-- tester down the home screen "with the wheel or the bar on the right": what the
+-- bar does when it is pulled is a step of a session that costs Vincent three
+-- quarters of an hour, so it is proved here and not there. What stood before was
+-- one flat frame the height of the window -- the same trait at the top of the
+-- screen and at the bottom of it -- and nothing at all happened when it was
+-- dragged.
+do
+    local keptScreen, keptCursor = UIParent.GetHeight, GetCursorPosition
+    UIParent.GetHeight = function() return 768 end
+    SanctuaryDB.filters.preset = "custom"
+    SanctuaryDB.uiSize = { 500, 0 }
+    _G["SanctuaryTab_protection"]:Click()
+    ns.refreshUI()
+
+    local scroll = _G.SanctuaryContentScroll
+    local bar, thumb = scroll.bar, scroll.thumb
+    local viewport = scroll:GetHeight() or 0
+    local range = (scroll.child:GetHeight() or 0) - viewport
+    check(range > 24, "the unfolded home screen is taller than its window at 500 px and 768 units")
+    equal(bar:IsShown(), true, "so the bar is there")
+    -- The track is the window it stands beside. The content area of the main
+    -- window is resized with a plain `SetSize`, so a track that only follows
+    -- `SetViewportSize` kept the 820 px it was built at inside a viewport of
+    -- 380: four hundred pixels of piste below the bottom edge of the window,
+    -- and a thumb travelling down a track a person cannot see the end of.
+    equal(bar:GetHeight(), viewport,
+        "the track is as tall as the window, not as tall as it was built")
+    -- Everything that takes the mouse on this bar is a child of the track, and
+    -- the track is hidden the moment the content fits: a screen with nothing to
+    -- scroll gives the clicks back to whatever is drawn under it.
+    equal(thumb:GetParent(), bar, "the thumb is inside the track")
+    equal(bar.pageUp:GetParent(), bar, "the half of the track above it as well")
+    equal(bar.pageDown:GetParent(), bar, "and the half below")
+    equal(thumb.__mouseEnabled, true, "the thumb takes the mouse")
+    check((bar:GetWidth() or 0) <= 10,
+        "and the whole column that does stays inside the margin the screens keep "
+            .. "clear on their right (" .. tostring(bar:GetWidth()) .. " px)")
+
+    -- The thumb stands for the share of the screen on show, and it starts at
+    -- the top of the track because that is where the screen is being read.
+    check((thumb:GetHeight() or 0) < (bar:GetHeight() or 0),
+        "the thumb is shorter than its track (" .. tostring(thumb:GetHeight())
+            .. " of " .. tostring(bar:GetHeight()) .. ")")
+    local _, _, _, _, topY = thumb:GetPoint()
+    equal(topY, 0, "and it is at the top of it while the screen is read from the top")
+    local travel = (bar:GetHeight() or 0) - (thumb:GetHeight() or 0)
+    check(travel > 0, "so it has somewhere to travel")
+
+    -- Pulled half way down: the content comes with it, and the two ways of
+    -- saying where the view is agree.
+    GetCursorPosition = function() return 0, 500 end
+    thumb:GetScript("OnMouseDown")(thumb)
+    GetCursorPosition = function() return 0, 500 - travel / 2 end
+    thumb:GetScript("OnUpdate")(thumb, 0)
+    check((scroll.offset or 0) > 0, "pulling the thumb down scrolls the screen down")
+    equal(scroll:GetVerticalScroll(), scroll.offset, "and the frame is where the offset says")
+    check(math.abs(scroll.offset - range / 2) < 1,
+        "half the track is half the screen (" .. tostring(scroll.offset)
+            .. " of " .. tostring(range) .. ")")
+    local _, _, _, _, halfY = thumb:GetPoint()
+    check(math.abs(-halfY - travel / 2) < 1, "and the thumb is half way down its track")
+
+    -- Pulled past the end: the bottom of the screen and the bottom of the track
+    -- are the same place, and neither goes further.
+    GetCursorPosition = function() return 0, 500 - travel * 4 end
+    thumb:GetScript("OnUpdate")(thumb, 0)
+    equal(scroll.offset, range, "pulled to the end, the screen is at its bottom")
+    equal(scroll:GetVerticalScroll(), range, "the frame with it")
+    local _, _, _, _, endY = thumb:GetPoint()
+    check(math.abs(-endY - travel) < 0.001, "and the thumb at the bottom of its track")
+    thumb:GetScript("OnDragStop")(thumb)
+    equal(thumb:GetScript("OnUpdate"), nil, "letting the thumb go stops the follow")
+
+    -- The wheel and the bar are one movement seen twice.
+    scroll:GetScript("OnMouseWheel")(scroll, 1)
+    equal(scroll.offset, range - 24, "a notch of wheel up is a notch of screen up")
+    equal(scroll:GetVerticalScroll(), scroll.offset, "the frame with it")
+    local _, _, _, _, wheelY = thumb:GetPoint()
+    check(wheelY > endY, "and the thumb came back up the track with it")
+
+    -- And clicking the track pages, from either end.
+    scroll:GetScript("OnMouseWheel")(scroll, 40)
+    equal(scroll.offset, 0, "the wheel goes back to the top of the screen and stops there")
+    local page = math.min(range, math.max(24, viewport - 24))
+    bar.pageDown:GetScript("OnMouseDown")(bar.pageDown)
+    equal(scroll.offset, page, "a click in the track under the thumb advances a page")
+    equal(scroll:GetVerticalScroll(), scroll.offset, "the frame with it")
+    bar.pageUp:GetScript("OnMouseDown")(bar.pageUp)
+    equal(scroll.offset, 0, "a click above it comes back one")
+    equal(scroll:GetVerticalScroll(), 0, "the frame with it")
+
+    GetCursorPosition = keptCursor
+    UIParent.GetHeight = keptScreen
+    SanctuaryDB.filters.preset = "all"
+    SanctuaryDB.uiSize = nil
+    ns.refreshUI()
+end
+
 -- A.5 -- clicking beside the drawer closes it in silence.
 do
     ns.OpenPanel("allowed")
@@ -8967,13 +9067,22 @@ do
         check(child > viewport, "the home screen is taller than the window at " .. screen
             .. " (" .. child .. " over " .. viewport .. ")")
         equal(scroll.bar:IsShown(), true, "so it has a bar to say so at " .. screen)
+        equal(scroll.bar:GetHeight(), viewport,
+            "a track exactly as tall as the window at " .. screen)
+        -- And a thumb that says how much of the screen is on show. Whether it
+        -- can be pulled, and where it lands, is the A.2 block above; here it is
+        -- that a lift exists on every screen the window opens on.
+        check((scroll.thumb:GetHeight() or 0) < (scroll.bar:GetHeight() or 0),
+            "with a thumb shorter than its own track at " .. screen
+                .. " (" .. tostring(scroll.thumb:GetHeight()) .. " of "
+                .. tostring(scroll.bar:GetHeight()) .. ")")
         -- The tester is the last row of the screen: what matters now is not that
-        -- it is on show, it is that the bar goes far enough down to reach it.
-        -- Its own anchor, plus the padding the tab frames are offset by and the
-        -- height of the field itself.
+        -- it is on show, it is that it is inside the height the bar scrolls
+        -- through. Its own anchor, plus the padding the tab frames are offset by
+        -- and the height of the field itself, against the height of the content.
         local _, _, _, _, testerY = _G.SanctuaryTestInput:GetPoint()
         check(18 - (testerY or 0) + 24 <= child,
-            "and the bar reaches the tester at the bottom of it at " .. screen)
+            "and the tester is inside the height that scrolls at " .. screen)
     end
 
     -- The far end of the range: 954 units is the tallest screen on which the two

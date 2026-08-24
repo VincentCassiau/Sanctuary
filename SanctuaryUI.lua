@@ -662,8 +662,62 @@ local function newChip(parent)
     return chip
 end
 
--- Scroll: a thin bar of our own, hidden when the content fits, and a wheel that
+-- Scroll: a bar of our own, hidden when the content fits, and a wheel that
 -- works whether or not the bar is there.
+--
+-- One notch of wheel, the width of the whole bar, and the shortest the thumb may
+-- get on a very long screen. The bar is the one thing this window puts OVER the
+-- right edge of a screen, so its width is bounded by the margin every layout
+-- here keeps clear on that side -- ten pixels on the Journal rows, the
+-- Diagnostics columns and the export box, eighteen on the home screen. Widen it
+-- past that and it starts eating clicks meant for whatever is underneath.
+local SCROLL_STEP, SCROLL_BAR_WIDTH, SCROLL_THUMB_MIN = 24, 8, 24
+
+-- Where the content goes, from wherever it is asked: the wheel, the thumb being
+-- pulled, a click in the track. One place, so `offset`, the frame's own vertical
+-- scroll and the thumb can never end up saying three different things about the
+-- same screen.
+local function scrollTo(scroll, offset)
+    local range = math.max(0, (scroll.child:GetHeight() or 0) - (scroll:GetHeight() or 0))
+    scroll.offset = math.min(range, math.max(0, offset or 0))
+    scroll:SetVerticalScroll(scroll.offset)
+    scroll:RefreshBar()
+end
+
+-- Follows the mouse while the thumb is held. Counted from where the drag
+-- started, not from where the bar is on screen: `GetCursorPosition` answers in
+-- screen pixels and a frame's own coordinates are one scale away from them, so
+-- the difference between two readings -- brought back through that scale -- is
+-- the only measure that needs no absolute geometry at all, and the one that
+-- cannot drift if the window is moved mid-drag.
+local function dragScrollThumb(thumb)
+    local scroll = thumb.scroll
+    if not scroll or not thumb.dragCursorY then return end
+    local _, cursorY = GetCursorPosition()
+    if not cursorY then return end
+    local scale = (thumb.GetEffectiveScale and thumb:GetEffectiveScale()) or 1
+    if scale == 0 then scale = 1 end
+    local travel = math.max(0, (scroll.bar:GetHeight() or 0) - (thumb:GetHeight() or 0))
+    local range = math.max(0, (scroll.child:GetHeight() or 0) - (scroll:GetHeight() or 0))
+    if travel <= 0 or range <= 0 then return end
+    -- Screen Y grows upwards, so the thumb going DOWN the track is a drop, and
+    -- a drop is a bigger offset: the content comes up as the thumb goes down.
+    local dropped = (thumb.dragCursorY - cursorY) / scale
+    scrollTo(scroll, (thumb.dragOffset or 0) + dropped * range / travel)
+end
+
+local function startScrollDrag(thumb)
+    local _, cursorY = GetCursorPosition()
+    thumb.dragCursorY = cursorY
+    thumb.dragOffset = (thumb.scroll and thumb.scroll.offset) or 0
+    thumb:SetScript("OnUpdate", dragScrollThumb)
+end
+
+local function stopScrollDrag(thumb)
+    thumb:SetScript("OnUpdate", nil)
+    thumb.dragCursorY = nil
+end
+
 local function newScroll(parent, name, width, height)
     local scroll = CreateFrame("ScrollFrame", name, parent)
     scroll:SetSize(width, height)
@@ -672,19 +726,69 @@ local function newScroll(parent, name, width, height)
     scroll:SetScrollChild(child)
     scroll.child = child
 
+    -- The track. Everything that takes the mouse here is a child of it, and it
+    -- is hidden whenever the content fits, so a screen with nothing to scroll
+    -- gives the mouse back to what is drawn under the bar.
     local bar = CreateFrame("Frame", nil, scroll, "BackdropTemplate")
-    bar:SetSize(4, height)
+    bar:SetSize(SCROLL_BAR_WIDTH, height)
     bar:SetPoint("TOPRIGHT", scroll, "TOPRIGHT", 0, 0)
-    applyBackdrop(bar, C.border, nil)
+    applyBackdrop(bar, C.tile, nil)
     bar:Hide()
     scroll.bar = bar
 
+    -- The thumb. What stood here was one flat frame the height of the window:
+    -- it said "there is more below" and nothing else -- not how much more, not
+    -- where in the screen one had got to -- and it did not move the content when
+    -- it was pulled. The wheel was the only way down.
+    local thumb = CreateFrame("Frame", nil, bar, "BackdropTemplate")
+    thumb:SetSize(SCROLL_BAR_WIDTH, SCROLL_THUMB_MIN)
+    thumb:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
+    thumb:SetFrameLevel((bar:GetFrameLevel() or 0) + 1)
+    applyBackdrop(thumb, C.border, nil)
+    thumb.scroll = scroll
+    thumb:EnableMouse(true)
+    thumb:RegisterForDrag("LeftButton")
+    -- Both pairs, and both ends idempotent: the press is where a person expects
+    -- the thumb to start following, and the drag stop is the release WoW
+    -- guarantees wherever the mouse has got to by then -- a button let go beside
+    -- the bar is not an OnMouseUp on it, and that is a thumb left stuck to the
+    -- pointer for the rest of the session.
+    thumb:SetScript("OnMouseDown", startScrollDrag)
+    thumb:SetScript("OnMouseUp", stopScrollDrag)
+    thumb:SetScript("OnDragStart", startScrollDrag)
+    thumb:SetScript("OnDragStop", stopScrollDrag)
+    thumb:SetScript("OnHide", stopScrollDrag)
+    scroll.thumb = thumb
+    bar.thumb = thumb
+
+    -- Clicking the track pages. The two halves are frames anchored to the ends
+    -- of the thumb rather than one frame and a cursor reading: "above" and
+    -- "below" then need no geometry at all, and neither half exists -- nor takes
+    -- a click -- when the thumb is already at that end of the track.
+    local function newPageZone(direction)
+        -- Both edges are anchored, so the zone is exactly as wide as the track
+        -- and as tall as the room left beside the thumb: it has no size of its
+        -- own to keep in step with anything.
+        local zone = CreateFrame("Frame", nil, bar)
+        zone:EnableMouse(true)
+        zone:SetScript("OnMouseDown", function()
+            -- A page, less one notch of wheel: a line of what was being read
+            -- stays on the screen across the jump.
+            local page = math.max(SCROLL_STEP, (scroll:GetHeight() or 0) - SCROLL_STEP)
+            scrollTo(scroll, (scroll.offset or 0) + direction * page)
+        end)
+        return zone
+    end
+    bar.pageUp = newPageZone(-1)
+    bar.pageUp:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
+    bar.pageUp:SetPoint("BOTTOMRIGHT", thumb, "TOPRIGHT", 0, 0)
+    bar.pageDown = newPageZone(1)
+    bar.pageDown:SetPoint("TOPLEFT", thumb, "BOTTOMLEFT", 0, 0)
+    bar.pageDown:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0)
+
     scroll:EnableMouseWheel(true)
     scroll:SetScript("OnMouseWheel", function(self, delta)
-        local range = math.max(0, (self.child:GetHeight() or 0) - (self:GetHeight() or 0))
-        local offset = math.min(range, math.max(0, (self.offset or 0) - delta * 24))
-        self.offset = offset
-        self:SetVerticalScroll(offset)
+        scrollTo(self, (self.offset or 0) - delta * SCROLL_STEP)
     end)
 
     function scroll:RefreshBar()
@@ -698,6 +802,34 @@ local function newScroll(parent, name, width, height)
             self:SetVerticalScroll(reachable)
         end
         if range > 1 then self.bar:Show() else self.bar:Hide() end
+
+        -- The track is the window, and it is measured here rather than trusted
+        -- from wherever the frame was last resized: the content area of the main
+        -- window is resized with a plain `SetSize` on every pass of
+        -- `applyViewport`, so the track kept the 820 px it was built at inside a
+        -- viewport of 380 -- a piste running four hundred pixels below the
+        -- bottom edge of the window (a ScrollFrame clips its scroll child, not
+        -- its other children), and a thumb placed along it that would have left
+        -- the window before reaching the end of the screen.
+        local content = self.child:GetHeight() or 0
+        local visible = self:GetHeight() or 0
+        local track = visible
+        self.bar:SetHeight(track)
+
+        -- How much of the screen is on show, and where in it one is standing.
+        -- A thumb as tall as its own track says "this is all of it", which is
+        -- what the flat bar used to say at every offset of every screen.
+        local thumbHeight = track
+        if content > visible and content > 0 then thumbHeight = track * visible / content end
+        thumbHeight = math.max(SCROLL_THUMB_MIN, math.min(track, thumbHeight))
+        local travel = math.max(0, track - thumbHeight)
+        local reached = 0
+        if reachable > 0 then
+            reached = travel * math.min(1, (self.offset or 0) / reachable)
+        end
+        self.thumb:SetHeight(thumbHeight)
+        self.thumb:ClearAllPoints()
+        self.thumb:SetPoint("TOPLEFT", self.bar, "TOPLEFT", 0, -reached)
     end
 
     -- A viewport that follows its container, on both axes: nothing in this
@@ -709,7 +841,10 @@ local function newScroll(parent, name, width, height)
         local boundedHeight = math.max(40, newHeight or height)
         self:SetSize(boundedWidth, boundedHeight)
         self.child:SetWidth(boundedWidth)
-        self.bar:SetHeight(boundedHeight)
+        -- The track follows from `RefreshBar` and from nowhere else: half the
+        -- frames here are resized through this method and half with a plain
+        -- `SetSize`, and a track that only two of the five ever hear about is
+        -- how one ended up twice the height of its own window.
         self:RefreshBar()
     end
     return scroll
