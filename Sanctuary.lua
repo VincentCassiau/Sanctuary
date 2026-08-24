@@ -2227,6 +2227,15 @@ function ns.commitChatDecision(decision)
             throttleWrites = 0
             purgeThrottle(GetTime())
         end
+        -- Shown, so nothing is blocked, nothing is announced and no entry is
+        -- opened. One thing is owed all the same: the "xN" of a folded entry
+        -- counts how many times the message ARRIVED (decision 132, Q2), and a
+        -- copy shown again once the window has run out is one of those
+        -- arrivals. It is added to the day's entry where there is one, and it
+        -- never creates one -- an entry exists only where a copy was hidden.
+        if ns.noteShownArrival then
+            ns.noteShownArrival(decision.logType, decision.sender, decision.msg)
+        end
         return
     end
 
@@ -2926,6 +2935,36 @@ local function accountForBlock(blockType, sourceText, maskedRepeat)
             COLOR_HIGHLIGHT .. (sourceText or "?") .. COLOR_RESET))
     end
 end
+
+-- One arrival of a line the anti-spam let through, counted where the day has
+-- already folded that line into an entry -- and nowhere else.
+--
+-- The count of a folded entry says how many times the message arrived (decision
+-- 132, Q2), and a copy shown again once the window has run out is one of those
+-- arrivals: without this it would be the only one missing, one per window for
+-- as long as the person keeps at it. It is not a block, so it opens no entry,
+-- moves no session counter, prints nothing and records nothing: everything a
+-- shown copy costs is one number on a line that already exists.
+local function noteShownArrival(blockType, sourceName, message)
+    if not SanctuaryDB or type(SanctuaryDB.log) ~= "table" then return false end
+    if not SanctuaryDB.logging or not SanctuaryDB.logging.enabled then return false end
+
+    local sourceText = safeText(sourceName, nil, nil)
+    local characterKey = sourceText and normalizeCharacterKey(sourceText)
+    if not characterKey then return false end
+    local msgKey = ns.normalizeSpamText(safeText(message, nil, nil)) or ""
+    if msgKey == "" then return false end
+
+    local today = date("%Y-%m-%d")
+    ensureJournalIndex(today)
+    local existing = mergeIndex[today .. "\0" .. blockType .. "\0" .. characterKey .. "\0" .. msgKey]
+    if not existing then return false end
+
+    existing.count = (existing.count or 1) + 1
+    existing.t2 = time()
+    return true
+end
+ns.noteShownArrival = noteShownArrival
 
 -- `options` carries what only the anti-spam needs: `maskedRepeat`, and
 -- `firstEpoch`, the moment the copy that WAS shown arrived. The count reads as

@@ -5077,6 +5077,46 @@ do
     resetModelState()
 end
 
+-- The "xN" counts the times the message ARRIVED (decision 132, Q2), and a copy
+-- shown again once the window has run out is one of those arrivals. Five
+-- arrivals of one line -- shown, hidden, hidden, shown again past the window,
+-- hidden -- read as one entry counted five times.
+do
+    armAntiSpam(300)
+    SanctuaryDB.debugEnabled = true
+    ns.resetDebugLog()
+    local message = freshMessage()
+    local logBefore = #SanctuaryDB.log
+    local blockedBefore = SanctuaryCharDB.sessionStats.blockedCount or 0
+
+    equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "the first copy"), false,
+        "the first copy is shown")
+    equal(#SanctuaryDB.log, logBefore,
+        "a shown copy with no entry for the day opens none")
+
+    now = now + 10
+    equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "the first repeat"), true,
+        "the first repeat is hidden")
+    now = now + 10
+    equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "the second repeat"), true,
+        "and so is the second")
+
+    now = now + 281
+    equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "the copy past the window"), false,
+        "the copy past the window is shown again")
+    now = now + 10
+    equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "the last repeat"), true,
+        "and the repeat after it is hidden")
+
+    equal(#SanctuaryDB.log - logBefore, 1, "the five arrivals are one entry")
+    local entry = SanctuaryDB.log[#SanctuaryDB.log]
+    equal(entry.count, 5, "counted five times, the shown copies included")
+    equal(countDebug("MASK_SPAM_REPEAT"), 3, "with one recording per hidden copy, and no more")
+    equal(SanctuaryCharDB.sessionStats.blockedCount or 0, blockedBefore,
+        "and not one of the five is counted as a block")
+    SanctuaryDB.debugEnabled = false
+end
+
 resetModelState()
 
 end
