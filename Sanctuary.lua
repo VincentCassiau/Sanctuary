@@ -2877,6 +2877,13 @@ local lastLogTime = 0
 -- tomorrow is a new entry, so a range never spans a night and "is this person
 -- still at it" stays readable at a glance.
 --
+-- The bound is the day, not the session. The log lives in SavedVariables and
+-- comes back after a /reload or a reconnection; the index does not, so it is
+-- READ BACK from the entries the day already holds instead of restarting empty.
+-- Without that, the first repeat after a loading screen opens a second line for
+-- a message the journal is already counting -- and the person reconnects
+-- several times a day.
+--
 -- Two runtime tables, and neither ever reaches SavedVariables: the entry of a
 -- key, and the key of an entry. The second is what lets rotation drop exactly
 -- the entries it evicted. Emptying the whole index at each rotation would leave
@@ -2889,22 +2896,69 @@ local indexedLog, indexedCount, indexedDay = nil, 0, nil
 -- door.
 local journalAlerted = { almost = false, full = false }
 
+-- Forgets the index AND the day it described, so every caller lands on the one
+-- re-arming path below rather than on an index left empty behind it.
 local function forgetJournalIndex(log)
     mergeIndex, mergeKeyOf = {}, {}
     indexedLog, indexedCount, indexedDay = log, log and #log or 0, nil
 end
 
+-- Arms the index on a day, which means reading the log back: what that day
+-- already holds goes on being merged into, whatever happened to the session in
+-- between.
+--
+-- One pass, walked from the end and stopped at the first entry of another day.
+-- The log is written in order, so what is not at the tail is not today's; the
+-- walk is never made per message, only when the index is (re)armed -- at load,
+-- when the table is replaced, and at the turn of the day, where it stops on the
+-- first entry read.
+--
+-- The key is built exactly as `logBlock` builds it, from the two halves an entry
+-- stores separately for display, and `mergeKeyOf` is filled with it: rotation
+-- reads that one to drop exactly the entries it evicted. An entry is dated from
+-- the day its key belongs to (see `logBlock`), so the date read back here IS the
+-- day of the key -- there is no second rule to keep in step.
+--
+-- Duplicates an earlier build already wrote: a key keeps the MOST RECENT entry,
+-- which is the first one met walking back. The older ones simply stop being
+-- merged into. Nothing is rewritten on the way -- an entry with no `count` reads
+-- as one and takes its second occurrence as any other would.
+local function armJournalIndex(log, today)
+    mergeIndex, mergeKeyOf = {}, {}
+    indexedDay = today
+    if type(log) ~= "table" or type(today) ~= "string" then return end
+    for i = #log, 1, -1 do
+        local entry = log[i]
+        local day = type(entry) == "table" and type(entry.d) == "string" and entry.d:sub(1, 10)
+        if day ~= today then break end
+        local name = type(entry.name) == "string" and entry.name or ""
+        local realm = type(entry.realm) == "string" and entry.realm or ""
+        local characterKey = name ~= "" and type(entry.type) == "string"
+            and normalizeCharacterKey(realm ~= "" and name .. "-" .. realm or name)
+        local msgKey = characterKey and ns.normalizeSpamText(entry.msg)
+        if msgKey and msgKey ~= "" then
+            local mergeKey = today .. "\0" .. entry.type .. "\0" .. characterKey .. "\0" .. msgKey
+            if mergeIndex[mergeKey] == nil then
+                mergeIndex[mergeKey] = entry
+                mergeKeyOf[entry] = mergeKey
+            end
+        end
+    end
+end
+
 -- Three ways the index stops describing the log, read here rather than hooked
--- from everywhere: the table itself was replaced, entries went away behind our
--- back, or the day turned over and yesterday's keys can no longer match.
+-- from everywhere: the table itself was replaced -- a session loading its
+-- SavedVariables, first of all -- entries went away behind our back, or the day
+-- turned over and yesterday's keys can no longer match. Forgetting clears the
+-- day too, so all three come out here, where the index is armed on the day
+-- asked for and filled from the log.
 local function ensureJournalIndex(today)
     local log = SanctuaryDB and SanctuaryDB.log
     if log ~= indexedLog or (log and #log < indexedCount) then
         forgetJournalIndex(log)
     end
     if today ~= indexedDay then
-        mergeIndex, mergeKeyOf = {}, {}
-        indexedDay = today
+        armJournalIndex(log, today)
     end
 end
 

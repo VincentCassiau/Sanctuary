@@ -9355,6 +9355,125 @@ resetModelState()
 
 end)()
 
+-- ---------------------------------------------------------------------------
+-- The day's fold survives a /reload
+-- ---------------------------------------------------------------------------
+
+-- A /reload -- and a reconnection -- rebuilds the Lua state and keeps the
+-- SavedVariables: the journal comes back with the day's entries while the merge
+-- index comes back empty. Loading the chunk a second time into a fresh namespace,
+-- over the same `SanctuaryDB`, IS that. Before the index was read back from the
+-- log, the first repeat after a loading screen opened a second line for a
+-- message the day was already counting -- three reconnections, three counters,
+-- three ranges for one announcement.
+--
+-- Last in the file on purpose: the second chunk registers its own event frame
+-- and its own chat filters, and nothing must be tested through those afterwards.
+do
+
+resetModelState()
+SanctuaryDB.logging.enabled = true
+ns.clearJournal()
+setHarnessDay("2026-08-24")
+
+local PSEUDO, LINE = "Reloader-TestRealm", "wts my stuff"
+
+ns.logBlock("channel", PSEUDO, LINE, nil, nil)
+now = now + 5
+ns.logBlock("channel", PSEUDO, LINE, nil, nil)
+equal(#SanctuaryDB.log, 1, "before the reload the day holds one entry")
+equal(SanctuaryDB.log[1].count, 2, "counted twice")
+local openedAt, openedOn = SanctuaryDB.log[1].t, SanctuaryDB.log[1].d
+
+local reloaded = {}
+assert(loadfile(repoRoot .. "/Locales.lua"))("Sanctuary", reloaded)
+assert(loadfile(repoRoot .. "/Sanctuary.lua"))("Sanctuary", reloaded)
+
+now = now + 10
+reloaded.logBlock("channel", PSEUDO, LINE, nil, nil)
+equal(#SanctuaryDB.log, 1, "the first repeat after the reload folds into the same entry")
+equal(SanctuaryDB.log[1].count, 3, "and adds one to the count")
+equal(SanctuaryDB.log[1].t, openedAt, "the entry still opens where it opened")
+equal(SanctuaryDB.log[1].d, openedOn, "and still shows the date it showed")
+equal(SanctuaryDB.log[1].t2, time(), "with the range grown to the arrival that came in")
+
+-- The throttle, itself in memory, restarts empty: the next copy is shown again,
+-- which is the accepted behaviour. That arrival is one of the ones the "xN"
+-- counts (decision 132, Q2), and it now lands on the entry the day already
+-- holds instead of on nothing.
+now = now + 10
+check(reloaded.noteShownArrival("channel", PSEUDO, LINE),
+    "a copy shown after the reload finds the day's entry")
+equal(SanctuaryDB.log[1].count, 4, "and is counted on it")
+
+-- The day is still the bound: reloading does not make yesterday's line today's.
+setHarnessDay("2026-08-25")
+now = now + 10
+reloaded.logBlock("channel", PSEUDO, LINE, nil, nil)
+equal(#SanctuaryDB.log, 2, "the same line the next day still opens a new entry")
+equal(SanctuaryDB.log[2].count, nil, "which counts as one, and says nothing about it")
+
+-- Duplicates the current build has already written into somebody's journal: the
+-- key keeps the most recent entry, the older ones stop moving, and neither is
+-- rewritten -- the one with no `count` reads as one and goes to two.
+setHarnessDay("2026-08-26")
+reloaded.clearJournal()
+SanctuaryDB.log[1] = { t = time(), d = "2026-08-26 12:00:00", type = "channel",
+    name = "Twice", realm = "TestRealm", msg = "same old line", count = 3 }
+SanctuaryDB.log[2] = { t = time(), d = "2026-08-26 12:00:00", type = "channel",
+    name = "Twice", realm = "TestRealm", msg = "same old line" }
+now = now + 10
+reloaded.logBlock("channel", "Twice-TestRealm", "same old line", nil, nil)
+equal(#SanctuaryDB.log, 2, "an inherited duplicate does not open a third entry")
+equal(SanctuaryDB.log[1].count, 3, "the older of the two stops moving")
+equal(SanctuaryDB.log[2].count, 2, "and the most recent one takes the occurrence, counted from one")
+
+-- Rotation reads back what the walk indexed. An entry handed a key by the walk
+-- and then evicted must stop collecting occurrences -- and the ones that stay
+-- must go on folding, which is the whole point on a full journal.
+setHarnessDay("2026-08-27")
+reloaded.clearJournal()
+SanctuaryDB.logging.maxEntries = 3
+for index, line in ipairs({ "the evicted line", "the next one out", "the surviving line" }) do
+    SanctuaryDB.log[index] = { t = time(), d = "2026-08-27 12:00:00", type = "channel",
+        name = "Rotator", realm = "TestRealm", msg = line }
+end
+now = now + 10
+reloaded.logBlock("channel", "Rotator-TestRealm", "one line too many", nil, nil)
+equal(#SanctuaryDB.log, 3, "a fourth line rotates the oldest of the three read back out")
+equal(SanctuaryDB.log[1].msg, "the next one out", "and it is the oldest that goes")
+now = now + 10
+reloaded.logBlock("channel", "Rotator-TestRealm", "the surviving line", nil, nil)
+equal(#SanctuaryDB.log, 3, "a line still in the journal goes on folding after the reload")
+equal(SanctuaryDB.log[2].count, 2, "with one more occurrence on it")
+now = now + 10
+reloaded.logBlock("channel", "Rotator-TestRealm", "the evicted line", nil, nil)
+equal(SanctuaryDB.log[3].msg, "the evicted line", "the evicted line comes back")
+equal(SanctuaryDB.log[3].count, nil,
+    "as a new entry, not one more occurrence of a line nobody can reach")
+SanctuaryDB.logging.maxEntries = 5000
+
+-- An entry that carries no message is not indexed by the walk either.
+setHarnessDay("2026-08-28")
+reloaded.clearJournal()
+SanctuaryDB.log[1] = { t = time(), d = "2026-08-28 12:00:00", type = "duel",
+    name = "Knocker", realm = "TestRealm" }
+now = now + 10
+reloaded.logBlock("duel", "Knocker-TestRealm", nil, nil, nil)
+equal(#SanctuaryDB.log, 2, "two duels read back from the log stay two entries")
+
+-- Emptying the journal after a reload still empties what folds into it.
+reloaded.clearJournal()
+now = now + 10
+reloaded.logBlock("channel", "Twice-TestRealm", "same old line", nil, nil)
+equal(#SanctuaryDB.log, 1, "after a clear the same line opens a new entry")
+equal(SanctuaryDB.log[1].count, nil, "counted once")
+
+setHarnessDay("2026-06-20")
+resetModelState()
+
+end
+
 end)()
 
 if failures > 0 then
