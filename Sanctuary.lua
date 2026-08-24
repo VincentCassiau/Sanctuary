@@ -2023,6 +2023,238 @@ end
 ns.classifyName = classifyName
 ns.decideChat = decideChat
 
+-- ----------------------------------------------------------------------------
+-- Anti-spam of the public channels -- around the decision, never inside it
+-- ----------------------------------------------------------------------------
+
+-- The three steps of the core answer "may this person reach me". This block
+-- answers a different question, and only once the first has already said yes:
+-- "have I just read this exact line from this exact stranger". So it is written
+-- around `decideChat`, which is called here unchanged and exactly once.
+--
+-- WoW hands one message to N consumers: the registered chat filter is invoked
+-- once per ChatFrame, and the event handler is invoked once. The filter decides
+-- whether the line shows and must stay free of side effects; the handler is the
+-- one that journals. Splitting the work that way is what the two functions
+-- published here are:
+--
+--   * `resolveChatDecision` -- pure but for its memo. Every consumer may call it,
+--     in any order, and gets the same verdict for the same physical message.
+--   * `commitChatDecision` -- the handler alone calls it, once. It is what moves
+--     the throttle forward, writes the debug entry and the Journal line.
+--
+-- Scoped block, published on `ns`: the chunk is close to Lua's 200-register
+-- ceiling.
+do
+
+-- The memo. Five seconds is far longer than the frame a message is dispatched
+-- in and far shorter than any window the person can pick, and sixty-four slots
+-- is more physical messages than a frame ever carries.
+local SPAM_MEMO_TTL, SPAM_MEMO_SLOTS = 5, 64
+-- What the throttle keeps, and for how long: a day is the longest window on
+-- offer, so a record older than that can never mask anything again.
+local SPAM_THROTTLE_TTL, SPAM_THROTTLE_MAX, SPAM_PURGE_EVERY = 86400, 5000, 200
+
+local memoSlots, memoByKey, memoNext = {}, {}, 1
+local lastShown, throttleSenders, throttleWrites = {}, 0, 0
+
+-- The one spelling of "the same message". Trim, and runs of blanks folded to
+-- one -- nothing else. Case, punctuation, colour codes and links are kept as
+-- they are: a spammer who changes a letter has written another line, and it is
+-- not this add-on's business to guess that two different sentences were meant
+-- to be one. Shared with the Journal, which merges on the same key.
+function ns.normalizeSpamText(text)
+    if type(text) ~= "string" then return nil end
+    return (text:gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " "))
+end
+
+local function purgeThrottle(now)
+    local kept = 0
+    for senderKey, bucket in pairs(lastShown) do
+        local empty = true
+        for msgKey, record in pairs(bucket) do
+            if (now - record.at) >= SPAM_THROTTLE_TTL then
+                bucket[msgKey] = nil
+            else
+                empty = false
+            end
+        end
+        if empty then lastShown[senderKey] = nil else kept = kept + 1 end
+    end
+    throttleSenders = kept
+
+    -- Last resort, and it has to exist: a city channel can hand over more
+    -- identities in an evening than anyone would want to keep, and an
+    -- unbounded table in a client that never restarts is a leak. The identity
+    -- whose newest record is the oldest goes first.
+    while throttleSenders > SPAM_THROTTLE_MAX do
+        local oldestKey, oldestAt
+        for senderKey, bucket in pairs(lastShown) do
+            local newest = 0
+            for _, record in pairs(bucket) do
+                if record.at > newest then newest = record.at end
+            end
+            if not oldestAt or newest < oldestAt then oldestKey, oldestAt = senderKey, newest end
+        end
+        if not oldestKey then break end
+        lastShown[oldestKey] = nil
+        throttleSenders = throttleSenders - 1
+    end
+end
+
+-- The whole of the anti-spam verdict, and every condition it rests on, in the
+-- order they are asked. Answers nothing at all unless all of them hold.
+local function evaluateSpam(decision, msg, sender)
+    -- Public channels only (decision 129), and only where the message was
+    -- going to show: `filter_off` on a channel means the person is not
+    -- filtering the channels, so nothing else in Sanctuary was going to touch
+    -- this line. Anything else -- a block, a whitelist, the player themselves,
+    -- the add-on switched off -- has already been decided and is left alone.
+    if decision.reason ~= "filter_off" then return end
+    if not ns.isAntiSpamEnabled() then return end
+    if type(sender) ~= "string" or sender == "" then return end
+    if type(msg) ~= "string" or msg == "" then return end
+    -- Guild, group, raid, Battle.net friends and both hand-written lists are
+    -- spared: an allowed person keeps the native behaviour of WoW, repeats
+    -- included.
+    if classifyName(sender).verdict ~= "unknown" then return end
+
+    local senderKey = normalizeCharacterKey(sender)
+    if not senderKey then return end
+    local msgKey = ns.normalizeSpamText(msg)
+    if not msgKey or msgKey == "" then return end
+
+    decision.senderKey, decision.msgKey = senderKey, msgKey
+    decision.sender, decision.msg = sender, msg
+
+    local bucket = lastShown[senderKey]
+    local record = bucket and bucket[msgKey]
+    -- The window runs from the copy that was SHOWN, and a hidden repeat does
+    -- not push it back: a spammer repeating every ten seconds must see the
+    -- line reappear on the hour it was promised, not never.
+    if record and (GetTime() - record.at) < ns.getAntiSpamInterval() then
+        decision.spam = "masked"
+        decision.hide = true
+        decision.shownEpoch = record.epoch
+    else
+        decision.spam = "show"
+    end
+end
+
+local function evaluate(row, msg, sender, lineID)
+    local block, reason, detail, gateOpen = decideChat(row.kind, sender)
+    local decision = {
+        hide = block, reason = reason, detail = detail, gateOpen = gateOpen,
+        logType = row.logType,
+        lineIDKnown = type(lineID) == "number" and lineID ~= 0,
+    }
+    if row.kind == "channel" then evaluateSpam(decision, msg, sender) end
+    return decision
+end
+
+-- What identifies one physical message. `lineID` is the eleventh payload
+-- argument of a chat event and is the same number for every consumer of the
+-- same message, which is exactly the identity wanted here.
+--
+-- With no lineID, the fallback keys on sender, text and the current frame time:
+-- the dispatch of one event is synchronous, so every consumer of a message
+-- reads the same `GetTime()`. Two identical messages from one sender inside a
+-- single frame then share a verdict -- which is the honest answer, since
+-- nothing in the payload tells them apart.
+local function memoKey(row, msg, sender, lineID)
+    if type(lineID) == "number" and lineID ~= 0 then
+        return row.event .. "\0" .. lineID
+    end
+    if type(sender) ~= "string" or type(msg) ~= "string" then return nil end
+    return row.event .. "\0" .. sender .. "\0" .. msg .. "\0" .. GetTime()
+end
+
+local function remember(key, decision, sender, msg)
+    local slot = memoSlots[memoNext]
+    if slot and memoByKey[slot.key] == slot then memoByKey[slot.key] = nil end
+    slot = { key = key, at = GetTime(), sender = sender, msg = msg, decision = decision }
+    memoSlots[memoNext] = slot
+    memoByKey[key] = slot
+    memoNext = memoNext % SPAM_MEMO_SLOTS + 1
+end
+
+-- One verdict per physical message, for every consumer and in any order.
+--
+-- The memo holds anti-spam verdicts and nothing else, and that narrowness is
+-- deliberate. Since the throttle only moves at the commit, recomputing before
+-- it gives the same answer anyway -- with one exception, which is the whole
+-- reason the memo exists: when the handler runs BEFORE a chat filter, the
+-- throttle has already been moved, and a filter recomputing then would hide a
+-- line the other chat windows have just shown. Everything else is recomputed on
+-- every call, so no consumer can ever be handed a verdict that a list edit has
+-- since made wrong.
+function ns.resolveChatDecision(row, msg, sender, lineID)
+    local key = (row.kind == "channel") and memoKey(row, msg, sender, lineID) or nil
+    if key then
+        local slot = memoByKey[key]
+        -- Re-checked against the message it was computed for: a client that
+        -- reuses a lineID, or a fallback key that happens to collide, must
+        -- recompute rather than answer for somebody else.
+        if slot and (GetTime() - slot.at) < SPAM_MEMO_TTL
+            and slot.sender == sender and slot.msg == msg then
+            return slot.decision
+        end
+    end
+
+    local decision = evaluate(row, msg, sender, lineID)
+    if key and decision.spam then remember(key, decision, sender, msg) end
+    return decision
+end
+
+-- The handler's half, and the handler's alone: everything with an effect on the
+-- world happens here, once per message, so a chat filter stays what Blizzard
+-- requires it to be -- a question with no answer of its own.
+function ns.commitChatDecision(decision)
+    if not decision or decision.committed then return end
+    decision.committed = true
+    if not decision.spam then return end
+
+    if decision.spam == "show" then
+        local bucket = lastShown[decision.senderKey]
+        if not bucket then
+            bucket = {}
+            lastShown[decision.senderKey] = bucket
+            throttleSenders = throttleSenders + 1
+        end
+        bucket[decision.msgKey] = { at = GetTime(), epoch = time() }
+        throttleWrites = throttleWrites + 1
+        if throttleWrites >= SPAM_PURGE_EVERY or throttleSenders > SPAM_THROTTLE_MAX then
+            throttleWrites = 0
+            purgeThrottle(GetTime())
+        end
+        return
+    end
+
+    -- Hidden. `lineIDKnown` is what a real recording will settle the lineID
+    -- contract with: it is documented, and nobody on this project has yet seen
+    -- it in a client.
+    debugLog("MASK_SPAM_REPEAT", {
+        kind = decision.logType,
+        sender = safeText(decision.sender, 200, "nil"),
+        normalized = decision.senderKey or "nil",
+        msg = safeText(decision.msg, 300, "nil"),
+        lineIDKnown = decision.lineIDKnown and true or false,
+        channelMode = isFilterOn("channelMode") or "none",
+        intervalSeconds = ns.getAntiSpamInterval(),
+    })
+    -- One writer for the Journal, the same one every block goes through. The
+    -- options say what a hidden repeat is not: it is not a new block to count,
+    -- and it is not a line to announce.
+    if ns.logBlock then
+        ns.logBlock(decision.logType, decision.sender, decision.msg, nil, nil, {
+            maskedRepeat = true,
+            firstEpoch = decision.shownEpoch,
+        })
+    end
+end
+
+end
+
 -- Export whitelist functions to namespace
 ns.isBNetWhitelisted = isBNetWhitelisted
 ns.invalidateWhitelist = invalidateWhitelist
@@ -3568,9 +3800,14 @@ end
 -- purpose: Blizzard's registry reads a filter's second return value as a
 -- replacement for the message text, so handing back `reason` alongside the
 -- verdict would rewrite what the person reads.
+--
+-- `select(9, ...)` is the eleventh payload argument, `lineID`: the vararg starts
+-- at the third. It names the physical message, so every chat window asking about
+-- one message gets one verdict. Nothing is written from here -- a filter is
+-- called once per ChatFrame and must stay a question.
 for _, row in ipairs(CHAT_KINDS) do
     row.filter = function(self, event, msg, sender, ...)
-        return (decideChat(row.kind, sender))
+        return (ns.resolveChatDecision(row, msg, sender, select(9, ...)).hide)
     end
 end
 
@@ -5441,14 +5678,24 @@ end
 -- optimisation.
 for _, row in ipairs(CHAT_KINDS) do
     handlers[row.event] = function(msg, sender, ...)
-        local block, reason, detail, gateOpen = decideChat(row.kind, sender)
+        -- The same verdict the chat filters read, and the only place it is
+        -- committed: the throttle moves here, and so do the debug entry and the
+        -- Journal line of a hidden repeat.
+        local decision = ns.resolveChatDecision(row, msg, sender, select(9, ...))
+        ns.commitChatDecision(decision)
+        local reason, detail = decision.reason, decision.detail
 
         -- Nothing at all, not even a debug entry: the add-on is off, or the
         -- player is talking to themselves. Neither decides anything about
         -- anybody, and neither ever did.
         if reason == "disabled" or reason == "self" then return end
 
-        local extra = { filterEnabled = gateOpen }
+        -- A repeat the anti-spam hid. `commitChatDecision` has already written
+        -- its own debug entry and its Journal line, and nothing else is due:
+        -- no session count, no announcement, no second trace.
+        if decision.spam == "masked" then return end
+
+        local extra = { filterEnabled = decision.gateOpen }
         if row.debugExtra == "channelMode" then
             extra.channelMode = isFilterOn("channelMode") or "none"
         end
@@ -5464,8 +5711,8 @@ for _, row in ipairs(CHAT_KINDS) do
         end
 
         debugLogChatDecision(row.logType, sender, msg,
-            describeBlockAction(block, reason), reason, detail, extra)
-        if not block then return end
+            describeBlockAction(decision.hide, reason), reason, detail, extra)
+        if not decision.hide then return end
 
         logBlock(row.logType, sender, msg, nil, keywordOf(reason, detail))
         if row.closesTab then closeBlockedWhisperTabs(sender, false) end

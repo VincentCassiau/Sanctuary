@@ -50,7 +50,17 @@ end
 local now = 1000
 function GetTime() return now end
 function time() return 1700000000 + math.floor(now) end
-function date(fmt, value) return "2026-06-20 12:00:00" end
+-- The clock the addon reads dates from. Format-sensitive, because the Journal
+-- now asks it two different questions -- which day is it, and what time is it --
+-- and merging "the same message from the same person, today" is a rule a test
+-- has to be able to walk over midnight to prove.
+local harnessDay = "2026-06-20"
+local function setHarnessDay(day) harnessDay = day end
+function date(fmt, value)
+    if fmt == "%Y-%m-%d" then return harnessDay end
+    if fmt == "%H:%M:%S" then return "12:00:00" end
+    return harnessDay .. " 12:00:00"
+end
 function GetLocale() return "frFR" end
 function GetNormalizedRealmName() return "TestRealm" end
 function issecretvalue(value) return type(value) == "table" and value.__secret == true end
@@ -427,10 +437,27 @@ function hooksecurefunc(target, methodOrHook, maybeHook)
 end
 
 local chatFilters = {}
+-- The registered callbacks, in registration order. Blizzard keeps a list per
+-- event and invokes every one of them once per ChatFrame, so "one message, N
+-- consumers" is a shape the harness has to be able to play: the anti-spam rests
+-- on every consumer of one message getting one verdict, whatever order they are
+-- called in. `chatFilters` stays the single last-registered callback the older
+-- sections call directly.
+local chatFilterList = {}
 local chatFilterRegistrations = 0
-function ChatFrame_AddMessageEventFilter(event, callback)
+local function recordChatFilter(event, callback)
     chatFilterRegistrations = chatFilterRegistrations + 1
     chatFilters[event] = callback
+    local list = chatFilterList[event]
+    if not list then
+        list = {}
+        chatFilterList[event] = list
+    end
+    list[#list + 1] = callback
+end
+
+function ChatFrame_AddMessageEventFilter(event, callback)
+    recordChatFilter(event, callback)
 end
 
 -- Retail owns the registry through ChatFrameUtil and keeps the historical
@@ -438,8 +465,7 @@ end
 -- so the availability adapter can be exercised.
 ChatFrameUtil = {
     AddMessageEventFilter = function(event, callback)
-        chatFilterRegistrations = chatFilterRegistrations + 1
-        chatFilters[event] = callback
+        recordChatFilter(event, callback)
     end,
 }
 
@@ -518,6 +544,53 @@ local function fire(event, ...)
     check(frame ~= nil, "event registered: " .. event)
     if not frame then return end
     frame.scripts.OnEvent(frame, event, ...)
+end
+
+-- One message, several chat windows, and the order between them is unknown.
+-- WoW invokes the registered filter once per ChatFrame and the event handler
+-- once, and nothing documents which comes first -- so a test plays all three
+-- orders and reads back what every consumer was told. Answers the list of
+-- discard verdicts, one per filter call, in the order they were made.
+local function deliverChatMessage(order, windows, event, ...)
+    windows = windows or 3
+    local argCount, args = select("#", ...), { ... }
+    local verdicts = {}
+    local function runFilters(count)
+        for _ = 1, count do
+            for _, callback in ipairs(chatFilterList[event] or {}) do
+                local discarded = false
+                -- The registry skips a callback whose payload holds a secret
+                -- value, exactly as `dispatchChatFilter` models it.
+                if canaccessvalue(unpackCompat(args, 1, argCount)) then
+                    discarded = callback(nil, event, unpackCompat(args, 1, argCount)) and true or false
+                end
+                verdicts[#verdicts + 1] = discarded
+            end
+        end
+    end
+    local function runHandler()
+        fire(event, unpackCompat(args, 1, argCount))
+    end
+    if order == "handler_first" then
+        runHandler()
+        runFilters(windows)
+    elseif order == "handler_between" then
+        runFilters(1)
+        runHandler()
+        runFilters(windows - 1)
+    else
+        runFilters(windows)
+        runHandler()
+    end
+    return verdicts
+end
+
+-- The payload of CHAT_MSG_CHANNEL, down to the eleventh argument. `lineID` is
+-- what names one physical message, and the vararg of both a filter and a
+-- handler starts at the third argument -- so it is `select(9, ...)` on both
+-- sides, and a test that builds the payload by hand is the only way to prove it.
+local function channelPayload(message, sender, lineID)
+    return message, sender, "", "General", "", "", 0, 1, "General", "", lineID
 end
 
 local function showGuildInviteFrame(inviter, guildName)
@@ -4617,6 +4690,305 @@ ns.resetDebugLog()
 resetModelState()
 SanctuaryDB.antiSpam.enabled = false
 SanctuaryDB.antiSpam.intervalSeconds = 300
+
+end
+
+-- C19 -- the anti-spam of the public channels: one verdict per message.
+do
+
+local SPAMMER = "Spammer-TestRealm"
+local ORDERS = { "filters_first", "handler_first", "handler_between" }
+
+local channelRow
+for _, row in ipairs(ns.CHAT_KINDS) do
+    if row.kind == "channel" then channelRow = row end
+end
+check(channelRow ~= nil, "the channel row of the generated table is reachable")
+
+-- The throttle lives in memory for the whole session, so every case gets a
+-- message of its own rather than a clock jump: two cases can then never lean on
+-- each other's records.
+local caseIndex, lineIndex = 0, 0
+local function freshMessage()
+    caseIndex = caseIndex + 1
+    return "WTS carry run " .. caseIndex
+end
+local function nextLine()
+    lineIndex = lineIndex + 1
+    return 700000 + lineIndex
+end
+
+local function armAntiSpam(seconds)
+    resetModelState()
+    SanctuaryDB.antiSpam.enabled = true
+    SanctuaryDB.antiSpam.intervalSeconds = seconds or 300
+end
+
+local function countDebug(cat)
+    local count = 0
+    for _, entry in ipairs(SanctuaryDB.debugLog or {}) do
+        if entry.cat == cat then count = count + 1 end
+    end
+    return count
+end
+
+-- Answers "was this copy hidden", and fails loudly if the chat windows were not
+-- all told the same thing.
+local function deliverCopy(order, message, sender, lineID, label)
+    local verdicts = deliverChatMessage(order, 3, "CHAT_MSG_CHANNEL",
+        channelPayload(message, sender, lineID))
+    equal(#verdicts, 3, "three chat windows asked about " .. label)
+    for index = 2, #verdicts do
+        equal(verdicts[index], verdicts[1],
+            "and window " .. index .. " was told the same as the first for " .. label)
+    end
+    return verdicts[1]
+end
+
+-- The three orders, and the same answer in each of them.
+for _, order in ipairs(ORDERS) do
+    armAntiSpam(300)
+    local message = freshMessage()
+    equal(deliverCopy(order, message, SPAMMER, nextLine(), "the first copy (" .. order .. ")"),
+        false, "the first copy is shown (" .. order .. ")")
+    now = now + 10
+    equal(deliverCopy(order, message, SPAMMER, nextLine(), "the repeat (" .. order .. ")"),
+        true, "and the repeat is hidden (" .. order .. ")")
+end
+
+-- One message, one commit: three chat windows and a handler leave exactly one
+-- debug entry and one Journal line behind.
+for _, order in ipairs(ORDERS) do
+    armAntiSpam(300)
+    SanctuaryDB.debugEnabled = true
+    local message = freshMessage()
+    deliverCopy(order, message, SPAMMER, nextLine(), "the shown copy")
+    now = now + 10
+    ns.resetDebugLog()
+    local journalBefore = #SanctuaryDB.log
+    deliverCopy(order, message, SPAMMER, nextLine(), "the hidden copy")
+    equal(countDebug("MASK_SPAM_REPEAT"), 1,
+        "one hidden repeat leaves one debug entry (" .. order .. ")")
+    equal(#SanctuaryDB.log - journalBefore, 1,
+        "and one Journal line (" .. order .. ")")
+    SanctuaryDB.debugEnabled = false
+end
+
+-- The debug entry says what a real recording will be read for.
+do
+    armAntiSpam(1800)
+    SanctuaryDB.debugEnabled = true
+    local message = freshMessage()
+    deliverCopy("filters_first", message, SPAMMER, nextLine(), "the shown copy")
+    now = now + 10
+    ns.resetDebugLog()
+    deliverCopy("filters_first", message, SPAMMER, nextLine(), "the hidden copy")
+    local entry = lastDebug("MASK_SPAM_REPEAT")
+    check(entry ~= nil, "a hidden repeat is recorded")
+    equal(entry and entry.data.lineIDKnown, true, "with whether the client handed a lineID over")
+    equal(entry and entry.data.intervalSeconds, 1800, "the window in force")
+    equal(entry and entry.data.channelMode, "none", "and what the channels are set to")
+    -- And with no lineID, the recording says so rather than staying silent.
+    armAntiSpam(300)
+    local bare = freshMessage()
+    deliverChatMessage("filters_first", 3, "CHAT_MSG_CHANNEL", bare, SPAMMER)
+    now = now + 10
+    ns.resetDebugLog()
+    deliverChatMessage("filters_first", 3, "CHAT_MSG_CHANNEL", bare, SPAMMER)
+    local bareEntry = lastDebug("MASK_SPAM_REPEAT")
+    check(bareEntry ~= nil, "a message with no lineID is still throttled")
+    equal(bareEntry and bareEntry.data.lineIDKnown, false, "and the recording says the lineID was missing")
+    SanctuaryDB.debugEnabled = false
+end
+
+-- The eight windows, and the fact that the window is fixed rather than sliding:
+-- a hidden repeat does not push the reappearance back.
+for _, seconds in ipairs(ns.ANTISPAM_INTERVALS) do
+    armAntiSpam(seconds)
+    local message = freshMessage()
+    equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "the first copy"), false,
+        "the first copy is shown at " .. seconds .. "s")
+    now = now + seconds - 1
+    equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "a repeat inside the window"), true,
+        "a repeat one second short of " .. seconds .. "s is hidden")
+    now = now + 2
+    equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "a repeat past the window"), false,
+        "and it comes back one second past " .. seconds .. "s, counted from the copy that was shown")
+end
+
+-- What is the same message, and what is not.
+do
+    local SAME = {
+        { text = "  WTS   carry   run  ", what = "blanks around it and inside it" },
+    }
+    for _, case in ipairs(SAME) do
+        armAntiSpam(300)
+        deliverCopy("filters_first", "WTS carry run", SPAMMER, nextLine(), "the first copy")
+        now = now + 10
+        equal(deliverCopy("filters_first", case.text, SPAMMER, nextLine(), "the variant"), true,
+            "a repeat with " .. case.what .. " is the same message")
+    end
+
+    local DIFFERENT = {
+        { text = "WTS CARRY RUN", sender = SPAMMER, what = "another case" },
+        { text = "WTS carry run!", sender = SPAMMER, what = "one more character" },
+        { text = "WTS carry run", sender = "Otherguy-TestRealm", what = "another pseudo" },
+        { text = "WTS carry run", sender = "Spammer-Ysondre", what = "the same pseudo on another realm" },
+    }
+    for _, case in ipairs(DIFFERENT) do
+        armAntiSpam(300)
+        deliverCopy("filters_first", "WTS carry run", SPAMMER, nextLine(), "the first copy")
+        now = now + 10
+        equal(deliverCopy("filters_first", case.text, case.sender, nextLine(), "the variant"), false,
+            "a line with " .. case.what .. " is another message")
+    end
+end
+
+-- Nobody who is allowed is ever touched: an allowed person keeps the native
+-- behaviour of WoW, repeats included.
+do
+    local EXEMPT = {
+        { what = "a guild mate", name = "Guildie-TestRealm",
+          arm = function() guildMembers = { "Guildie-TestRealm" } inGuild = true end },
+        { what = "somebody in the group", name = "Teammate-TestRealm",
+          arm = function() groupMembers = { "Teammate-TestRealm" } inGroup = true end },
+        { what = "somebody in the raid", name = "Raider-TestRealm",
+          arm = function() groupMembers = { "Raider-TestRealm" } inGroup = true inRaid = true end },
+        { what = "a Battle.net friend", name = "Bnetpal-TestRealm",
+          arm = function()
+              bnetFriends = { { bnetAccountID = 777, accountName = "Pal#1234",
+                  gameAccountInfo = { characterName = "Bnetpal", realmName = "TestRealm",
+                      clientProgram = "WoW", isOnline = true } } }
+          end },
+        { what = "a name added by hand", name = "Byhand-TestRealm",
+          arm = function() ns.addAllowed("Byhand") end },
+        { what = "somebody trusted automatically", name = "Trustee-TestRealm",
+          arm = function() ns.addAllowed("Trustee", "trust") end },
+    }
+    for _, case in ipairs(EXEMPT) do
+        armAntiSpam(300)
+        case.arm()
+        ns.invalidateWhitelist()
+        local message = freshMessage()
+        equal(deliverCopy("filters_first", message, case.name, nextLine(), "the first copy"), false,
+            "the first line from " .. case.what .. " is shown")
+        now = now + 10
+        equal(deliverCopy("filters_first", message, case.name, nextLine(), "the repeat"), false,
+            "and so is the repeat from " .. case.what)
+    end
+    resetModelState()
+end
+
+-- The player talking to themselves is never reached at all: the decision stops
+-- at "self", before anything about spam is asked.
+do
+    armAntiSpam(300)
+    local message = freshMessage()
+    equal(deliverCopy("filters_first", message, "Victim-TestRealm", nextLine(), "the player's own line"), false,
+        "the player's own line is shown")
+    now = now + 10
+    equal(deliverCopy("filters_first", message, "Victim-TestRealm", nextLine(), "its repeat"), false,
+        "and so is its repeat")
+end
+
+-- Switched off, either of the two ways, nothing happens.
+do
+    armAntiSpam(300)
+    SanctuaryCharDB.overrides.enabled = false
+    local message = freshMessage()
+    equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "the first copy"), false,
+        "with Sanctuary off the first copy is shown")
+    now = now + 10
+    equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "the repeat"), false,
+        "and so is the repeat")
+    SanctuaryCharDB.overrides.enabled = nil
+
+    armAntiSpam(300)
+    SanctuaryDB.antiSpam.enabled = false
+    message = freshMessage()
+    equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "the first copy"), false,
+        "with the anti-spam off the first copy is shown")
+    now = now + 10
+    equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "the repeat"), false,
+        "and so is the repeat")
+end
+
+-- Already covered: the channels are all filtered, so a stranger's line is
+-- blocked as a stranger's line and never as a repeat.
+do
+    armAntiSpam(300)
+    SanctuaryDB.filters.channelMode = "all"
+    SanctuaryDB.debugEnabled = true
+    local message = freshMessage()
+    equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "the first copy"), true,
+        "with the channels all filtered the first copy is blocked")
+    now = now + 10
+    ns.resetDebugLog()
+    equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "the repeat"), true,
+        "and so is the repeat")
+    equal(countDebug("MASK_SPAM_REPEAT"), 0, "and nothing is recorded as a hidden repeat")
+    local entry = lastDebug("CHAT_DECISION")
+    equal(entry and entry.data.action, "BLOCK_NOT_WHITELISTED",
+        "the repeat is recorded for what it is")
+    SanctuaryDB.debugEnabled = false
+end
+
+-- The filter answers one value and one only: Blizzard's registry reads a second
+-- one as a replacement for the message text.
+do
+    armAntiSpam(300)
+    equal(select("#", channelRow.filter(nil, "CHAT_MSG_CHANNEL",
+        channelPayload(freshMessage(), SPAMMER, nextLine()))), 1,
+        "the channel filter answers exactly one value")
+end
+
+-- The two counter-proofs. Neither needs the interface, and each fails on its own
+-- if the shape below is broken.
+do
+    -- The memo is keyed on the physical message. Keyed on pseudo and text
+    -- instead, the second physical message would be handed the first one's
+    -- verdict and shown -- which is the defect the whole chantier is about.
+    armAntiSpam(300)
+    local message = freshMessage()
+    local first = ns.resolveChatDecision(channelRow, message, SPAMMER, 990001)
+    equal(first.spam, "show", "the first physical message is shown")
+    ns.commitChatDecision(first)
+    local second = ns.resolveChatDecision(channelRow, message, SPAMMER, 990002)
+    equal(second.spam, "masked",
+        "a second physical message with the same text is a repeat, not the same message again")
+
+    -- Resolving is pure. Were the throttle moved there instead of at the commit,
+    -- the second resolve below would answer "masked" and a chat window that
+    -- asked after the handler would hide a line the other windows had shown.
+    armAntiSpam(300)
+    message = freshMessage()
+    local a = ns.resolveChatDecision(channelRow, message, SPAMMER, 990011)
+    local b = ns.resolveChatDecision(channelRow, message, SPAMMER, 990012)
+    equal(a.spam, "show", "resolving answers shown")
+    equal(b.spam, "show", "and resolving again, uncommitted, answers shown too")
+    ns.commitChatDecision(a)
+    equal(ns.resolveChatDecision(channelRow, message, SPAMMER, 990013).spam, "masked",
+        "the commit is the only thing that moves the throttle")
+
+    -- And committing twice is committing once.
+    armAntiSpam(300)
+    SanctuaryDB.debugEnabled = true
+    message = freshMessage()
+    local shown = ns.resolveChatDecision(channelRow, message, SPAMMER, 990021)
+    ns.commitChatDecision(shown)
+    now = now + 10
+    ns.resetDebugLog()
+    local hidden = ns.resolveChatDecision(channelRow, message, SPAMMER, 990022)
+    local journalBefore = #SanctuaryDB.log
+    ns.commitChatDecision(hidden)
+    ns.commitChatDecision(hidden)
+    ns.commitChatDecision(hidden)
+    equal(countDebug("MASK_SPAM_REPEAT"), 1, "committing a decision three times records it once")
+    equal(#SanctuaryDB.log - journalBefore, 1, "and journals it once")
+    SanctuaryDB.debugEnabled = false
+end
+
+resetModelState()
 
 end
 
