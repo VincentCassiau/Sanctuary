@@ -8740,6 +8740,104 @@ do
 end
 
 
+-- A.6 -- "Enhanced filtering in instances" answers to the box above it.
+do
+    SanctuaryDB.filters.scope = "strangers"
+    SanctuaryDB.filters.preset = "custom"
+    SanctuaryDB.filters.groupInvite = true
+    _G["SanctuaryTab_protection"]:Click()
+    ns.refreshUI()
+    local strict, parent = _G.SanctuaryStrictCheck, _G.SanctuaryFilter_groupInvite
+    local point, relativeTo, relativePoint, offsetX = strict:GetPoint()
+    equal(point, "TOPLEFT", "the child hangs from the box it depends on")
+    equal(relativeTo, parent, "the group-invite box itself, not a column and a number")
+    equal(relativePoint, "BOTTOMLEFT", "on the row under it")
+    equal(offsetX, 26, "indented by the sub-row indent of the mock-up")
+    equal(strict.enabled, true, "and it can be ticked while its parent is ticked")
+
+    SanctuaryDB.filters.strictGroupInviteSystemMessages = false
+    _G.SanctuaryFilter_groupInvite:Click()
+    equal(SanctuaryDB.filters.groupInvite, false, "unticking the parent")
+    equal(strict.enabled, false, "greys the child")
+    strict:GetScript("OnClick")(strict)
+    equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false,
+        "and a click on a greyed child changes nothing -- constat D.1")
+
+    _G.SanctuaryFilter_groupInvite:Click()
+    equal(strict.enabled, true, "ticking the parent again gives the child back")
+
+    -- In "Everything" there is no parent on screen: the preset blocks group
+    -- invitations by definition, so the box answers to question 1 alone.
+    SanctuaryDB.filters.preset = "all"
+    ns.refreshUI()
+    equal(strict.enabled, true, "in Everything the box is live whatever groupInvite holds")
+    SanctuaryDB.filters.scope = "blockedOnly"
+    ns.refreshUI()
+    equal(strict.enabled, false, "and greyed with the rest when nothing is filtered")
+    SanctuaryDB.filters.scope = "strangers"
+    ns.refreshUI()
+end
+
+-- A.7 -- the three add fields carry their labels the same way: below the field,
+-- at the same distance. Allowed drew them ABOVE, blocked names at the bottom of
+-- the section, patterns further down again -- three answers to one question
+-- (constat D.4).
+do
+    local function rowOf(widget)
+        local _, _, _, _, y = widget:GetPoint()
+        return y or 0
+    end
+    -- The label carrying a given name, wherever it is drawn.
+    local function chipRow(panel, needle)
+        local found
+        local function walk(widget)
+            for _, childWidget in ipairs(widget.__children or {}) do
+                if childWidget.remove and childWidget.label
+                    and tostring(childWidget.label.__text or ""):find(needle, 1, true) then
+                    found = found or childWidget
+                end
+                walk(childWidget)
+            end
+        end
+        walk(panel)
+        return found and rowOf(found)
+    end
+
+    ns.addAllowed("Labelone")
+    ns.addBlocked("Labeltwo")
+    ns.addPattern("labelthree")
+
+    ns.OpenPanel("allowed")
+    ns.refreshUI()
+    local allowedInput = rowOf(_G.SanctuaryAllowedAddInput)
+    local allowedChip = chipRow(_G.SanctuaryPanelAllowed, "Labelone")
+    check(allowedChip ~= nil, "the allowed panel shows the name it was given")
+    ns.ClosePanel()
+
+    ns.OpenPanel("blocked")
+    ns.refreshUI()
+    local nameInput = rowOf(_G.SanctuaryBlockedAddInput)
+    local nameChip = chipRow(_G.SanctuaryPanelBlocked, "Labeltwo")
+    local patternInput = rowOf(_G.SanctuaryPatternAddInput)
+    local patternChip = chipRow(_G.SanctuaryPanelBlocked, "labelthree")
+    check(nameChip ~= nil and patternChip ~= nil, "and the blocked panel shows both of its own")
+
+    if allowedChip and nameChip and patternChip then
+        check(allowedChip < allowedInput,
+            "the allowed labels are UNDER their field now, not above it")
+        equal(allowedInput - allowedChip, nameInput - nameChip,
+            "at exactly the distance the blocked names keep")
+        equal(nameInput - nameChip, patternInput - patternChip,
+            "and the patterns keep the same distance again")
+    end
+
+    ns.ClosePanel()
+    ns.removeAllowed(ns.normalizeCharacterKey("Labelone"))
+    ns.removeBlocked(ns.normalizeCharacterKey("Labeltwo"))
+    ns.removePattern("labelthree")
+end
+
+
 end)()
 
 

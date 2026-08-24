@@ -117,12 +117,23 @@ local NOTE_GAP = 4
 -- 14 px of line.
 local NOTE_LINE = 15
 -- Room kept under an add field for its sentence, showing or not, so nothing on
--- screen moves when one appears. One line covers the two name sentences and the
--- pattern one at the note width; the blocked names field is the only one that can
--- answer with the Battle.net sentence, which still takes two lines there, so it
--- keeps two. The harness measures the six strings against these two values.
-local NOTE_ROOM = NOTE_GAP + NOTE_LINE
+-- screen moves when one appears. Two lines: the blocked names field is the one
+-- that can answer with the Battle.net sentence, which takes two at the note
+-- width in both languages, and the three fields keep the same room so their
+-- labels sit at the same distance. The harness measures the six strings against
+-- this value.
 local NOTE_ROOM_TWO_LINES = NOTE_GAP + 2 * NOTE_LINE
+-- The one rule the three add fields share, and the whole of constat D.4: a field
+-- row, then the room its refusal sentence needs, then the labels it feeds --
+-- always below the field, always the same distance from it. Allowed used to draw
+-- its labels ABOVE the field, blocked names put them at the bottom of the
+-- section, and patterns left a wider gap than either: three fields, three
+-- answers to the same question. The two-line room is taken everywhere, not only
+-- where the Battle.net sentence can appear, because "the same spacing" is what
+-- was asked for and a field whose labels sit fifteen pixels higher than its
+-- neighbour's is the difference that was noticed in the first place.
+local LIST_INPUT_ROW = 34
+local LIST_LABELS_GAP = LIST_INPUT_ROW + NOTE_ROOM_TWO_LINES
 local LIST_REFRESH_SECONDS = 10
 
 local function applyBackdrop(frame, bg, border, edgeSize)
@@ -854,6 +865,10 @@ local CHOOSE_TOP = -(Q_TITLE_ROW + CARD_HEIGHT + BLOCK_GAP
     + Q_TITLE_ROW + CARD_HEIGHT + 14)
 -- One row of a check or a radio, and the extra a wrapped sub-line takes.
 local ROW_HEIGHT = 24
+-- A check is 18 px square, so a row leaves ROW_HEIGHT - CHECK_SIZE between two
+-- of them. `.cbr.sub { padding-left:26px }` of the mock-up is the indent a box
+-- takes when it belongs to the box above it.
+local CHECK_SIZE, SUB_INDENT = 18, 26
 
 local function buildProtectionTab(parent)
     protection.frame = parent
@@ -1023,10 +1038,10 @@ local function buildProtectionTab(parent)
             check:SetPoint("TOPLEFT", choose, "TOPLEFT", colX[col], colY[col])
             colY[col] = colY[col] - ROW_HEIGHT
             if row.key == "groupInvite" then
-                -- `.cbr.sub { padding-left:26px }` -- the indented slot the
-                -- strict box takes in this mode, kept clear whether it is
-                -- there or not.
-                protection.strictSlot = colY[col]
+                -- The row the strict box takes under its parent, kept clear
+                -- whether the box is there or not. The box itself hangs from the
+                -- parent check, not from this number: only the room is booked
+                -- here, so the column below it does not climb over the child.
                 colY[col] = colY[col] - ROW_HEIGHT
             end
         end
@@ -1216,7 +1231,14 @@ refreshTab.protection = function()
     for _, card in ipairs({ protection.q2All, protection.q2Custom }) do
         card:SetEnabledState(not blockedOnly)
     end
-    protection.strict:SetEnabledState(not blockedOnly)
+    -- "Enhanced filtering in instances" governs the system lines of ONE of the
+    -- boxes beside it: every path it takes goes through `groupInvite`. So in "I
+    -- choose", where that box is on screen, it answers to it -- unticking the
+    -- parent greys the child and takes the click away from it, which is the
+    -- whole of constat D.1. In "Everything" there is no parent to answer to and
+    -- the preset blocks group invitations by definition.
+    local strictParentOn = (not custom) or filterStored("groupInvite") == true
+    protection.strict:SetEnabledState(not blockedOnly and strictParentOn)
     -- The widths first, and through the one function that knows them: a screen
     -- laid out against a width it no longer has is the whole of this defect.
     applyTabWidth.protection()
@@ -1241,7 +1263,13 @@ refreshTab.protection = function()
         protection.choose:ClearAllPoints()
         protection.choose:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
         protection.strict:ClearAllPoints()
-        protection.strict:SetPoint("TOPLEFT", protection.choose, "TOPLEFT", 26, protection.strictSlot)
+        -- Anchored on the very box it depends on rather than on the column plus
+        -- a number: an indent written as an offset from somewhere else drifts
+        -- away from its parent the day the columns move, and a child that no
+        -- longer sits under its parent reads as a row of its own -- which is
+        -- exactly how it was read in session.
+        protection.strict:SetPoint("TOPLEFT", protection.checks.groupInvite,
+            "BOTTOMLEFT", SUB_INDENT, -(ROW_HEIGHT - CHECK_SIZE))
         protection.strictNote:Hide()
         y = y - protection.chooseHeight - 4
     else
@@ -2318,25 +2346,25 @@ local function refreshAllowedPanel(force)
     table.sort(manual, function(a, b) return tostring(a.label):lower() < tostring(b.label):lower() end)
     panel.addedSection.count:SetText("(" .. #manual .. ")")
 
+    -- The field first, its labels under it: the same order as the two fields of
+    -- the blocked panel, and the same distance (`LIST_LABELS_GAP`). The room for
+    -- the refusal sentence is kept whether one is showing or not, the same
+    -- choice the undo strip made -- a line that appears must not push the list
+    -- down under the fingers of somebody about to click a cross.
     local y = -40
+    panel.addInput:ClearAllPoints()
+    panel.addInput:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
+    panel.addBtn:ClearAllPoints()
+    panel.addBtn:SetPoint("LEFT", panel.addInput, "RIGHT", 8, 0)
+    y = y - LIST_LABELS_GAP
+
     y = layoutChips(child, manual, y, function(item)
         local ok, key, data = ns.removeAllowed(item.key)
         if not ok then return end
         offerUndo(item.label, function() ns.restoreAllowed(key, data) end)
         if ns.refreshUI then ns.refreshUI() end
     end)
-    y = y - 6
-
-    panel.addInput:ClearAllPoints()
-    panel.addInput:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
-    panel.addBtn:ClearAllPoints()
-    panel.addBtn:SetPoint("LEFT", panel.addInput, "RIGHT", 8, 0)
-    -- NOTE_ROOM is kept whether a sentence is showing or not, the same choice the
-    -- undo strip made: a line that appears must not push the list down under the
-    -- fingers of somebody about to click a cross. One line here: this field only
-    -- ever answers REFUSED_NAME, which fits a line at the note width in both
-    -- languages.
-    y = y - 40 - NOTE_ROOM
+    y = y - 10
 
     panel.autoSection:ClearAllPoints()
     panel.autoSection:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
@@ -2530,11 +2558,12 @@ local function refreshBlockedPanel(force)
     panel.nameInput:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
     panel.nameBtn:ClearAllPoints()
     panel.nameBtn:SetPoint("LEFT", panel.nameInput, "RIGHT", 8, 0)
-    -- Two lines here, and only here: this is the one field that can answer with
-    -- the Battle.net sentence, which is longer than a line at the note width in both
-    -- languages. What sits at the y below is the first row of chips, which a
-    -- second line would lie over.
-    y = y - 34 - NOTE_ROOM_TWO_LINES
+    -- Two lines of room: this is the one field that can answer with the
+    -- Battle.net sentence, which is longer than a line at the note width in both
+    -- languages, and what sits below is the first row of labels, which a second
+    -- line would lie over. The other two fields keep the same room so the three
+    -- read alike.
+    y = y - LIST_LABELS_GAP
 
     local names = {}
     for key, data in pairs(SanctuaryDB.blockedNames or {}) do
@@ -2567,10 +2596,7 @@ local function refreshBlockedPanel(force)
     panel.patternInput:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
     panel.patternBtn:ClearAllPoints()
     panel.patternBtn:SetPoint("LEFT", panel.patternInput, "RIGHT", 8, 0)
-    -- One line: this field only ever answers REFUSED_PATTERN, a BattleTag pasted
-    -- here included, and that sentence fits a line at the note width in both
-    -- languages.
-    y = y - 34 - NOTE_ROOM
+    y = y - LIST_LABELS_GAP
 
     local patterns = {}
     for _, value in ipairs(SanctuaryDB.keywords or {}) do
