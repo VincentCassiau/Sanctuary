@@ -5115,13 +5115,12 @@ do
     now = now + 10
     clickProbe("third click, ten seconds later")
 
-    -- The catalogue entry carries neither `sensitive` nor `manual`, so "run them
-    -- all" fires the probe like any other -- and the session opens on that
-    -- button. The click a tester makes right after it is the one that must not
-    -- come back empty.
+    -- The session opens on "run them all", and the probe is clicked right after.
+    -- The batch leaves the probe alone now, but whatever it does run must not
+    -- leave a record behind that makes the click that follows come back empty.
     armAntiSpam(300)
     for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG) do
-        if not entry.sensitive and not entry.manual then
+        if ns.isBulkDiagnostic(entry) then
             ns.runDiagnosticById(entry.id, entry.argDefault)
         end
     end
@@ -7969,14 +7968,16 @@ equal(resultText and resultText:GetText(), ns.L["DIAG_RESULT_EMPTY"],
 -- branches on the data it is testing cannot notice that data disappearing.
 local SENSITIVE_DIAGNOSTIC_ID = "sim_bnetfriend"
 local MANUAL_DIAGNOSTIC_IDS = { "diag_sound_open", "diag_sound_invite" }
-local BULK_DIAGNOSTIC_IDS = { "sim_invite", "sim_channel_spam", "sim_bnet", "diag_chat",
+local SKIPPED_DIAGNOSTIC_ID = "sim_channel_spam"
+local BULK_DIAGNOSTIC_IDS = { "sim_invite", "sim_bnet", "diag_chat",
     "diag_chat_lockdown", "diag_popup_invite", "diag_popup_duel", "diag_popup_guild",
     "diag_popup_list" }
 
-local sensitiveCount, manualCount = 0, 0
+local sensitiveCount, manualCount, skippedCount = 0, 0, 0
 for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG) do
     if entry.sensitive then sensitiveCount = sensitiveCount + 1 end
     if entry.manual then manualCount = manualCount + 1 end
+    if entry.skipBulk then skippedCount = skippedCount + 1 end
 end
 equal(sensitiveCount, 1, "exactly one diagnostic is marked as naming a real contact")
 equal(ns.getDiagnosticEntry(SENSITIVE_DIAGNOSTIC_ID).sensitive, true,
@@ -7985,8 +7986,30 @@ equal(manualCount, #MANUAL_DIAGNOSTIC_IDS, "exactly two are marked as run-them-b
 for _, id in ipairs(MANUAL_DIAGNOSTIC_IDS) do
     equal(ns.getDiagnosticEntry(id).manual, true, id .. " is one of them")
 end
-equal(#ns.DIAGNOSTIC_CATALOG, #BULK_DIAGNOSTIC_IDS + #MANUAL_DIAGNOSTIC_IDS + 1,
-    "the catalogue is the bulk set plus those three")
+equal(skippedCount, 1, "exactly one is kept out of the batch without being a manual one")
+equal(ns.getDiagnosticEntry(SKIPPED_DIAGNOSTIC_ID).skipBulk, true,
+    "and it is " .. SKIPPED_DIAGNOSTIC_ID .. ", the one that prints into the chat")
+equal(ns.getDiagnosticEntry(SKIPPED_DIAGNOSTIC_ID).manual, nil,
+    "which is not a manual one: its tooltip has something else to say")
+equal(#ns.DIAGNOSTIC_CATALOG, #BULK_DIAGNOSTIC_IDS + #MANUAL_DIAGNOSTIC_IDS + 2,
+    "the catalogue is the bulk set plus those four")
+
+-- Being kept out of the batch must not rewrite what the button says on hover:
+-- "run this one on its own, and listen" is true of the two sounds and false of
+-- the probe, which has three lines of its own to explain.
+local function tooltipOf(labelKey)
+    local btn = findButtonByLabel(diagContent, ns.L[labelKey])
+    check(btn ~= nil, "the panel shows the " .. labelKey .. " button")
+    rawset(GameTooltip, "__lastText", nil)
+    btn:GetScript("OnEnter")(btn)
+    return rawget(GameTooltip, "__lastText")
+end
+equal(tooltipOf("DIAG_SIMULATE_SPAM"), ns.L["DIAG_TIP_SPAM"],
+    "the spam probe still explains itself instead of claiming to be a manual one")
+for _, id in ipairs(MANUAL_DIAGNOSTIC_IDS) do
+    equal(tooltipOf(ns.getDiagnosticEntry(id).labelKey), ns.L["DIAG_MANUAL"],
+        id .. " still says to run it on its own")
+end
 
 local runAllBtn = findButtonByLabel(diagContent, ns.L["DIAG_RUN_ALL"])
 check(runAllBtn ~= nil, "the panel offers a single button that runs them all")
@@ -8005,6 +8028,39 @@ equal(shown:find(ns.L[ns.getDiagnosticEntry(SENSITIVE_DIAGNOSTIC_ID).labelKey], 
 for _, id in ipairs(MANUAL_DIAGNOSTIC_IDS) do
     equal(shown:find(ns.L[ns.getDiagnosticEntry(id).labelKey], 1, true), nil,
         "nor " .. id .. ", which has to be heard on its own")
+end
+equal(shown:find(ns.L[ns.getDiagnosticEntry(SKIPPED_DIAGNOSTIC_ID).labelKey], 1, true), nil,
+    "nor " .. SKIPPED_DIAGNOSTIC_ID .. ", whose answer is printed into the chat")
+
+-- Step C.1 of the session promises nothing on screen and nothing in the ear
+-- while the batch runs, and the tester reads the chat right after it. The spam
+-- probe is the only diagnostic that answers in the chat instead of the panel,
+-- and with the anti-spam armed it drops a channel entry into the Journal on the
+-- way: a batch that fires it makes the only person with a client write down a
+-- failure that is not one. Both states are pinned -- off is what the session
+-- starts on, on is what the step itself asks for.
+do
+    local savedEnabled = SanctuaryDB.antiSpam.enabled
+    local savedInterval = SanctuaryDB.antiSpam.intervalSeconds
+    local savedLogging = SanctuaryDB.logging.enabled
+    -- The Journal half of the check is only worth something while the Journal
+    -- is actually recording.
+    SanctuaryDB.logging.enabled = true
+    for _, case in ipairs({ { label = "anti-spam off", enabled = false },
+                            { label = "anti-spam on", enabled = true } }) do
+        SanctuaryDB.antiSpam.enabled = case.enabled
+        SanctuaryDB.antiSpam.intervalSeconds = 300
+        local chatBefore = #chatMessages
+        local journalBefore = #SanctuaryDB.log
+        runAllBtn:Click()
+        equal(#chatMessages - chatBefore, 0,
+            "running them all writes nothing into the chat (" .. case.label .. ")")
+        equal(#SanctuaryDB.log - journalBefore, 0,
+            "and leaves the Journal exactly as it was (" .. case.label .. ")")
+    end
+    SanctuaryDB.antiSpam.enabled = savedEnabled
+    SanctuaryDB.antiSpam.intervalSeconds = savedInterval
+    SanctuaryDB.logging.enabled = savedLogging
 end
 
 -- Eight blocks stacked into a 300 px column. The child of that scroll used to be

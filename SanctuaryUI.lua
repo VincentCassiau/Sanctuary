@@ -1858,8 +1858,10 @@ local function buildDiagnosticsTab(parent)
         diagnosticResults = {}
         for _, entry in ipairs(ns.DIAGNOSTIC_CATALOG) do
             -- Skipped on a bulk run: the one that writes a real Battle.net name
-            -- into the log, and the two sounds, which are checked one by one.
-            if not entry.sensitive and not entry.manual then
+            -- into the log, the two sounds, which are checked one by one, and the
+            -- spam probe, whose shown copy is printed into the chat -- the batch
+            -- must leave nothing on screen and nothing in the ear.
+            if ns.isBulkDiagnostic(entry) then
                 appendDiagnosticResult(ns.runDiagnosticById(entry.id, entry.argDefault))
             end
         end

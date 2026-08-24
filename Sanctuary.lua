@@ -6852,7 +6852,8 @@ end
 -- leftOnScreen = <the diagnostic could not put the screen back> }.
 -- `manual = true` means "run them all" skips it, like `sensitive`: a bulk run
 -- must not fire two sounds back to back, since the whole point of splitting them
--- is hearing one, then the other.
+-- is hearing one, then the other. `skipBulk = true` is that same exclusion
+-- without the tooltip that goes with `manual`: the entry keeps its own `tipKey`.
 ns.DIAGNOSTIC_CATALOG = {
     {
         id = "sim_invite",
@@ -6869,6 +6870,11 @@ ns.DIAGNOSTIC_CATALOG = {
         argKey = "DIAG_ARG_NAME",
         argDefault = "SanctuaryTest",
         tipKey = "DIAG_TIP_SPAM",
+        -- The only diagnostic whose answer lands in the chat rather than in the
+        -- panel: the copy the filter lets through is printed for real. A bulk
+        -- run promises nothing on screen and nothing in the ear, so it stays out
+        -- of it -- with `skipBulk`, not `manual`, to keep its own tooltip.
+        skipBulk = true,
         run = function(argText)
             return { text = ns.formatChannelSpamDiagnosticResult(
                 ns.runChannelSpamDiagnostic(argText or "")) }
@@ -6989,6 +6995,13 @@ function ns.getDiagnosticEntry(id)
         if entry.id == id then return entry end
     end
     return nil
+end
+
+-- The three ways out of "run them all", asked in one place: the panel and the
+-- harness would otherwise each carry their own copy of the rule and drift.
+function ns.isBulkDiagnostic(entry)
+    if type(entry) ~= "table" then return false end
+    return not (entry.sensitive or entry.manual or entry.skipBulk)
 end
 
 -- Runs one catalogue entry and always returns a displayable result: a
