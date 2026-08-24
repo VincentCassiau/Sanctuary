@@ -7749,7 +7749,10 @@ _G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesIn
 -- A scale of its own, declared rather than left out: the mock used to have no
 -- GetEffectiveScale at all, so whichever frame the drag divided by, the division
 -- was a no-op and the test proved nothing about it.
+-- A width too: the button's radius is measured on the minimap now, and a stand-in
+-- that cannot be measured would prove the fallback rather than the rule.
 Minimap = { GetCenter = function() return 100, 100 end,
+    GetWidth = function() return 140 end,
     GetEffectiveScale = function() return 1 end }
 UIParent.GetEffectiveScale = function() return 1 end
 GetCursorPosition = function() return 180, 100 end
@@ -7762,6 +7765,66 @@ equal(minimapButton:IsShown(), true, "and shown while the setting allows it")
 equal(math.floor(ns.minimapAngleFromPosition(0, 0, 10, 0) + 0.5), 0, "due east is 0 degrees")
 equal(math.floor(ns.minimapAngleFromPosition(0, 0, 0, 10) + 0.5), 90, "due north is 90")
 equal(math.floor(ns.minimapAngleFromPosition(0, 0, -10, 0) + 0.5), 180, "due west is 180")
+-- The four quadrants, and the half of the circle that was missing: in WoW's Lua
+-- 5.1 `math.atan` takes ONE argument and drops the second without a word, so
+-- everything south of the centre came back as its northern mirror and the button
+-- could not be dragged past the horizontal -- "ca ne peut tourner que sur la
+-- partie droite (0 a 180 degres)", constat D.5.
+equal(math.floor(ns.minimapAngleFromPosition(0, 0, 10, 10) + 0.5), 45, "north east is 45")
+equal(math.floor(ns.minimapAngleFromPosition(0, 0, -10, 10) + 0.5), 135, "north west is 135")
+equal(math.floor(ns.minimapAngleFromPosition(0, 0, 0, -10) + 0.5), 270, "due south is 270")
+equal(math.floor(ns.minimapAngleFromPosition(0, 0, -10, -10) + 0.5), 225, "south west is 225")
+equal(math.floor(ns.minimapAngleFromPosition(0, 0, 10, -10) + 0.5), 315, "south east is 315")
+
+-- And the guard the harness cannot get from a test: it runs a modern Lua, where
+-- `math.atan(dy, dx)` is correct, so the defect above is green here whichever
+-- spelling the source carries. Only reading the source can catch it.
+do
+    local twoArgumentAtan = {}
+    for _, file in ipairs({ "/Sanctuary.lua", "/SanctuaryUI.lua" }) do
+        local handle = assert(io.open(repoRoot .. file, "r"))
+        -- Comments stripped first: the two spellings have to be nameable in the
+        -- note that explains why one of them is banned, and a guard that refuses
+        -- its own explanation is a guard nobody can document.
+        local text = handle:read("a"):gsub("%-%-[^\n]*", "")
+        handle:close()
+        local at = 1
+        while true do
+            local _, stop = text:find("math%.atan%s*%(", at)
+            if not stop then break end
+            local depth, index, comma = 1, stop + 1, false
+            while depth > 0 and index <= #text do
+                local char = text:sub(index, index)
+                if char == "(" then depth = depth + 1
+                elseif char == ")" then depth = depth - 1
+                elseif char == "," and depth == 1 then comma = true end
+                index = index + 1
+            end
+            if comma then twoArgumentAtan[#twoArgumentAtan + 1] = file end
+            at = stop + 1
+        end
+    end
+    equal(#twoArgumentAtan, 0, "no source calls math.atan with two arguments ("
+        .. table.concat(twoArgumentAtan, ", ") .. ")")
+end
+
+-- The ring is measured on the minimap, not assumed. A flat 80 is the DEFAULT
+-- minimap's own 70 plus a margin; Edit Mode scales the minimap, and on anything
+-- larger than the default 80 falls inside the map -- "il est vers l'interieur de
+-- la minimap alors qu'avant j'avais souvenir que c'etait l'exterieur".
+equal(ns.minimapRadius(140), 80, "the default minimap keeps the radius the button had")
+check(ns.minimapRadius(240) > 120, "a minimap enlarged in Edit Mode pushes the button out with it")
+equal(ns.minimapRadius(nil), 80, "and a minimap that cannot be measured falls back on the default")
+do
+    Minimap.GetWidth = function() return 240 end
+    SanctuaryDB.minimap.angle = 0
+    ns.RefreshMinimapButton()
+    local _, _, _, offsetX = minimapButton:GetPoint()
+    equal(math.floor((offsetX or 0) + 0.5), 130,
+        "and the button is placed on the ring of the minimap it is actually on")
+    Minimap.GetWidth = function() return 140 end
+    ns.RefreshMinimapButton()
+end
 minimapButton:GetScript("OnDragStop")(minimapButton)
 equal(math.floor(SanctuaryDB.minimap.angle + 0.5), 0, "dragging writes the angle it computes")
 

@@ -3205,20 +3205,42 @@ end
 
 local minimapButton
 
+-- WoW runs Lua 5.1, where `math.atan` takes ONE argument: `math.atan(dy, dx)`
+-- drops dx without a word and answers only the half circle atan covers, which is
+-- why the button could be dragged through the right-hand side of the ring and no
+-- further. `math.atan2` is the 5.1 spelling of the two-argument form; the
+-- harness's modern Lua removed it and put the second argument back on
+-- `math.atan`, so both spellings have to be reachable from here.
+local atan2 = math.atan2 or math.atan
+
 -- Pure, so the harness can prove it without a mouse: cursor position and the
 -- minimap centre in, angle out.
 function ns.minimapAngleFromPosition(cx, cy, px, py)
     local dx, dy = px - cx, py - cy
     if dx == 0 and dy == 0 then return 0 end
-    local angle = math.deg(math.atan(dy, dx))
+    local angle = math.deg(atan2(dy, dx))
     if angle < 0 then angle = angle + 360 end
     return angle
+end
+
+-- The default minimap is 140 wide, so its ring is 70 out from the centre.
+local MINIMAP_DEFAULT_WIDTH, MINIMAP_MARGIN = 140, 10
+
+-- Pure as well, and measured rather than assumed: the radius used to be a flat
+-- 80, which is the default minimap's own 70 plus a margin. Edit Mode scales the
+-- minimap, and on any minimap larger than the default 80 falls INSIDE the map --
+-- the button sat over the terrain instead of around the ring, which is what the
+-- session reported.
+function ns.minimapRadius(minimapWidth)
+    local width = tonumber(minimapWidth)
+    if not width or width <= 0 then width = MINIMAP_DEFAULT_WIDTH end
+    return width / 2 + MINIMAP_MARGIN
 end
 
 local function positionMinimapButton()
     if not minimapButton or not SanctuaryDB then return end
     local angle = math.rad(SanctuaryDB.minimap.angle or 220)
-    local radius = 80
+    local radius = ns.minimapRadius(Minimap and Minimap.GetWidth and Minimap:GetWidth())
     minimapButton:ClearAllPoints()
     minimapButton:SetPoint("CENTER", Minimap, "CENTER",
         math.cos(angle) * radius, math.sin(angle) * radius)
