@@ -2903,6 +2903,42 @@ local function forgetJournalIndex(log)
     indexedLog, indexedCount, indexedDay = log, log and #log or 0, nil
 end
 
+-- The text `logBlock` was handed, rebuilt from the two halves the entry keeps
+-- separately for display -- and never resolved against the realm the session
+-- happens to be standing on.
+--
+-- The realm half is empty for every sender of the player's own realm, which is
+-- the ordinary case: the game hands those names over bare. `logBlock` keyed such
+-- a name on `getPlayerRealm()`, and `SanctuaryDB` is account-wide -- so asking
+-- the game again here would key the morning's entries under the realm of the
+-- character logged in this evening, and a namesake reading the same line would
+-- land on somebody else's entry. The realm that built the key is engraved in
+-- `entry.char`, written in the same call from that same `getPlayerRealm()`: this
+-- reads the key back, it does not guess it. A character name carries no hyphen,
+-- so the first one in `char` opens the realm.
+--
+-- Nothing is answered when that realm is missing or unknown: at the write
+-- `normalizeCharacterKey` answered nil for such an entry, which never had a
+-- merge key to read back.
+--
+-- A Battle.net account name has no realm half either, and must not be handed
+-- one: it carries a space, `splitCharacterName` reads a realm behind that space,
+-- and that is the realm its key was built on.
+local function journalMergeSource(entry)
+    local name = type(entry.name) == "string" and entry.name or ""
+    if name == "" then return nil end
+    local realm = type(entry.realm) == "string" and entry.realm or ""
+    if realm ~= "" then return name .. "-" .. realm end
+
+    local namePart, realmPart = splitCharacterName(name)
+    if not namePart then return nil end
+    if realmPart then return name end
+
+    local charRealm = type(entry.char) == "string" and entry.char:match("^[^%-]*%-(.+)$")
+    if not charRealm or charRealm == "?" then return nil end
+    return name .. "-" .. charRealm
+end
+
 -- Arms the index on a day, which means reading the log back: what that day
 -- already holds goes on being merged into, whatever happened to the session in
 -- between.
@@ -2913,11 +2949,11 @@ end
 -- when the table is replaced, and at the turn of the day, where it stops on the
 -- first entry read.
 --
--- The key is built exactly as `logBlock` builds it, from the two halves an entry
--- stores separately for display, and `mergeKeyOf` is filled with it: rotation
--- reads that one to drop exactly the entries it evicted. An entry is dated from
--- the day its key belongs to (see `logBlock`), so the date read back here IS the
--- day of the key -- there is no second rule to keep in step.
+-- The key is built exactly as `logBlock` built it -- `journalMergeSource` right
+-- above answers the text it was handed -- and `mergeKeyOf` is filled with it:
+-- rotation reads that one to drop exactly the entries it evicted. An entry is
+-- dated from the day its key belongs to (see `logBlock`), so the date read back
+-- here IS the day of the key -- there is no second rule to keep in step.
 --
 -- Duplicates an earlier build already wrote: a key keeps the MOST RECENT entry,
 -- which is the first one met walking back. The older ones simply stop being
@@ -2931,10 +2967,8 @@ local function armJournalIndex(log, today)
         local entry = log[i]
         local day = type(entry) == "table" and type(entry.d) == "string" and entry.d:sub(1, 10)
         if day ~= today then break end
-        local name = type(entry.name) == "string" and entry.name or ""
-        local realm = type(entry.realm) == "string" and entry.realm or ""
-        local characterKey = name ~= "" and type(entry.type) == "string"
-            and normalizeCharacterKey(realm ~= "" and name .. "-" .. realm or name)
+        local source = type(entry.type) == "string" and journalMergeSource(entry)
+        local characterKey = source and normalizeCharacterKey(source)
         local msgKey = characterKey and ns.normalizeSpamText(entry.msg)
         if msgKey and msgKey ~= "" then
             local mergeKey = today .. "\0" .. entry.type .. "\0" .. characterKey .. "\0" .. msgKey

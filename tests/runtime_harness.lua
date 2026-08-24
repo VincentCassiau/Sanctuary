@@ -9469,6 +9469,65 @@ reloaded.logBlock("channel", "Twice-TestRealm", "same old line", nil, nil)
 equal(#SanctuaryDB.log, 1, "after a clear the same line opens a new entry")
 equal(SanctuaryDB.log[1].count, nil, "counted once")
 
+-- A bare pseudo belongs to the realm it was written on, not to the one the
+-- session comes back on. `SanctuaryDB` is account-wide and a sender of the
+-- player's own realm is handed over bare, so the ordinary entry stores no realm
+-- of its own -- and reconnecting the same day on a character of another realm
+-- used to re-index the morning's entries under the evening's realm. A namesake
+-- repeating the same line was then counted on somebody else's entry.
+setHarnessDay("2026-08-29")
+reloaded.clearJournal()
+now = now + 10
+reloaded.logBlock("channel", "Namesake", "same words twice", nil, nil)
+now = now + 5
+reloaded.logBlock("channel", "Namesake", "same words twice", nil, nil)
+equal(#SanctuaryDB.log, 1, "a bare pseudo folds into one entry on its own realm")
+equal(SanctuaryDB.log[1].count, 2, "counted twice")
+equal(SanctuaryDB.log[1].realm, "", "and stored bare, the way the game hands it over")
+
+local ownRealm = GetNormalizedRealmName
+function GetNormalizedRealmName() return "OtherRealm" end
+local elsewhere = {}
+assert(loadfile(repoRoot .. "/Locales.lua"))("Sanctuary", elsewhere)
+assert(loadfile(repoRoot .. "/Sanctuary.lua"))("Sanctuary", elsewhere)
+
+now = now + 10
+elsewhere.logBlock("channel", "Namesake", "same words twice", nil, nil)
+equal(#SanctuaryDB.log, 2, "the namesake of the other realm opens his own entry")
+equal(SanctuaryDB.log[1].count, 2, "and the entry of the first realm does not move")
+
+-- An entry written before the realm was known never had a merge key -- at the
+-- write `normalizeCharacterKey` answered nil for it -- so the walk must not
+-- invent one for it now.
+setHarnessDay("2026-08-30")
+elsewhere.clearJournal()
+SanctuaryDB.log[1] = { t = time(), d = "2026-08-30 12:00:00", type = "channel",
+    name = "Rootless", realm = "", char = "Victim-", msg = "a line with no realm behind it" }
+SanctuaryDB.log[2] = { t = time(), d = "2026-08-30 12:00:00", type = "channel",
+    name = "Unknowing", realm = "", char = "?-?", msg = "another one" }
+now = now + 10
+elsewhere.logBlock("channel", "Rootless", "a line with no realm behind it", nil, nil)
+equal(#SanctuaryDB.log, 3, "an entry whose realm was empty collects nothing")
+now = now + 10
+elsewhere.logBlock("channel", "Unknowing", "another one", nil, nil)
+equal(#SanctuaryDB.log, 4, "and neither does one whose realm was written unknown")
+
+-- A Battle.net whisper is journalled under the account name, which has no realm
+-- half either -- and must not be handed the character's. It carries a space, and
+-- the realm its key was built on is the one behind that space: the entry goes on
+-- folding across the very reconnection that changed realms.
+setHarnessDay("2026-08-31")
+elsewhere.clearJournal()
+now = now + 10
+elsewhere.logBlock("whisper", "Toto Ysondre", "hey there", nil, nil)
+equal(#SanctuaryDB.log, 1, "the account name opens one entry")
+now = now + 10
+reloaded.logBlock("whisper", "Toto Ysondre", "hey there", nil, nil)
+equal(#SanctuaryDB.log, 1, "and folds back into it from a session on another realm")
+equal(SanctuaryDB.log[1].count, 2, "counted twice")
+
+GetNormalizedRealmName = ownRealm
+
 setHarnessDay("2026-06-20")
 resetModelState()
 
