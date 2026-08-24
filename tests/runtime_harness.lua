@@ -5976,7 +5976,7 @@ local KNOWN_IDENTICAL = {
     ADV_DIAG_TITLE = true, ADV_JOURNAL_TITLE = true, EXPORT_COLUMNS = true,
     PANEL_BLOCKED_PATTERNS = true, WL_BNET_ROW = true, TAB_PROTECTION = true,
     TAB_JOURNAL = true, TAB_DIAGNOSTICS = true, KIND_DUEL = true,
-    Q3_MINIMAL_TITLE = true, LOG_TYPE_DUEL = true, ABOUT_VERSION = true,
+    Q4_MINIMAL_TITLE = true, LOG_TYPE_DUEL = true, ABOUT_VERSION = true,
     LOGS_GROUP_HEADER = true, DATE_FORMAT = true, DIAG_ARG_FILTER = true,
     -- The Journal's badge and its time range: a count, a dash and the word
     -- SPAM, which French borrows unchanged.
@@ -6254,18 +6254,142 @@ _G.SanctuaryStrictCheck:Click()
 equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false, "and untickable again")
 
 -- ---------------------------------------------------------------------------
--- Question 3
+-- Question 3: the anti-spam of the public channels
 -- ---------------------------------------------------------------------------
 
-_G.SanctuaryQ3_verbose:Click()
+do
+
+local yes, no = _G.SanctuaryQ3_yes, _G.SanctuaryQ3_no
+local interval, list = _G.SanctuaryAntiSpamInterval, _G.SanctuaryAntiSpamIntervalList
+check(yes ~= nil and no ~= nil, "question 3 offers the same two cards as the others")
+check(interval ~= nil and list ~= nil, "with a window under them")
+
+-- Out of the box: opted into, never out of, and five minutes.
+ns.setAntiSpamEnabled(false)
+ns.setAntiSpamInterval(300)
+ns.refreshUI()
+equal(ns.isAntiSpamEnabled(), false, "the anti-spam starts off")
+equal(interval.value:GetText(), ns.L["ANTISPAM_D_5M"], "and its window reads five minutes")
+equal(interval.enabled, false, "the window is not clickable while the answer is No")
+
+yes:Click()
+equal(SanctuaryDB.antiSpam.enabled, true, "the first card switches the anti-spam on")
+equal(interval.enabled, true, "and the window becomes clickable")
+no:Click()
+equal(SanctuaryDB.antiSpam.enabled, false, "the second card switches it off")
+yes:Click()
+
+-- The eight windows, in the order the menu shows them, and clicking one writes
+-- it.
+equal(#interval.rows, 8, "the menu offers eight windows")
+local EXPECTED = { "ANTISPAM_D_5M", "ANTISPAM_D_10M", "ANTISPAM_D_30M", "ANTISPAM_D_1H",
+    "ANTISPAM_D_2H", "ANTISPAM_D_4H", "ANTISPAM_D_12H", "ANTISPAM_D_24H" }
+for index, key in ipairs(EXPECTED) do
+    equal(interval.rows[index].label:GetText(), ns.L[key],
+        "window " .. index .. " of the menu is " .. key)
+end
+equal(list:IsShown(), false, "the menu starts closed")
+interval:Click()
+equal(list:IsShown(), true, "clicking the field opens it")
+interval:Click()
+equal(list:IsShown(), false, "and clicking it again closes it")
+interval:Click()
+interval.rows[4]:Click()
+equal(SanctuaryDB.antiSpam.intervalSeconds, 3600, "picking a row writes the window")
+equal(list:IsShown(), false, "and closes the menu")
+equal(interval.value:GetText(), ns.L["ANTISPAM_D_1H"], "the field shows what was picked")
+-- Changing screen takes the list with it: it draws over everything.
+interval:Click()
+equal(list:IsShown(), true, "the menu is open again")
+_G["SanctuaryTab_journal"]:Click()
+equal(list:IsShown(), false, "changing tab closes it")
+_G["SanctuaryTab_protection"]:Click()
+
+-- Already covered. Nothing is clickable, the note says why, and not one answer
+-- is overwritten -- going back finds them exactly as they were.
+SanctuaryDB.filters.preset = "custom"
+SanctuaryDB.filters.channelMode = "all"
+ns.refreshUI()
+equal(ns.isChannelSpamCovered(), true, "filtering every channel covers the ground")
+equal(yes.enabled, false, "the first card is greyed out")
+equal(no.enabled, false, "and so is the second")
+equal(interval.enabled, false, "and the window with them")
+check((yes.title.__colorR or 1) < 1, "and drawn as one")
+yes:Click()
+no:Click()
+interval:Click()
+equal(SanctuaryDB.antiSpam.enabled, true, "a click on a greyed card writes nothing")
+equal(SanctuaryDB.antiSpam.intervalSeconds, 3600, "and the window keeps what was chosen")
+equal(list:IsShown(), false, "and the menu does not open")
+
+-- And "Everyone except the people I block" does NOT cover it: nothing is
+-- filtered in the channels there, so the question has all its meaning.
+SanctuaryDB.filters.scope = "blockedOnly"
+ns.refreshUI()
+equal(ns.isChannelSpamCovered(), false, "blocking only a list covers nothing")
+equal(yes.enabled, true, "so question 3 stays live")
+SanctuaryDB.filters.scope = "strangers"
+SanctuaryDB.filters.channelMode = "none"
+ns.refreshUI()
+equal(yes.enabled, true, "and it comes back live when the channels are let through")
+equal(SanctuaryDB.antiSpam.enabled, true, "with the answer that was given")
+equal(interval.value:GetText(), ns.L["ANTISPAM_D_1H"], "and the window that was picked")
+
+-- Five questions, numbered 1 to 5 and stacked in that order. The renumbering is
+-- the half of this chantier a later visual pass would otherwise trip on: a
+-- screen where "q3" means question 4 sends the next reader to the wrong widget.
+do
+    local protectionContent = _G["SanctuaryTabContent_protection"]
+    local seen = {}
+    local function walk(widget)
+        for _, child in ipairs(widget.__children or {}) do
+            if child.__kind == "FontString" then seen[tostring(child.__text)] = true end
+            walk(child)
+        end
+    end
+    walk(protectionContent)
+    for _, number in ipairs({ "1", "2", "3", "4", "5" }) do
+        check(seen[number], "the screen numbers a question " .. number)
+    end
+    check(not seen["6"], "and stops at five")
+
+    local previousY
+    local ordered = {
+        _G.SanctuaryQ1_strangers, _G.SanctuaryQ2_all, _G.SanctuaryQ3_yes,
+        _G.SanctuaryQ4_silent, _G.SanctuaryTileAllowed,
+    }
+    for index, widget in ipairs(ordered) do
+        local _, relativeTo, _, _, offset = widget:GetPoint()
+        -- The first card of each question is anchored against the screen
+        -- itself, so the five offsets are comparable with one another.
+        equal(relativeTo, protectionContent,
+            "the first card of question " .. index .. " hangs from the screen")
+        if previousY then
+            check(offset < previousY, "and question " .. index .. " sits under the one before it")
+        end
+        previousY = offset
+    end
+end
+
+ns.setAntiSpamEnabled(false)
+ns.setAntiSpamInterval(300)
+ns.refreshUI()
+
+end
+
+-- ---------------------------------------------------------------------------
+-- Question 4
+-- ---------------------------------------------------------------------------
+
+_G.SanctuaryQ4_verbose:Click()
 equal(SanctuaryDB.notifications.mode, "verbose", "the third card writes the notification mode")
-_G.SanctuaryQ3_minimal:Click()
+_G.SanctuaryQ4_minimal:Click()
 equal(SanctuaryDB.notifications.mode, "minimal", "the second card too")
-_G.SanctuaryQ3_silent:Click()
+_G.SanctuaryQ4_silent:Click()
 equal(SanctuaryDB.notifications.mode, "silent", "and the first one puts it back to silence")
 
 -- ---------------------------------------------------------------------------
--- Question 4: the tiles, and the name tester
+-- Question 5: the tiles, and the name tester
 -- ---------------------------------------------------------------------------
 
 guildMembers = { "Guildmate-TestRealm", "Officer-TestRealm" }

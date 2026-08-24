@@ -465,6 +465,120 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
     return box
 end
 
+-- A drop-down of our own, and one for the whole add-on: at most one list can be
+-- open at a time, so the open one is held here rather than on each field.
+--
+-- `UIDropDownMenu` and its family are deliberately not used. They come with
+-- their own look, which is not the one the mock-ups draw, and they are the
+-- classic way for an add-on to taint the interface. What is needed here is a
+-- field showing the chosen value and a list of eight rows over the screen --
+-- which is a button, a frame, and eight buttons.
+local openDropdown
+
+local function closeOpenDropdown()
+    local current = openDropdown
+    openDropdown = nil
+    if current and current.list then current.list:Hide() end
+end
+
+local DROPDOWN_ROW_HEIGHT = 22
+-- U+25BE, the small down-pointing triangle the mock-up draws in the field. A
+-- glyph, not a sentence: there is nothing here for a translator to say.
+local DROPDOWN_CARET = "\226\150\190"
+
+local function newDropdown(parent, name, width, rows, get, set)
+    local field = CreateFrame("Button", name, parent, "BackdropTemplate")
+    field:SetSize(width or 140, 24)
+    applyBackdrop(field, C.input, C.border)
+    field.value = newLabel(field, "", FONT_BODY, C.ink)
+    field.value:SetPoint("LEFT", field, "LEFT", 8, 0)
+    field.caret = newLabel(field, DROPDOWN_CARET, FONT_BODY, C.dim)
+    field.caret:SetPoint("RIGHT", field, "RIGHT", -8, 0)
+    field.enabled = true
+
+    local list = CreateFrame("Frame", name and (name .. "List") or nil, parent, "BackdropTemplate")
+    list:SetSize(width or 140, #rows * DROPDOWN_ROW_HEIGHT + 8)
+    -- Over everything the screen already holds: the list opens on top of the
+    -- question under it, and a list drawn behind the cards is a list nobody can
+    -- click.
+    list:SetFrameStrata("FULLSCREEN_DIALOG")
+    applyBackdrop(list, C.panel, C.accent)
+    list:Hide()
+    list:SetScript("OnHide", function()
+        -- Escape closes it through UISpecialFrames without going through
+        -- `closeOpenDropdown`, so the record of what is open is cleared here.
+        if openDropdown == field then openDropdown = nil end
+    end)
+    field.list = list
+    field.rows = {}
+
+    for index, row in ipairs(rows) do
+        local option = CreateFrame("Button", nil, list, "BackdropTemplate")
+        option:SetSize((width or 140) - 8, DROPDOWN_ROW_HEIGHT)
+        option:SetPoint("TOPLEFT", list, "TOPLEFT", 4, -4 - (index - 1) * DROPDOWN_ROW_HEIGHT)
+        applyBackdrop(option, C.tile, C.tile)
+        option.label = newLabel(option, row.text, FONT_BODY, C.soft)
+        option.label:SetPoint("LEFT", option, "LEFT", 8, 0)
+        option:SetScript("OnEnter", function(self) applyBackdrop(self, C.accentBg, C.accent) end)
+        option:SetScript("OnLeave", function(self) applyBackdrop(self, C.tile, C.tile) end)
+        option:SetScript("OnClick", function()
+            closeOpenDropdown()
+            set(row.value)
+            PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+            if ns.refreshUI then ns.refreshUI() end
+        end)
+        field.rows[index] = option
+    end
+
+    -- Drawn from the model like every other component here: the field shows what
+    -- the core answers, never what the last click wrote.
+    function field:Refresh()
+        local current = get()
+        local text = ""
+        for _, row in ipairs(rows) do
+            if row.value == current then text = row.text end
+        end
+        self.value:SetText(text)
+        self.value:SetTextColor(unpack(self.enabled and C.ink or C.disabled))
+        self.caret:SetTextColor(unpack(self.enabled and C.dim or C.disabled))
+        applyBackdrop(self, C.input, self.enabled and C.border or C.disabled)
+    end
+
+    function field:SetEnabledState(enabled)
+        self.enabled = enabled and true or false
+        if not self.enabled then closeOpenDropdown() end
+        self:Refresh()
+    end
+
+    function field:SetDropdownWidth(newWidth)
+        self:SetWidth(newWidth)
+        list:SetWidth(newWidth)
+        for _, option in ipairs(self.rows) do option:SetWidth(newWidth - 8) end
+    end
+
+    field:SetScript("OnClick", function(self)
+        if not self.enabled then return end
+        local wasOpen = openDropdown == self
+        closeOpenDropdown()
+        if wasOpen then return end
+        list:ClearAllPoints()
+        list:SetPoint("TOPLEFT", self, "BOTTOMLEFT", 0, -2)
+        list:Show()
+        openDropdown = self
+        PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+    end)
+
+    if name and UISpecialFrames then
+        -- Escape closes the last frame registered here that is showing, which is
+        -- the list whenever it is open -- so Escape shuts the list before it
+        -- shuts the window.
+        tinsert(UISpecialFrames, name .. "List")
+    end
+
+    field:Refresh()
+    return field
+end
+
 -- One pool per panel. A chip is reparented for free in the client, but keeping
 -- pools apart also keeps a panel's redraw from borrowing widgets anchored in the
 -- other one -- which is how a list ends up half-empty after a switch.
@@ -778,6 +892,45 @@ local function buildProtectionTab(parent)
         function() return filterStored("autoTrust") == true end,
         function(value) setFilter("autoTrust", value) end)
 
+    -- Question 3 ------------------------------------------------------------
+    -- The same two cards every other question is made of (decision 131: "si on
+    -- met des designs différents selon les étapes on s'y perd"), with the
+    -- window and the note underneath them.
+    protection.q3Number = newLabel(parent, "3", FONT_BODY, C.accent)
+    protection.q3Title = newLabel(parent, L["ANTISPAM_Q_TITLE"], FONT_TITLE, C.ink)
+    protection.q3Title:SetPoint("TOPLEFT", protection.q3Number, "TOPRIGHT", 10, 4)
+    protection.q3Yes = newCard(parent, "SanctuaryQ3_yes",
+        L["ANTISPAM_YES_TITLE"], L["ANTISPAM_YES_DESC"], cardWidth,
+        function() return ns.isAntiSpamEnabled() end,
+        function() ns.setAntiSpamEnabled(true) end)
+    protection.q3No = newCard(parent, "SanctuaryQ3_no",
+        L["ANTISPAM_NO_TITLE"], L["ANTISPAM_NO_DESC"], cardWidth,
+        function() return not ns.isAntiSpamEnabled() end,
+        function() ns.setAntiSpamEnabled(false) end)
+
+    protection.q3IntervalLabel = newLabel(parent, L["ANTISPAM_INTERVAL_LABEL"], FONT_BODY, C.soft)
+    -- Written out rather than built from the number of seconds: a key that only
+    -- exists as a concatenation cannot be found by searching for it, and an
+    -- unreachable translation is one nobody will ever notice is missing.
+    local DURATION_ROWS = {
+        { value = 300,   labelKey = "ANTISPAM_D_5M" },
+        { value = 600,   labelKey = "ANTISPAM_D_10M" },
+        { value = 1800,  labelKey = "ANTISPAM_D_30M" },
+        { value = 3600,  labelKey = "ANTISPAM_D_1H" },
+        { value = 7200,  labelKey = "ANTISPAM_D_2H" },
+        { value = 14400, labelKey = "ANTISPAM_D_4H" },
+        { value = 43200, labelKey = "ANTISPAM_D_12H" },
+        { value = 86400, labelKey = "ANTISPAM_D_24H" },
+    }
+    local durationRows = {}
+    for index, row in ipairs(DURATION_ROWS) do
+        durationRows[index] = { value = row.value, text = L[row.labelKey] }
+    end
+    protection.q3Interval = newDropdown(parent, "SanctuaryAntiSpamInterval", 130, durationRows,
+        function() return ns.getAntiSpamInterval() end,
+        function(value) ns.setAntiSpamInterval(value) end)
+    protection.q3Note = newLabel(parent, L["ANTISPAM_NOTE"], FONT_BODY, C.dim)
+
     -- The detailed boxes, folded away until "I choose" is picked.
     local choose = CreateFrame("Frame", "SanctuaryChoose", parent)
     choose:SetSize(width, 1)
@@ -866,34 +1019,34 @@ local function buildProtectionTab(parent)
     end
     protection.layoutChoose(width)
 
-    -- Question 3 ------------------------------------------------------------
-    protection.q3Anchor = CreateFrame("Frame", nil, parent)
-    protection.q3Anchor:SetSize(width, 1)
+    -- Question 4 ------------------------------------------------------------
+    protection.q4Anchor = CreateFrame("Frame", nil, parent)
+    protection.q4Anchor:SetSize(width, 1)
     -- Same two pieces as the questions above, but placed by the refresh rather
     -- than here: what sits over them folds and unfolds. The title rides on the
     -- number, so the refresh only ever moves one of the two.
-    protection.q3Number = newLabel(parent, "3", FONT_BODY, C.accent)
-    protection.q3Title = newLabel(parent, L["Q3_TITLE"], FONT_TITLE, C.ink)
-    protection.q3Title:SetPoint("TOPLEFT", protection.q3Number, "TOPRIGHT", 10, 4)
-    local thirdWidth = (width - CARD_GUTTER * 2) / 3
-    protection.q3 = {}
-    local Q3_ROWS = {
-        { key = "silent",  titleKey = "Q3_SILENT_TITLE",  descKey = "Q3_SILENT_DESC" },
-        { key = "minimal", titleKey = "Q3_MINIMAL_TITLE", descKey = "Q3_MINIMAL_DESC" },
-        { key = "verbose", titleKey = "Q3_VERBOSE_TITLE", descKey = "Q3_VERBOSE_DESC" },
-    }
-    for _, row in ipairs(Q3_ROWS) do
-        local card = newCard(parent, "SanctuaryQ3_" .. row.key,
-            L[row.titleKey], L[row.descKey], thirdWidth,
-            function() return SanctuaryDB and SanctuaryDB.notifications.mode == row.key end,
-            function() SanctuaryDB.notifications.mode = row.key end)
-        protection.q3[row.key] = card
-    end
-
-    -- Question 4 ------------------------------------------------------------
     protection.q4Number = newLabel(parent, "4", FONT_BODY, C.accent)
     protection.q4Title = newLabel(parent, L["Q4_TITLE"], FONT_TITLE, C.ink)
     protection.q4Title:SetPoint("TOPLEFT", protection.q4Number, "TOPRIGHT", 10, 4)
+    local thirdWidth = (width - CARD_GUTTER * 2) / 3
+    protection.q4 = {}
+    local Q4_ROWS = {
+        { key = "silent",  titleKey = "Q4_SILENT_TITLE",  descKey = "Q4_SILENT_DESC" },
+        { key = "minimal", titleKey = "Q4_MINIMAL_TITLE", descKey = "Q4_MINIMAL_DESC" },
+        { key = "verbose", titleKey = "Q4_VERBOSE_TITLE", descKey = "Q4_VERBOSE_DESC" },
+    }
+    for _, row in ipairs(Q4_ROWS) do
+        local card = newCard(parent, "SanctuaryQ4_" .. row.key,
+            L[row.titleKey], L[row.descKey], thirdWidth,
+            function() return SanctuaryDB and SanctuaryDB.notifications.mode == row.key end,
+            function() SanctuaryDB.notifications.mode = row.key end)
+        protection.q4[row.key] = card
+    end
+
+    -- Question 5 ------------------------------------------------------------
+    protection.q5Number = newLabel(parent, "5", FONT_BODY, C.accent)
+    protection.q5Title = newLabel(parent, L["Q5_TITLE"], FONT_TITLE, C.ink)
+    protection.q5Title:SetPoint("TOPLEFT", protection.q5Number, "TOPRIGHT", 10, 4)
 
     local function newTile(name, titleText, onManage)
         local tile = CreateFrame("Frame", name, parent, "BackdropTemplate")
@@ -992,7 +1145,7 @@ function ns.RefreshTestAnswer(text)
 end
 
 -- Everything on this screen whose size comes from the window's width. Questions
--- 1, 2 and 3 and the two tiles are laid out at build time -- what sits above
+-- 1, 2, 3 and 4 and the two tiles are laid out at build time -- what sits above
 -- them never folds -- and the fold itself is measured from the same number, so
 -- all of it has to be handed the live width again whenever the window changes.
 applyTabWidth.protection = function()
@@ -1002,19 +1155,23 @@ applyTabWidth.protection = function()
     local width = innerWidth()
     local cardWidth = (width - CARD_GUTTER) / 2
     for _, card in ipairs({ protection.q1Strangers, protection.q1Blocked,
-        protection.q2All, protection.q2Custom }) do
+        protection.q2All, protection.q2Custom,
+        protection.q3Yes, protection.q3No }) do
         card:SetCardWidth(cardWidth)
     end
+    -- The note under question 3 is a sentence, not a label: it wraps, so it is
+    -- the one thing on this screen that has to be told the width it wraps at.
+    protection.q3Note:SetWidth(width)
     protection.tileAllowed:SetWidth(cardWidth)
     protection.tileBlocked:SetWidth(cardWidth)
     local thirdWidth = (width - CARD_GUTTER * 2) / 3
     for _, key in ipairs({ "silent", "minimal", "verbose" }) do
-        protection.q3[key]:SetCardWidth(thirdWidth)
+        protection.q4[key]:SetCardWidth(thirdWidth)
     end
-    -- The invisible frame question 3 hangs from, and the two columns of "I
+    -- The invisible frame question 4 hangs from, and the two columns of "I
     -- choose": `layoutChoose` is what shares the width between them, and it
     -- answers the height the fold needs, which the refresh below reads.
-    protection.q3Anchor:SetWidth(width)
+    protection.q4Anchor:SetWidth(width)
     protection.layoutChoose(width)
     -- The tester's sentence starts at PAD + 360 and runs to the right margin.
     protection.testAnswer:SetWidth(math.max(60, width - 360))
@@ -1078,8 +1235,56 @@ refreshTab.protection = function()
     protection.trust:Refresh()
     y = y - ROW_HEIGHT - BLOCK_GAP
 
+    -- Question 3 -- the anti-spam of the public channels.
+    --
+    -- Greyed out, never removed, and the settings underneath are not touched:
+    -- somebody who filters every channel has nothing left for this to hide, and
+    -- when they go back the answers they gave are still there. Same shape as
+    -- question 2 greyed out in "Everyone except the people I block", one line
+    -- above -- and the one question asked is `isChannelSpamCovered`, so the
+    -- greying and the decision cannot disagree.
+    local covered = ns.isChannelSpamCovered()
+    local antiSpamOn = ns.isAntiSpamEnabled()
+    protection.q3Yes:SetEnabledState(not covered)
+    protection.q3No:SetEnabledState(not covered)
+    -- The window is a detail of "Yes": on "No" there is nothing to delay.
+    protection.q3Interval:SetEnabledState(not covered and antiSpamOn)
+    protection.q3IntervalLabel:SetTextColor(unpack(
+        (covered or not antiSpamOn) and C.disabled or C.soft))
+    protection.q3Title:SetTextColor(unpack(covered and C.disabled or C.ink))
+    protection.q3Number:SetTextColor(unpack(covered and C.disabled or C.accent))
+
     protection.q3Number:ClearAllPoints()
     protection.q3Number:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y - 4)
+    y = y - Q_TITLE_ROW
+    protection.q3Yes:ClearAllPoints()
+    protection.q3Yes:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
+    protection.q3No:ClearAllPoints()
+    protection.q3No:SetPoint("TOPLEFT", protection.q3Yes, "TOPRIGHT", CARD_GUTTER, 0)
+    protection.q3Yes:Refresh()
+    protection.q3No:Refresh()
+    y = y - CARD_HEIGHT - 8
+
+    -- The field rides on the right of its own label rather than at a fixed
+    -- offset: the sentence is not the same length in the two locales, and a
+    -- number picked for one of them cuts the other.
+    protection.q3IntervalLabel:ClearAllPoints()
+    protection.q3IntervalLabel:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y - 6)
+    protection.q3Interval:ClearAllPoints()
+    protection.q3Interval:SetPoint("LEFT", protection.q3IntervalLabel, "RIGHT", 10, 0)
+    protection.q3Interval:Refresh()
+    y = y - ROW_HEIGHT - 4
+
+    protection.q3Note:SetText(covered and L["ANTISPAM_COVERED"] or L["ANTISPAM_NOTE"])
+    protection.q3Note:SetTextColor(unpack(covered and C.orange or C.dim))
+    protection.q3Note:ClearAllPoints()
+    protection.q3Note:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
+    -- Measured rather than assumed: the note wraps over one line at 900 px and
+    -- over three at 500, and everything below it hangs from this number.
+    y = y - math.max(16, protection.q3Note:GetStringHeight() or 16) - BLOCK_GAP
+
+    protection.q4Number:ClearAllPoints()
+    protection.q4Number:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y - 4)
     y = y - Q_TITLE_ROW
     -- The first card is placed against the screen, the two others against the
     -- card before them -- the shape questions 1 and 2 already have. Placed at
@@ -1090,7 +1295,7 @@ refreshTab.protection = function()
     -- width itself is `applyTabWidth.protection`'s, above, for every screen.
     local previous = nil
     for _, key in ipairs({ "silent", "minimal", "verbose" }) do
-        local card = protection.q3[key]
+        local card = protection.q4[key]
         card:ClearAllPoints()
         if previous then
             card:SetPoint("TOPLEFT", previous, "TOPRIGHT", CARD_GUTTER, 0)
@@ -1102,8 +1307,8 @@ refreshTab.protection = function()
     end
     y = y - CARD_HEIGHT - BLOCK_GAP
 
-    protection.q4Number:ClearAllPoints()
-    protection.q4Number:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y - 4)
+    protection.q5Number:ClearAllPoints()
+    protection.q5Number:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y - 4)
     y = y - Q_TITLE_ROW
     protection.tileAllowed:ClearAllPoints()
     protection.tileAllowed:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
@@ -2351,6 +2556,7 @@ end
 
 function ns.OpenPanel(which)
     if not mainFrame then return end
+    closeOpenDropdown()
     ns.ClosePanel()
     openPanel = which
     local panel = panels[which]
@@ -2682,6 +2888,9 @@ end
 
 local function selectTab(key)
     if not isTabVisible(tabDefByKey(key)) then return end
+    -- An open list belongs to the screen it was opened on: it draws over
+    -- everything, so leaving it up would float eight durations over the Journal.
+    closeOpenDropdown()
     -- Changing screen closes the panel rather than being refused: the tab strip
     -- hangs below the frame, so the veil cannot cover it, and of the two ways out
     -- of that -- close, or ignore the click -- closing is the one that never
@@ -2726,6 +2935,7 @@ function ns.refreshUI()
 end
 
 local function clearTransientFields()
+    closeOpenDropdown()
     if protection.testInput then
         protection.testInput:SetText("")
         protection.testInput:RefreshHint()

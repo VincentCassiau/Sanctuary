@@ -90,17 +90,35 @@ L["TIP_CHANNEL_KEYWORDS"] = "Blocks messages in channels when the sender's name 
 L["TIP_CHANNEL_ALL"] = "Blocks EVERY message in channels from people who are not allowed.\nWarning: this makes public channels silent."
 L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Advanced mode: enable it only if unwanted group invitations still reach you in a dungeon, raid, or PvP match.\n\nWhen WoW locks the chat down (instance boss fights, Mythic+ keys, PvP matches), add-ons can no longer read system messages. With this mode on, while you are grouped or in an instance, Sanctuary then hides EVERY system message, not only invitations: the game does not let it tell them apart.\n\nNothing is shown in chat; debug mode keeps a trace."
 
--- Question 3 -- what Sanctuary tells you
-L["Q3_TITLE"] = "What does Sanctuary tell you in chat?"
-L["Q3_SILENT_TITLE"] = "Nothing"
-L["Q3_SILENT_DESC"] = "Complete silence. The Journal keeps the record."
-L["Q3_MINIMAL_TITLE"] = "A summary"
-L["Q3_MINIMAL_DESC"] = "Every 5 minutes, and only if something new was blocked."
-L["Q3_VERBOSE_TITLE"] = "Every block"
-L["Q3_VERBOSE_DESC"] = "One line as it happens."
+-- Question 3 -- the anti-spam of the public channels
+L["ANTISPAM_Q_TITLE"] = "Should Sanctuary deal with spam in the public channels?"
+L["ANTISPAM_YES_TITLE"] = "Yes, hide the repeats"
+L["ANTISPAM_YES_DESC"] = "The same message from a stranger appears only once."
+L["ANTISPAM_NO_TITLE"] = "No"
+L["ANTISPAM_NO_DESC"] = "The channels stay as they are."
+L["ANTISPAM_INTERVAL_LABEL"] = "The same message comes back only after"
+L["ANTISPAM_NOTE"] = "Your group, your raid, your Battle.net friends and your guild are never affected. Hidden copies are counted in the Journal."
+L["ANTISPAM_COVERED"] = "Already covered: you filter everything in the public channels -- spam from strangers never appears there."
+L["ANTISPAM_D_5M"] = "5 minutes"
+L["ANTISPAM_D_10M"] = "10 minutes"
+L["ANTISPAM_D_30M"] = "30 minutes"
+L["ANTISPAM_D_1H"] = "1 hour"
+L["ANTISPAM_D_2H"] = "2 hours"
+L["ANTISPAM_D_4H"] = "4 hours"
+L["ANTISPAM_D_12H"] = "12 hours"
+L["ANTISPAM_D_24H"] = "24 hours"
 
--- Question 4 -- your lists
-L["Q4_TITLE"] = "Your lists"
+-- Question 4 -- what Sanctuary tells you
+L["Q4_TITLE"] = "What does Sanctuary tell you in chat?"
+L["Q4_SILENT_TITLE"] = "Nothing"
+L["Q4_SILENT_DESC"] = "Complete silence. The Journal keeps the record."
+L["Q4_MINIMAL_TITLE"] = "A summary"
+L["Q4_MINIMAL_DESC"] = "Every 5 minutes, and only if something new was blocked."
+L["Q4_VERBOSE_TITLE"] = "Every block"
+L["Q4_VERBOSE_DESC"] = "One line as it happens."
+
+-- Question 5 -- your lists
+L["Q5_TITLE"] = "Your lists"
 L["TILE_ALLOWED"] = "Always allowed"
 L["TILE_BLOCKED"] = "Always blocked"
 L["TILE_ALLOWED_DETAIL"] = "%s added by you \194\183 %s Battle.net friends"
@@ -347,17 +365,35 @@ L["TIP_CHANNEL_KEYWORDS"] = "Bloque les messages dans les canaux si le pseudo de
 L["TIP_CHANNEL_ALL"] = "Bloque TOUS les messages dans les canaux des joueurs non autoris\195\169s.\nAttention : cela rend les canaux publics silencieux."
 L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Mode avanc\195\169 : \195\160 activer seulement si des invitations de groupe ind\195\169sirables vous parviennent encore en donjon, en raid ou en match JcJ.\n\nQuand WoW verrouille le chat (combats de boss d'instance, cl\195\169s mythiques, matchs JcJ), les add-ons ne peuvent plus lire les messages syst\195\168me. Avec ce mode coch\195\169, tant que vous \195\170tes en groupe ou en instance, Sanctuary masque alors TOUS les messages syst\195\168me, pas seulement les invitations : le jeu ne permet pas de les distinguer.\n\nRien ne s'affiche dans le chat ; le mode debug en garde la trace."
 
--- Question 3 -- what Sanctuary tells you
-L["Q3_TITLE"] = "Que vous dit Sanctuary dans le chat ?"
-L["Q3_SILENT_TITLE"] = "Rien"
-L["Q3_SILENT_DESC"] = "Silence total. Le Journal garde la trace."
-L["Q3_MINIMAL_TITLE"] = "Un r\195\169sum\195\169"
-L["Q3_MINIMAL_DESC"] = "Toutes les 5 minutes, seulement s'il y a eu de nouveaux blocages."
-L["Q3_VERBOSE_TITLE"] = "Chaque blocage"
-L["Q3_VERBOSE_DESC"] = "Une ligne au moment o\195\185 il a lieu."
+-- Question 3 -- the anti-spam of the public channels
+L["ANTISPAM_Q_TITLE"] = "Sanctuary doit-il s'occuper du spam des canaux publics ?"
+L["ANTISPAM_YES_TITLE"] = "Oui, masquer les r\195\169p\195\169titions"
+L["ANTISPAM_YES_DESC"] = "Un m\195\170me message d'un inconnu n'appara\195\174t qu'une fois."
+L["ANTISPAM_NO_TITLE"] = "Non"
+L["ANTISPAM_NO_DESC"] = "Les canaux restent tels quels."
+L["ANTISPAM_INTERVAL_LABEL"] = "Un m\195\170me message ne r\195\169appara\195\174t qu'apr\195\168s"
+L["ANTISPAM_NOTE"] = "Groupe, raid, amis Battle.net et guilde ne sont jamais concern\195\169s. Les copies masqu\195\169es sont compt\195\169es dans le Journal."
+L["ANTISPAM_COVERED"] = "D\195\169j\195\160 couvert : vous filtrez tout sur les canaux publics \226\128\148 le spam des inconnus n'y appara\195\174t jamais."
+L["ANTISPAM_D_5M"] = "5 minutes"
+L["ANTISPAM_D_10M"] = "10 minutes"
+L["ANTISPAM_D_30M"] = "30 minutes"
+L["ANTISPAM_D_1H"] = "1 heure"
+L["ANTISPAM_D_2H"] = "2 heures"
+L["ANTISPAM_D_4H"] = "4 heures"
+L["ANTISPAM_D_12H"] = "12 heures"
+L["ANTISPAM_D_24H"] = "24 heures"
 
--- Question 4 -- your lists
-L["Q4_TITLE"] = "Vos listes"
+-- Question 4 -- what Sanctuary tells you
+L["Q4_TITLE"] = "Que vous dit Sanctuary dans le chat ?"
+L["Q4_SILENT_TITLE"] = "Rien"
+L["Q4_SILENT_DESC"] = "Silence total. Le Journal garde la trace."
+L["Q4_MINIMAL_TITLE"] = "Un r\195\169sum\195\169"
+L["Q4_MINIMAL_DESC"] = "Toutes les 5 minutes, seulement s'il y a eu de nouveaux blocages."
+L["Q4_VERBOSE_TITLE"] = "Chaque blocage"
+L["Q4_VERBOSE_DESC"] = "Une ligne au moment o\195\185 il a lieu."
+
+-- Question 5 -- your lists
+L["Q5_TITLE"] = "Vos listes"
 L["TILE_ALLOWED"] = "Toujours autoris\195\169s"
 L["TILE_BLOCKED"] = "Toujours bloqu\195\169s"
 L["TILE_ALLOWED_DETAIL"] = "%s ajout\195\169s \194\183 %s amis Battle.net"
