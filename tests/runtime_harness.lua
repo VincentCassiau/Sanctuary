@@ -8622,9 +8622,11 @@ _G["SanctuaryTab_about"]:Click()
 equal(mainFrame:GetHeight(), 820 + 40 + 30, "the shortest screen is back to its fitted height")
 equal(mainFrame:GetWidth(), 780, "and to the design width")
 local shortestFitted = mainFrame:GetHeight()
--- Every screen that does not fold fits the shortest window now: the minimum was
--- measured ON the home screen (A.2), so there is nothing left for the fitted
--- mode to grow for -- except the one fold there is.
+-- Every screen opens in the same window: the height the window asks for is the
+-- home screen's, so a shorter screen does not shrink it around itself -- and
+-- there is nothing left for the fitted mode to grow for except the one fold
+-- there is. What a shorter screen must NOT do is scroll inside that window,
+-- which the A.2 block further down measures on the client's own screen.
 _G["SanctuaryTab_protection"]:Click()
 equal(mainFrame:GetHeight(), shortestFitted,
     "the home screen fits that same window, folded boxes aside")
