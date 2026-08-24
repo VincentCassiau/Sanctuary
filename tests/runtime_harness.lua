@@ -2980,6 +2980,7 @@ local function resetModelState()
     SanctuaryDB.filters.emote = false
     SanctuaryDB.filters.channelMode = "none"
     SanctuaryDB.filters.strictGroupInviteSystemMessages = false
+    SanctuaryDB.antiSpam = { enabled = false, intervalSeconds = 300 }
     SanctuaryDB.log = {}
     guildMembers = {}
     charFriends = {}
@@ -4517,6 +4518,107 @@ equal(#chatMessages, 1, "still exactly one when the protection is off")
 check(chatMessages[1]:find(ns.L["ADDON_LOADED_INACTIVE"], 1, true) ~= nil,
     "and it says so")
 SanctuaryCharDB.overrides.enabled = nil
+
+-- C18 -- the anti-spam setting, and the one question the interface asks.
+do
+
+resetModelState()
+equal(ns.ACCOUNT_DEFAULTS.antiSpam.enabled, false, "anti-spam is off on a fresh settings file")
+equal(ns.ACCOUNT_DEFAULTS.antiSpam.intervalSeconds, 300, "and its window is five minutes")
+
+-- A 1.0.0 file written before this block existed: the schema is already 2, so
+-- ADDON_LOADED completes it rather than rebuilding it, and everything else in
+-- it survives.
+SanctuaryDB.antiSpam = nil
+SanctuaryDB.logging.maxEntries = 1234
+SanctuaryDB.filters.scope = "blockedOnly"
+fire("ADDON_LOADED", "Sanctuary")
+equal(type(SanctuaryDB.antiSpam), "table", "an existing 1.0.0 file gets the block it lacks")
+equal(SanctuaryDB.antiSpam.enabled, false, "off, like a fresh one")
+equal(SanctuaryDB.antiSpam.intervalSeconds, 300, "with the same window")
+equal(SanctuaryDB.logging.maxEntries, 1234, "and nothing else in the file is touched")
+equal(SanctuaryDB.filters.scope, "blockedOnly", "including the answer to question 1")
+SanctuaryDB.logging.maxEntries = 5000
+SanctuaryDB.filters.scope = "strangers"
+
+ns.resetToSchemaV2()
+equal(SanctuaryDB.antiSpam.enabled, false, "the 1.0.0 reset rebuilds it off")
+equal(SanctuaryDB.antiSpam.intervalSeconds, 300, "at five minutes")
+fire("ADDON_LOADED", "Sanctuary")
+
+-- Reading. Eight values are accepted and nothing else is.
+for _, seconds in ipairs({ 300, 600, 1800, 3600, 7200, 14400, 43200, 86400 }) do
+    SanctuaryDB.antiSpam.intervalSeconds = seconds
+    equal(ns.getAntiSpamInterval(), seconds, "the window " .. seconds .. " is read back")
+end
+for _, bad in ipairs({ 7, 0, -300, 240, 90000 }) do
+    SanctuaryDB.antiSpam.intervalSeconds = bad
+    equal(ns.getAntiSpamInterval(), 300, "a stored " .. bad .. " answers the default")
+end
+SanctuaryDB.antiSpam.intervalSeconds = "5"
+equal(ns.getAntiSpamInterval(), 300, "a stored string answers the default")
+SanctuaryDB.antiSpam.intervalSeconds = nil
+equal(ns.getAntiSpamInterval(), 300, "and so does no value at all")
+SanctuaryDB.antiSpam = nil
+equal(ns.getAntiSpamInterval(), 300, "and so does no block at all")
+equal(ns.isAntiSpamEnabled(), false, "which reads as off")
+SanctuaryDB.antiSpam = { enabled = false, intervalSeconds = 300 }
+
+-- Writing goes through the same eight.
+ns.setAntiSpamInterval(3600)
+equal(SanctuaryDB.antiSpam.intervalSeconds, 3600, "a listed window is written")
+ns.setAntiSpamInterval(45)
+equal(SanctuaryDB.antiSpam.intervalSeconds, 3600, "an unlisted one is refused, not stored")
+ns.setAntiSpamInterval(300)
+ns.setAntiSpamEnabled(true)
+equal(ns.isAntiSpamEnabled(), true, "the switch is written")
+ns.setAntiSpamEnabled(false)
+equal(ns.isAntiSpamEnabled(), false, "and unwritten")
+
+-- The coverage predicate. "Already covered" means the channels are all filtered
+-- for real, which is a question about the mode the core applies -- not about
+-- what is stored under it.
+local COVERAGE = {
+    { scope = "strangers",  preset = "custom", channelMode = "all",      covered = true },
+    { scope = "strangers",  preset = "custom", channelMode = "keywords", covered = false },
+    { scope = "strangers",  preset = "custom", channelMode = "none",     covered = false },
+    { scope = "strangers",  preset = "all",    channelMode = "all",      covered = false },
+    { scope = "blockedOnly", preset = "custom", channelMode = "all",     covered = false },
+    { scope = "blockedOnly", preset = "all",   channelMode = "all",      covered = false },
+}
+for _, case in ipairs(COVERAGE) do
+    SanctuaryDB.filters.scope = case.scope
+    SanctuaryDB.filters.preset = case.preset
+    SanctuaryDB.filters.channelMode = case.channelMode
+    equal(ns.isChannelSpamCovered(), case.covered,
+        "channel coverage for " .. case.scope .. "+" .. case.preset .. "+" .. case.channelMode)
+    -- Switched off, nothing is filtered at all, so nothing is covered either --
+    -- whatever "Filter everything" is still remembering.
+    SanctuaryCharDB.overrides.enabled = false
+    equal(ns.isChannelSpamCovered(), false,
+        "and nothing is covered while Sanctuary is off (" .. case.channelMode .. ")")
+    SanctuaryCharDB.overrides.enabled = nil
+end
+
+-- The snapshot publishes it, so a report answers "was the anti-spam on".
+resetModelState()
+SanctuaryDB.antiSpam.enabled = true
+SanctuaryDB.antiSpam.intervalSeconds = 1800
+SanctuaryDB.filters.channelMode = "all"
+SanctuaryDB.debugEnabled = true
+ns.resetDebugLog()
+ns.captureDebugSnapshot("test")
+local antiSpamSnapshot = lastDebug("SNAPSHOT")
+equal(antiSpamSnapshot and antiSpamSnapshot.data.antiSpam, true, "the snapshot publishes the switch")
+equal(antiSpamSnapshot and antiSpamSnapshot.data.antiSpamInterval, 1800, "and the window")
+equal(antiSpamSnapshot and antiSpamSnapshot.data.channelSpamCovered, true, "and whether it has anything left to do")
+SanctuaryDB.debugEnabled = false
+ns.resetDebugLog()
+resetModelState()
+SanctuaryDB.antiSpam.enabled = false
+SanctuaryDB.antiSpam.intervalSeconds = 300
+
+end
 
 -- ===========================================================================
 -- SECTION: no dead entry -- what the person typed reaches what the game says

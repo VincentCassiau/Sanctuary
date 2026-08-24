@@ -71,6 +71,16 @@ local ACCOUNT_DEFAULTS = {
         strictGroupInviteSystemMessages = false,
     },
 
+    -- Question 3 of the home screen, and a block of its own rather than a line
+    -- of `filters`: it decides nothing about who is filtered. It only asks
+    -- whether a repeat of a message that was going to show anyway is worth
+    -- showing again. Off by default -- it hides something the person would
+    -- otherwise read, so it is opted into, never out of.
+    antiSpam = {
+        enabled = false,
+        intervalSeconds = 300,
+    },
+
     temporalGroupTrust = {
         trustThresholdMinutes = 5,
     },
@@ -841,6 +851,75 @@ ns.getEffectiveFilterState = getEffectiveFilterState
 ns.isFilterOn = isFilterOn
 ns.getScope = getScope
 ns.getPreset = getPreset
+
+-- ----------------------------------------------------------------------------
+-- The anti-spam setting, and the one question the interface asks about it
+-- ----------------------------------------------------------------------------
+
+-- Scoped block. Lua caps a chunk at 200 live registers and this file runs close
+-- to it, so what the rest of the addon needs from here leaves through `ns`
+-- rather than through a chunk local.
+do
+
+-- The eight windows the person can pick, in the order the menu shows them.
+-- Reading goes through one function and accepts nothing else: a settings file
+-- edited by hand, or written by another build, must answer the default rather
+-- than a window nobody ever chose.
+local ANTISPAM_INTERVALS = { 300, 600, 1800, 3600, 7200, 14400, 43200, 86400 }
+local ANTISPAM_DEFAULT_INTERVAL = 300
+
+ns.ANTISPAM_INTERVALS = ANTISPAM_INTERVALS
+
+local function antiSpamStore()
+    local stored = SanctuaryDB and SanctuaryDB.antiSpam
+    if type(stored) ~= "table" then return nil end
+    return stored
+end
+
+function ns.isAntiSpamEnabled()
+    local stored = antiSpamStore()
+    return (stored ~= nil and stored.enabled == true)
+end
+
+function ns.getAntiSpamInterval()
+    local stored = antiSpamStore()
+    local seconds = stored and stored.intervalSeconds
+    for _, value in ipairs(ANTISPAM_INTERVALS) do
+        if seconds == value then return value end
+    end
+    return ANTISPAM_DEFAULT_INTERVAL
+end
+
+function ns.setAntiSpamEnabled(value)
+    local stored = antiSpamStore()
+    if not stored then return end
+    stored.enabled = value and true or false
+end
+
+function ns.setAntiSpamInterval(seconds)
+    local stored = antiSpamStore()
+    if not stored then return end
+    for _, value in ipairs(ANTISPAM_INTERVALS) do
+        if seconds == value then
+            stored.intervalSeconds = value
+            return
+        end
+    end
+end
+
+-- "The public channels are already all filtered, so there is no repeat left to
+-- hide." The interface asks this and nothing else -- never `scope`, `preset` or
+-- the raw `channelMode` -- so the greyed-out state and the decision below can
+-- never disagree about what is covered.
+--
+-- `isEnabled()` is not decoration: `isFilterOn` never consults it, so a person
+-- who turned Sanctuary off while "Filter everything" was still stored would be
+-- told the channels were covered while nothing at all was being filtered.
+function ns.isChannelSpamCovered()
+    return (isEnabled() and isFilterOn("channelMode") == "all") and true or false
+end
+
+end
 
 -- ----------------------------------------------------------------------------
 -- Where a pseudo ends and a realm begins -- one rule, one place
@@ -2822,6 +2901,9 @@ captureDebugSnapshot = function(trigger)
         manualWL = manualAccount .. "+" .. manualChar,
         keywords = SanctuaryDB.keywords and #SanctuaryDB.keywords or 0,
         filters = getEffectiveFilterState(),
+        antiSpam = ns.isAntiSpamEnabled(),
+        antiSpamInterval = ns.getAntiSpamInterval(),
+        channelSpamCovered = ns.isChannelSpamCovered(),
         groupInviteFilter = isFilterOn("groupInvite") == true,
         partyInviteOriginalSound = tostring(capturePartyInviteOriginalSound() or "nil"),
         partyInviteSoundGuardActive = partyInviteSoundGuardDepth > 0,
