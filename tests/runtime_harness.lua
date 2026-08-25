@@ -10605,7 +10605,7 @@ end
 local checkerPath, protocolPath = qaTool("check_qa_run.lua"), qaTool("qa_protocol.py")
 
 if not checkerPath or not protocolPath then
-    print("-- outillage de session absent (internal_docs/qa) : controles sautes")
+    print("-- session tooling absent (internal_docs/qa): those checks are skipped")
 else
 ;(function()
 -- opts.chatFilterApi   value carried by the SNAPSHOT in the log ("" for none)
