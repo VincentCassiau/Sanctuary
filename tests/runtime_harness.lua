@@ -10032,6 +10032,7 @@ end
 -- reserve to protect and nothing SetClampedToScreen cannot see.
 do
     local keptScreen, keptSize = UIParent.GetHeight, SanctuaryDB.uiSize
+    local keptDebug = SanctuaryDB.debugEnabled
     SanctuaryDB.uiSize = nil
     UIParent.GetHeight = function() return 768 end
     _G["SanctuaryTab_protection"]:Click()
@@ -10081,6 +10082,12 @@ do
         "and a default Retail screen keeps its breathing edge (" .. spare .. " px)")
     UIParent.GetHeight = keptScreen
     SanctuaryDB.uiSize = keptSize
+    -- Put back the debug flag this section FOUND, not the `false` it needed for
+    -- the four-tab measurement: a section that leaves a shared flag on a value
+    -- of its own decides for every section after it, and the one that then
+    -- depends on it passes here and fails in a clone.
+    SanctuaryDB.debugEnabled = keptDebug
+    ns.refreshTabBar()
     ns.refreshUI()
 end
 
@@ -10489,19 +10496,29 @@ for _, which in ipairs({ "SANCTUARY_CLEAR_LOG", "SANCTUARY_CLEAR_DEBUG_LOG" }) d
     check(type(dialog.OnAccept) == "function", which .. " only erases on accept")
 end
 
-SanctuaryDB.log = { { ts = 1, type = "groupInvite", source = "Someone" } }
-ns.resetDebugLog()
-ns.debugLog("KEEPME", {})
-equal(#SanctuaryDB.log, 1, "showing the clear dialog erases nothing on its own")
-equal(#SanctuaryDB.debugLog, 1, "showing the debug clear dialog erases nothing on its own")
-StaticPopupDialogs.SANCTUARY_CLEAR_DEBUG_LOG.OnAccept()
--- Read as "the entry that was there is gone", not as "the log is empty": the
--- refresh that follows the clear can itself record a cache rebuild, which is a
--- new entry, not a survivor.
-equal(lastDebug("KEEPME"), nil, "accepting is what erases the debug log")
-equal(#SanctuaryDB.log, 1, "and it leaves the block log alone")
-StaticPopupDialogs.SANCTUARY_CLEAR_LOG.OnAccept()
-equal(#SanctuaryDB.log, 0, "accepting is what erases the block log")
+-- `debugLog` writes only while debug mode is on, so the section that needs the
+-- entry arms the mode itself and puts back what it found. It used to inherit an
+-- armed flag from a neighbour -- and that neighbour is inside the block
+-- conditioned on internal_docs/qa, so a clone of the published repository ran
+-- this with debug mode off, wrote nothing, and failed here alone.
+do
+    local keptDebug = SanctuaryDB.debugEnabled
+    SanctuaryDB.debugEnabled = true
+    SanctuaryDB.log = { { ts = 1, type = "groupInvite", source = "Someone" } }
+    ns.resetDebugLog()
+    ns.debugLog("KEEPME", {})
+    equal(#SanctuaryDB.log, 1, "showing the clear dialog erases nothing on its own")
+    equal(#SanctuaryDB.debugLog, 1, "showing the debug clear dialog erases nothing on its own")
+    StaticPopupDialogs.SANCTUARY_CLEAR_DEBUG_LOG.OnAccept()
+    -- Read as "the entry that was there is gone", not as "the log is empty": the
+    -- refresh that follows the clear can itself record a cache rebuild, which is a
+    -- new entry, not a survivor.
+    equal(lastDebug("KEEPME"), nil, "accepting is what erases the debug log")
+    equal(#SanctuaryDB.log, 1, "and it leaves the block log alone")
+    StaticPopupDialogs.SANCTUARY_CLEAR_LOG.OnAccept()
+    equal(#SanctuaryDB.log, 0, "accepting is what erases the block log")
+    SanctuaryDB.debugEnabled = keptDebug
+end
 
 -- The master switch: at OFF the verdict on the name is still computed, but
 -- nothing is applied. That whole line used to be compared by eye.
