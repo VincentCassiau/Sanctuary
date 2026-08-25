@@ -696,6 +696,52 @@ local function canonicalState()
 end
 local stateAtRest = canonicalState()
 
+-- THE BOUNDARY CHECK. Called at the flow level between two sections, it takes
+-- the model again and names every path that came back different from what the
+-- suite started on -- then it STOPS the run.
+--
+-- It reads the model and never writes it. A boundary that put back what it
+-- found would repair the leak in silence instead of naming it, and the section
+-- that leaked would go on being wrong at no cost.
+--
+-- It is a precondition of the next section, like `fire`, and not an assertion:
+-- it adds nothing to the count, so the number a run prints stays the number of
+-- things the suite proves about the add-on.
+--
+-- Every drift is written out before the stop. A run that leaks in three places
+-- is then read once instead of three times.
+--
+-- Level 2 puts the CALLER's line on the message, so the failure names the
+-- boundary it happened at without a single line number kept in step by hand.
+local function assertModelAtRest()
+    local current = canonicalState()
+    local paths, seen = {}, {}
+    for path in pairs(stateAtRest) do
+        seen[path] = true
+        paths[#paths + 1] = path
+    end
+    for path in pairs(current) do
+        if not seen[path] then
+            seen[path] = true
+            paths[#paths + 1] = path
+        end
+    end
+    -- A key that appeared and a key that vanished are both drifts, and the same
+    -- failure has to read the same way twice -- `pairs` does not promise that.
+    table.sort(paths)
+    local first
+    for _, path in ipairs(paths) do
+        if current[path] ~= stateAtRest[path] then
+            local drift = string.format("%s (expected=%s, found=%s)",
+                path, tostring(stateAtRest[path]), tostring(current[path]))
+            io.stderr:write("the model was not given back as found: " .. drift .. "\n")
+            first = first or drift
+        end
+    end
+    if first then
+        error("the model was not given back as found: " .. first, 2)
+    end
+end
 
 -- Where a section parks the shared flag it is about to flip, so what it hands
 -- back is the value it FOUND and not a default it assumes. Keyed by a name of
@@ -1273,6 +1319,7 @@ inInstance = false
 currentInstanceType = "none"
 SanctuaryDB.debugEnabled = asFound.legacyDebug
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Retail secret-chat contract instrumentation.
 --
@@ -2382,6 +2429,7 @@ wipe(SanctuaryDB.manualWhitelist)
 wipe(SanctuaryCharDB.groupTracker)
 ns.invalidateWhitelist()
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Debug report rendering
 -- ---------------------------------------------------------------------------
@@ -2469,6 +2517,7 @@ ERR_INVITED_TO_GROUP_SS = asFound.inviteGlobal
 SanctuaryDB.logging.maxEntries = asFound.reportLimit
 SanctuaryDB.debugEnabled = asFound.reportDebug
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Debug log retention accounting
 -- ---------------------------------------------------------------------------
@@ -2513,6 +2562,7 @@ check(report:find("!!! TRUNCATED", 1, true) == nil, "an untruncated report carri
 SanctuaryDB.logging.maxEntries = asFound.retentionLimit
 SanctuaryDB.debugEnabled = asFound.retentionDebug
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Snapshot counters that are not ready yet
 -- ---------------------------------------------------------------------------
@@ -2541,6 +2591,7 @@ snapshot = lastDebug("SNAPSHOT")
 equal(snapshot.data.charFriends, 0, "a loaded friend counter is still reported as a number")
 SanctuaryDB.debugEnabled = asFound.snapshotDebug
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Protected popup sound guard: the files must end up unmuted
 -- ---------------------------------------------------------------------------
@@ -2606,6 +2657,7 @@ equal(SanctuaryDB.protectedPopupSoundMuted, nil, "lifting a stale mute clears th
 runTimers(6)
 SanctuaryDB.debugEnabled = asFound.soundGuardDebug
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Retention accounting: a legacy log that already rotated
 -- ---------------------------------------------------------------------------
@@ -2643,6 +2695,7 @@ ns.resetDebugLog()
 SanctuaryDB.logging.maxEntries = asFound.legacyRotationLimit
 SanctuaryDB.debugEnabled = asFound.legacyRotationDebug
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Export snapshot when debug mode is off
 -- ---------------------------------------------------------------------------
@@ -2676,6 +2729,7 @@ SanctuaryDB.debugEnabled = asFound.exportSnapshotDebug
 -- helpers as upvalues.
 ;(function()
 
+assertModelAtRest()
 -- ===========================================================================
 -- SECTION: Diagnostic catalogue (debug panel)
 -- ===========================================================================
@@ -2808,6 +2862,7 @@ StaticPopup1:Hide()
 runTimers()
 SanctuaryDB.debugEnabled = asFound.catalogueDebug
 
+assertModelAtRest()
 -- ===========================================================================
 -- SECTION: Whitelist readback
 -- ===========================================================================
@@ -2922,6 +2977,7 @@ bnetFriends = {}
 inGuild = false
 ns.invalidateWhitelist()
 
+assertModelAtRest()
 -- ===========================================================================
 -- SECTION: Report markers, manifest and in-game summary
 -- ===========================================================================
@@ -3051,6 +3107,7 @@ check(#ns.buildDebugReportText() > #summary,
     "the full report is still available and is the larger of the two")
 SanctuaryDB.debugEnabled = asFound.reportMarkersDebug
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The summary tested on its values, not on its shape
 -- ---------------------------------------------------------------------------
@@ -3189,6 +3246,7 @@ ns.resetDebugLog()
 SanctuaryDB.debugEnabled = asFound.summaryDebug
 
 
+assertModelAtRest()
 -- ===========================================================================
 -- SECTION: the 1.0.0 decision model
 -- ===========================================================================
@@ -5713,6 +5771,7 @@ resetModelState()
 
 end
 
+assertModelAtRest()
 -- ===========================================================================
 -- SECTION: no dead entry -- what the person typed reaches what the game says
 -- ===========================================================================
@@ -5808,6 +5867,7 @@ equal(ns.classifyName("Toto-Eonar").verdict, "unknown",
     "and the same pseudo on another realm walks free")
 resetModelState()
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Whispering yourself
 -- ---------------------------------------------------------------------------
@@ -5870,6 +5930,7 @@ resetModelState()
 
 end
 
+assertModelAtRest()
 -- ===========================================================================
 -- SECTION: hiding secret system lines during a chat lockdown
 -- ===========================================================================
@@ -6149,6 +6210,7 @@ resetModelState()
 SanctuaryDB.filters.preset = "custom"
 SanctuaryDB.debugEnabled = asFound.selfWhisperDebug
 
+assertModelAtRest()
 -- ===========================================================================
 -- SECTION UI: the interface file, under a widget mock
 -- ===========================================================================
@@ -6430,6 +6492,7 @@ assert(loadfile(repoRoot .. "/SanctuaryUI.lua"))("Sanctuary", ns)
 check(type(ns.ToggleUI) == "function", "the interface file exports its toggle")
 check(coreCreateFrame ~= nil, "the core CreateFrame mock stays reachable")
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Every localized key the two Lua files ask for actually exists
 -- ---------------------------------------------------------------------------
@@ -6467,6 +6530,7 @@ equal(#missingKeys, 0,
     "every L[] key used by the addon resolves to a non-empty string ("
     .. table.concat(missingKeys, ", ") .. ")")
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The French locale covers every key the default locale defines
 -- ---------------------------------------------------------------------------
@@ -6523,6 +6587,7 @@ end
 equal(#unexpected, 0,
     "every used key is translated in frFR (" .. table.concat(unexpected, ", ") .. ")")
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The two locale blocks define exactly the same keys
 -- ---------------------------------------------------------------------------
@@ -6595,6 +6660,7 @@ do
             .. table.concat(extraFrench, ", ") .. ")")
 end
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- No locale key is dead
 -- ---------------------------------------------------------------------------
@@ -6618,6 +6684,7 @@ table.sort(deadKeys)
 equal(#deadKeys, 0,
     "no locale key is defined without a surface (" .. table.concat(deadKeys, ", ") .. ")")
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- No visible value carries the words the interface got rid of
 -- ---------------------------------------------------------------------------
@@ -6643,6 +6710,7 @@ table.sort(offenders)
 equal(#offenders, 0,
     "no visible string carries a banned word (" .. table.concat(offenders, ", ") .. ")")
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Every locale value is valid UTF-8
 -- ---------------------------------------------------------------------------
@@ -6664,6 +6732,7 @@ table.sort(invalidUtf8)
 equal(#invalidUtf8, 0,
     "every locale value is valid UTF-8 (" .. table.concat(invalidUtf8, ", ") .. ")")
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- No visible string asks the game font for a glyph it does not have
 -- ---------------------------------------------------------------------------
@@ -6744,6 +6813,7 @@ do
         .. table.concat(unrenderable, ", ") .. ")")
 end
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- No visible sentence is held together by an em dash
 -- ---------------------------------------------------------------------------
@@ -6776,6 +6846,7 @@ do
         .. table.concat(dashed, ", ") .. ")")
 end
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The four tabs open, and the fifth only in debug mode
 -- ---------------------------------------------------------------------------
@@ -6820,6 +6891,7 @@ equal(_G["SanctuaryTabContent_protection"]:IsShown(), true,
     "closing the debug panel falls back to a tab that still exists")
 SanctuaryDB.debugEnabled = asFound.tabsDebug
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Every box, dot and tab is actually drawn
 -- ---------------------------------------------------------------------------
@@ -7351,6 +7423,7 @@ SanctuaryDB.filters.preset = asFound.drawnPreset
 
 end)()
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Question 1: the mode switch, and what it greys out
 -- ---------------------------------------------------------------------------
@@ -7368,6 +7441,7 @@ equal(SanctuaryDB.filters.scope, "strangers", "and the first card writes it back
 equal(_G.SanctuaryQ2_all.enabled, true, "question 2 comes back")
 equal(_G.SanctuaryStrictCheck.enabled, true, "and so does the enhanced-instance box")
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Question 2: the preset, the boxes, and the box that lives in both modes
 -- ---------------------------------------------------------------------------
@@ -7399,6 +7473,7 @@ _G.SanctuaryStrictCheck:Click()
 equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false, "and untickable again")
 SanctuaryDB.filters.preset = asFound.questionTwoPreset
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- No label of the home screen writes outside the column it was given
 -- ---------------------------------------------------------------------------
@@ -7547,6 +7622,7 @@ do
     ns.refreshUI()
 end
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Question 3: the anti-spam of the public channels
 -- ---------------------------------------------------------------------------
@@ -7673,6 +7749,7 @@ ns.refreshUI()
 
 end
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Question 4
 -- ---------------------------------------------------------------------------
@@ -7684,6 +7761,7 @@ equal(SanctuaryDB.notifications.mode, "minimal", "the second card too")
 _G.SanctuaryQ4_silent:Click()
 equal(SanctuaryDB.notifications.mode, "silent", "and the first one puts it back to silence")
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Question 5: the tiles, and the name tester
 -- ---------------------------------------------------------------------------
@@ -7800,6 +7878,7 @@ wipe(SanctuaryDB.blockedNames)
 SanctuaryDB.keywords = {}
 ns.invalidateWhitelist()
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The allowed panel
 -- ---------------------------------------------------------------------------
@@ -7983,6 +8062,7 @@ end
 wipe(SanctuaryDB.manualWhitelist)
 ns.invalidateWhitelist()
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The ten-second refresh
 -- ---------------------------------------------------------------------------
@@ -8068,6 +8148,7 @@ equal(#tickers, tickersBefore + 1, "closing the panel does not create another on
 wipe(SanctuaryDB.manualWhitelist)
 ns.invalidateWhitelist()
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The blocked panel
 -- ---------------------------------------------------------------------------
@@ -8119,6 +8200,7 @@ wipe(SanctuaryDB.blockedNames)
 SanctuaryDB.keywords = {}
 ns.invalidateWhitelist()
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- A label never runs under the cross, and a hint never runs out of its field
 -- ---------------------------------------------------------------------------
@@ -8200,6 +8282,7 @@ ns.ClosePanel()
 
 end)()
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The two lists are exclusive, and the strip says so
 -- ---------------------------------------------------------------------------
@@ -8289,6 +8372,7 @@ end
 
 end)()
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Saying no, and saying why
 -- ---------------------------------------------------------------------------
@@ -8477,6 +8561,7 @@ runTimers(3)
 
 end)()
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The panels are modal, and as tall as the window
 -- ---------------------------------------------------------------------------
@@ -8566,6 +8651,7 @@ do
     _G["SanctuaryTab_protection"]:Click()
 end
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The header control
 -- ---------------------------------------------------------------------------
@@ -8600,6 +8686,7 @@ equal(ns.isEnabled(), true, "left as it was found")
 -- character override this one only ever meant to toggle.
 SanctuaryCharDB.overrides.enabled = asFound.headerOverride
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The journal
 -- ---------------------------------------------------------------------------
@@ -8704,6 +8791,7 @@ exportFrame:Hide()
 findRow(journalContent, "Zzzzz-Royaume"):Click()
 wipe(SanctuaryDB.log)
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Advanced
 -- ---------------------------------------------------------------------------
@@ -8791,6 +8879,7 @@ equal(_G.SanctuaryMaxEntriesInput:GetText(), "100",
 _G.SanctuaryMaxEntriesInput:SetText(tostring(asFound.advancedLimit))
 _G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesInput)
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The minimap button
 -- ---------------------------------------------------------------------------
@@ -9058,6 +9147,7 @@ equal(minimapButton:IsShown(), false, "the button follows the setting")
 _G.SanctuaryMinimapCheck:Click()
 SanctuaryCharDB.overrides.enabled = asFound.minimapOverride
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The right-click menu
 -- ---------------------------------------------------------------------------
@@ -9183,6 +9273,7 @@ equal(#ns.buildPlayerMenuEntries({ name = "Toto", server = "Ysondre" }), 0,
     "nor during a chat lockdown")
 C_ChatInfo.InChatMessagingLockdown = savedLockdown
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The diagnostics panel
 -- ---------------------------------------------------------------------------
@@ -9398,6 +9489,7 @@ equal(resultText:GetText(), ns.L["DIAG_RESULT_EMPTY"], "clearing empties the res
 equal(restoreBtn:IsShown(), false, "and the way back goes when the dialog does")
 SanctuaryDB.debugEnabled = asFound.diagnosticsDebug
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Closing the window drops what was read
 -- ---------------------------------------------------------------------------
@@ -9421,6 +9513,7 @@ mainFrame:Show()
 equal(resultText:GetText(), ns.L["DIAG_RESULT_EMPTY"],
     "closing the window clears the diagnostics result box too")
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The window sizes itself to the screen it shows
 -- ---------------------------------------------------------------------------
@@ -9983,6 +10076,7 @@ ns.refreshUI()
 
 end
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- What the session and the visual pass sent back (chantiers A and B)
 -- ---------------------------------------------------------------------------
@@ -10677,6 +10771,7 @@ wipe(SanctuaryDB.blockedNames)
 SanctuaryDB.keywords = {}
 ns.invalidateWhitelist()
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The offline check the closing step now delegates to
 -- ---------------------------------------------------------------------------
@@ -10925,6 +11020,7 @@ equal(blindCode, 1, "a recording with neither manifest health nor snapshot is bl
 check(blindOutput:find("[ warn ] Frames de chat observees", 1, true) ~= nil,
     "and an unknown value is never presented as conforming")
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The freshness rule, the interface comparison and the settings block
 -- ---------------------------------------------------------------------------
@@ -10959,6 +11055,7 @@ check(goodOutput:find("question 2 = all", 1, true) ~= nil, "and which preset")
 check(goodOutput:find("invitations=true", 1, true) ~= nil,
     "and the resolved filters, not the stored checkboxes")
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The session protocol and the check agree on the markers
 -- ---------------------------------------------------------------------------
@@ -11025,6 +11122,7 @@ check(os.execute(string.format('python3 %q --check >/dev/null 2>&1',
 end)()
 end
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The deployment verdict, which is the add-on's own rule
 -- ---------------------------------------------------------------------------
@@ -11069,6 +11167,7 @@ do
     SanctuaryDB.debugEnabled = keptDebug
 end
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Two more checklist steps the machine can make
 -- ---------------------------------------------------------------------------
@@ -11165,6 +11264,7 @@ equal(#chatMessages, 0, "an unknown command prints nothing and just opens the wi
 ns.resetDebugLog()
 
 
+assertModelAtRest()
 -- ===========================================================================
 -- SECTION: one decision per message
 -- ===========================================================================
@@ -11499,6 +11599,7 @@ SanctuaryDB.logging.maxEntries = scopeRetention
 
 end)()
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- ... and the structure that makes it true
 -- ---------------------------------------------------------------------------
@@ -11572,6 +11673,7 @@ SanctuaryDB.filters.preset = structurePreset
 
 end)()
 
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- The day's fold survives a /reload
 -- ---------------------------------------------------------------------------
