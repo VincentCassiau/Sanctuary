@@ -3847,6 +3847,9 @@ end
 -- and what it writes is the group member, not whoever shares his pseudo at home.
 -- Asked in the two modes of question 1, because decision 170a gave it one: in
 -- "Everyone except the people I block" the same five minutes write nothing.
+-- What the SCREEN does to the tracker when the mode changes is proved where the
+-- cards are, further down: the click is what moves it, and this half of the
+-- suite has no screen yet.
 resetModelState()
 do
     local kept = SanctuaryDB.filters.autoTrust
@@ -3872,12 +3875,13 @@ do
     ns.invalidateWhitelist()
 
     -- The open mode filters nobody for being a stranger, so an allowance buys
-    -- nothing back there: the ticker stops writing, and the tracker that feeds
-    -- it is emptied rather than left to fire five minutes into the next mode.
+    -- nothing back there: the ticker stops writing whatever the tracker holds.
+    -- Nothing is fired to arrange that -- the mode changed, the group did not --
+    -- and the entry is left standing on purpose: what is asked here is the
+    -- ticker's own guard, not the emptying of the tracker.
     -- The stored box is not touched by any of it.
     SanctuaryDB.filters.scope = "blockedOnly"
-    fire("GROUP_ROSTER_UPDATE")
-    equal(next(SanctuaryCharDB.groupTracker), nil,
+    equal(ns.isFilterOn("autoTrust"), false,
         "the open mode counts nobody's five minutes")
     SanctuaryCharDB.groupTracker["Trustaj-Hyjal"] = now - 1000
     runTickers()
@@ -7669,6 +7673,52 @@ _G.SanctuaryQ1_strangers:Click()
 equal(SanctuaryDB.filters.scope, "strangers", "and the first card writes it back")
 equal(_G.SanctuaryQ2_all.enabled, true, "question 2 comes back")
 equal(_G.SanctuaryStrictCheck.enabled, true, "and the enhanced-instance box never left")
+
+-- What the card writes is not only the setting: answering question 1 answers
+-- automatic trust with it (decision 170a), so the tracker of the five minutes
+-- has to move in the same gesture. Driven from the screen, on a group NOBODY
+-- joins or leaves, and not one GROUP_ROSTER_UPDATE is posted below -- that is
+-- the whole point. A stable raid sends none, and a tracker rebuilt on that event
+-- alone is a tracker that never rebuilds for the people already sitting in it:
+-- their minutes went on being counted through a mode that counts nobody, and
+-- once the tracker had been emptied there, coming back never started them again.
+do
+    local keptTrust = SanctuaryDB.filters.autoTrust
+    SanctuaryDB.filters.autoTrust = true
+    inGroup = true
+    groupMembers = { "Steadaj-Hyjal" }
+    _G.SanctuaryQ1_strangers:Click()
+    equal(SanctuaryCharDB.groupTracker["Steadaj-Hyjal"], now,
+        "the card that starts filtering starts counting the mate already there")
+    -- A long while together, counted the way the ticker counts it: the clock is
+    -- frozen in this harness, so time passes by moving the entry, not the hour.
+    SanctuaryCharDB.groupTracker["Steadaj-Hyjal"] = now - 1000
+
+    _G.SanctuaryQ1_blockedOnly:Click()
+    equal(next(SanctuaryCharDB.groupTracker), nil,
+        "the open mode drops the minutes it has stopped counting, on the click itself")
+    equal(SanctuaryDB.filters.autoTrust, true,
+        "while the box the person ticked is left exactly as they ticked it")
+
+    _G.SanctuaryQ1_strangers:Click()
+    equal(SanctuaryCharDB.groupTracker["Steadaj-Hyjal"], now,
+        "and coming back starts him again at zero, with no roster event to wait for")
+    runTickers()
+    equal(SanctuaryDB.manualWhitelist["steadaj-hyjal"], nil,
+        "so nothing he spent in the open mode is written on his head")
+    SanctuaryCharDB.groupTracker["Steadaj-Hyjal"] =
+        now - (SanctuaryDB.temporalGroupTrust.trustThresholdMinutes * 60) - 1
+    runTickers()
+    equal((SanctuaryDB.manualWhitelist["steadaj-hyjal"] or {}).source, "trust",
+        "while five fresh minutes of the filtering mode write him, as they always did")
+
+    ns.removeAllowed("steadaj-hyjal")
+    inGroup = false
+    groupMembers = {}
+    wipe(SanctuaryCharDB.groupTracker)
+    SanctuaryDB.filters.autoTrust = keptTrust
+    ns.invalidateWhitelist()
+end
 
 assertModelAtRest()
 -- ---------------------------------------------------------------------------

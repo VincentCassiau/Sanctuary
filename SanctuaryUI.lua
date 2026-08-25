@@ -1519,14 +1519,26 @@ local function buildProtectionTab(parent)
     -- Question 1 ------------------------------------------------------------
     protection.q1Title, protection.q1Number = stepTitle(L["Q1_TITLE"], "1")
     local cardWidth = (width - HOME.gutter) / 2
+    -- Answering question 1 answers automatic trust with it (decision 170a), and
+    -- the tracker of the five minutes has to hear about it in the same gesture.
+    -- It is only ever rebuilt on GROUP_ROSTER_UPDATE, and a group that nobody
+    -- joins or leaves never sends one: a raid can sit together for an hour
+    -- across a mode change without a single event. So the write is followed by
+    -- the rebuild, which is what makes the mode change mean something on both
+    -- sides of it -- into the open mode, the tracked minutes are dropped; back
+    -- into the filtering one, the people present start again at zero.
+    local function setScope(value)
+        setFilter("scope", value)
+        if ns.refreshGroupTracker then ns.refreshGroupTracker() end
+    end
     protection.q1Strangers = newCard(parent, "SanctuaryQ1_strangers",
         L["Q1_STRANGERS_TITLE"], L["Q1_STRANGERS_DESC"], cardWidth,
         function() return ns.getScope() == "strangers" end,
-        function() setFilter("scope", "strangers") end)
+        function() setScope("strangers") end)
     protection.q1Blocked = newCard(parent, "SanctuaryQ1_blockedOnly",
         L["Q1_BLOCKEDONLY_TITLE"], L["Q1_BLOCKEDONLY_DESC"], cardWidth,
         function() return ns.getScope() == "blockedOnly" end,
-        function() setFilter("scope", "blockedOnly") end)
+        function() setScope("blockedOnly") end)
 
     -- Question 2 ------------------------------------------------------------
     protection.q2Title, protection.q2Number = stepTitle(L["Q2_TITLE"], "2")
