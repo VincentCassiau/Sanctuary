@@ -634,60 +634,59 @@ fire("PLAYER_ENTERING_WORLD")
 -- on tooling a clone does not have.
 --
 -- This is the state as the suite finds it. The block at the very end of the file
--- takes it again and names whichever flag came back different.
-local function canonicalState()
-    local filters = SanctuaryDB.filters or {}
-    local size = SanctuaryDB.uiSize
-    local notifications = SanctuaryDB.notifications or {}
-    local antiSpam = SanctuaryDB.antiSpam or {}
-    local logging = SanctuaryDB.logging or {}
-    local minimap = SanctuaryDB.minimap or {}
-    local overrides = (SanctuaryCharDB or {}).overrides or {}
-    local function count(tbl)
-        local total = 0
-        for _ in pairs(tbl or {}) do total = total + 1 end
-        return total
+-- takes it again and names whichever path came back different.
+--
+-- What it compares is DERIVED from the two saved files, leaf by leaf, and not
+-- written out here by hand. A list kept by hand forgot `minimap.angle`, then
+-- `uiPosition`, two rounds running: a check whose whole job is to notice the
+-- setting nobody thought of cannot itself depend on somebody thinking of it.
+-- Every key the add-on persists is in scope the day it is added, and what is
+-- left out is left out here, on purpose, with its reason beside it.
+local SENTINEL_IGNORED = {
+    -- The two journals, and the two records that describe a journal rather than
+    -- a setting: sections fill and empty them on purpose, and `resetDebugLog`
+    -- -- which every `resetModelState` calls -- re-dates the clearing each time.
+    ["SanctuaryDB.log"] = true,
+    ["SanctuaryDB.debugLog"] = true,
+    ["SanctuaryDB.debugLogStats"] = true,
+    ["SanctuaryDB.debugLogClearedAt"] = true,
+    -- The manifest of the last recording built. A section that builds one writes
+    -- it by that very act, so it moves with the work and not with a setting.
+    ["SanctuaryDB.reportManifest"] = true,
+    -- This character's tally of what was blocked -- the counter a run is meant
+    -- to make climb, and the per-type breakdown that climbs with it.
+    ["SanctuaryCharDB.sessionStats"] = true,
+}
+
+local function collectPersisted(source, path, out)
+    for key, value in pairs(source) do
+        local at = path .. "." .. tostring(key)
+        if not SENTINEL_IGNORED[at] then
+            if type(value) == "table" then
+                -- An empty table is a state of its own: without this line a list
+                -- that came back with names in it and a list that came back
+                -- empty would read the same way here.
+                if next(value) == nil then
+                    out[at] = "{}"
+                else
+                    collectPersisted(value, at, out)
+                end
+            else
+                out[at] = tostring(value)
+            end
+        end
     end
-    -- Everything the add-on persists is compared here EXCEPT what the two
-    -- journals hold -- `log`, `debugLog`, `debugLogStats` -- and this
-    -- character's `sessionStats.blockedCount`: the journals are the working
-    -- data a section fills and empties on purpose, and the counter is one a
-    -- run is meant to make climb. Comparing either would fail a suite that is
-    -- doing exactly its job. The question does not need reopening.
-    --
-    -- An ordered list rather than a map: a failure has to read the same way
-    -- twice, and `pairs` does not promise that.
-    return {
-        { "debug mode", SanctuaryDB.debugEnabled },
-        { "window size", size and (tostring(size[1]) .. "x" .. tostring(size[2])) or "default" },
-        { "scope", filters.scope },
-        { "preset", filters.preset },
-        { "group invitations", filters.groupInvite },
-        { "whispers", filters.whisper },
-        { "say", filters.say },
-        { "yell", filters.yell },
-        { "emotes", filters.emote },
-        { "duels", filters.duel },
-        { "trades", filters.trade },
-        { "guild invitations", filters.guildInvite },
-        { "public channels", filters.channelMode },
-        { "enhanced instance filtering", filters.strictGroupInviteSystemMessages },
-        { "automatic trust", filters.autoTrust },
-        { "notification mode", notifications.mode },
-        { "the summary's interval", notifications.minimalIntervalMinutes },
-        { "anti-spam", antiSpam.enabled },
-        { "anti-spam window", antiSpam.intervalSeconds },
-        { "recording into the journal", logging.enabled },
-        { "the retention limit", logging.maxEntries },
-        { "the minimap button, hidden or shown", minimap.hide },
-        { "the minimap button's angle", minimap.angle },
-        { "this character's override", overrides.enabled },
-        { "allowed names", count(SanctuaryDB.manualWhitelist) },
-        { "always-blocked names", count(SanctuaryDB.blockedNames) },
-        { "suspect patterns", count(SanctuaryDB.keywords) },
-        { "the day the clock reads", date("%Y-%m-%d") },
-        { "the client locale", GetLocale() },
-    }
+end
+
+local function canonicalState()
+    local state = {}
+    collectPersisted(SanctuaryDB or {}, "SanctuaryDB", state)
+    collectPersisted(SanctuaryCharDB or {}, "SanctuaryCharDB", state)
+    -- The two shared things the add-on does not persist. A section that moves
+    -- either and does not put it back changes what every section after it sees.
+    state["the day the clock reads"] = date("%Y-%m-%d")
+    state["the client locale"] = GetLocale()
+    return state
 end
 local stateAtRest = canonicalState()
 
@@ -11709,7 +11708,7 @@ end
 end)()
 
 -- The sentinel: what the suite ends on, against what it started on. It names the
--- FLAG rather than the section, because the flag is what the next person to read
+-- PATH rather than the section, because the path is what the next person to read
 -- a failure here needs -- searching the file for the two lines that write it
 -- finds the section in seconds.
 --
@@ -11717,9 +11716,28 @@ end)()
 -- flag on and a later one that happens to turn it off cancel out here and pass:
 -- the rule stated at the top of the file is the invariant, and this is its net
 -- check, not its proof. Reading a per-section drift needs an instrumented copy.
-for index, entry in ipairs(canonicalState()) do
-    equal(entry[2], stateAtRest[index][2],
-        "the suite gives the model back as it found it: " .. entry[1])
+--
+-- Over the union of the two readings, sorted: a key that appeared during the run
+-- and a key that disappeared are both leaks, and a failure has to read the same
+-- way twice -- `pairs` does not promise that.
+do
+    local stateAtEnd = canonicalState()
+    local paths, seen = {}, {}
+    for path in pairs(stateAtRest) do
+        seen[path] = true
+        paths[#paths + 1] = path
+    end
+    for path in pairs(stateAtEnd) do
+        if not seen[path] then
+            seen[path] = true
+            paths[#paths + 1] = path
+        end
+    end
+    table.sort(paths)
+    for _, path in ipairs(paths) do
+        equal(stateAtEnd[path], stateAtRest[path],
+            "the suite gives the model back as it found it: " .. path)
+    end
 end
 
 if failures > 0 then
