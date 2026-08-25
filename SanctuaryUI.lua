@@ -118,11 +118,15 @@ local MIN_HEIGHT, MAX_HEIGHT = 820, 900
 -- does not replace it).
 local GRIP_MIN_HEIGHT = 380
 local HEADER_HEIGHT = 40
-local TAB_HEIGHT = 22
--- How far the current tab climbs into the frame, and how thick its underline is
--- -- `margin-top:-2px` and `inset 0 -2px 0` of the mock-up, which are the same
--- two pixels.
-local TAB_LIFT = 2
+-- The strip of tabs (decision 140): ONE bar, the full width of the window, held
+-- between the title bar and the content, on every screen. `padding:8px 17px`
+-- around a 13 px label is a 30 px bar. TAB_UNDERLINE is the mock-up's
+-- `box-shadow: inset 0 -2px 0 accent` -- the accent line the current tab carries
+-- along its BOTTOM edge, pointing at the content it opens.
+--
+-- The old strip hung below the frame, which is why so much of the sizing code
+-- below used to reserve room outside the window: nothing hangs out of it now.
+local TABBAR_HEIGHT, TAB_UNDERLINE = 30, 2
 local PAD = 18
 local PANEL_WIDTH = 540
 -- The stacking order the modal panel needs, stated once. The content area nests
@@ -133,8 +137,9 @@ local PANEL_WIDTH = 540
 -- and the undo strip, whose only four callers are the panels themselves. Burying
 -- either under the veil would take away a control the panel needs.
 local LEVEL_VEIL, LEVEL_PANEL, LEVEL_OVER_PANEL = 180, 200, 220
--- Room kept under the content for the tabs' own strip and the undo line, which
--- are anchored to the bottom of the frame.
+-- Room kept under the content for the undo line, which is anchored to the bottom
+-- of the frame: UNDO_HEIGHT + UNDO_MARGIN and a couple of pixels of edge. The
+-- tabs used to be down here too; they are a strip at the top now (decision 140).
 local CONTENT_BOTTOM = 30
 -- The undo strip, stated once because two layouts have to keep clear of it: it
 -- is an overlay pinned this far above the bottom edge of the frame, and it sits
@@ -145,9 +150,15 @@ local UNDO_HEIGHT, UNDO_MARGIN = 22, 6
 -- the sentence gets exactly what is left of the row and nothing else.
 local UNDO_INSET, UNDO_GAP, UNDO_BTN_WIDTH = 8, 12, 90
 -- What the whole window may measure in height, header and bottom strip included.
-local MIN_FRAME_HEIGHT = MIN_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
-local MAX_FRAME_HEIGHT = MAX_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
-local GRIP_MIN_FRAME_HEIGHT = GRIP_MIN_HEIGHT + HEADER_HEIGHT + CONTENT_BOTTOM
+-- Where the content area starts: under the title bar AND under the strip of
+-- tabs, which is inside the window now. Written once, because five things hang
+-- from it -- the scroll area, the veil, the drawers and both height passes --
+-- and a screen anchored under one of the two alone is a screen with a tab strip
+-- drawn over its first line.
+local CONTENT_TOP = HEADER_HEIGHT + TABBAR_HEIGHT
+local MIN_FRAME_HEIGHT = MIN_HEIGHT + CONTENT_TOP + CONTENT_BOTTOM
+local MAX_FRAME_HEIGHT = MAX_HEIGHT + CONTENT_TOP + CONTENT_BOTTOM
+local GRIP_MIN_FRAME_HEIGHT = GRIP_MIN_HEIGHT + CONTENT_TOP + CONTENT_BOTTOM
 local UNDO_SECONDS = 6
 -- The sentence a refused entry gets. It answers for the panel, not for the box,
 -- so it runs the panel's own text width -- the one the descriptions above it
@@ -916,7 +927,7 @@ end
 -- SECTION 3: State shared by the screens
 -- ============================================================================
 
-local mainFrame, contentFrame, contentScroll, stateButton, resizeGrip
+local mainFrame, contentFrame, contentScroll, stateButton, resizeGrip, tabBar
 -- The sheet of nothing that makes the side panels modal: it covers the frame
 -- from the bottom of the header down and eats every click, so the screen behind
 -- an open panel can be read but not touched.
@@ -3106,28 +3117,27 @@ local function layoutTabs()
             btn:Hide()
         end
     end
-    local x = 12
+    -- Decision 140, "2 barre en haut": the tabs sit INSIDE the window, in one
+    -- strip that runs its whole width just under the title bar, on every screen.
+    -- The current one is filled with the accent tint and underlined in accent
+    -- along its bottom edge, towards the content it opens; the others are grey
+    -- on the strip's own fill. No backdrop, no border, no corner: the strip is
+    -- the frame, and decision 140 refused the rounded segment for not being
+    -- "fidele au reste" -- everything here is square.
+    local x = 0
     for _, def in ipairs(visible) do
         local btn = tabButtons[def.key]
-        local width = math.max(70, (#L[def.labelKey] * 8) + 20)
+        local width = math.max(70, (#L[def.labelKey] * 8) + 34)
         local current = (def.key == activeTab)
-        -- `.tab.on { margin-top:-2px; padding-top:6px }`: the current tab starts
-        -- TAB_LIFT higher and is that much taller, so both rows keep the same
-        -- bottom edge and the current one alone climbs over the frame's border.
-        -- That overlap is what "fusionne avec le cadre" is made of; every tab
-        -- was drawn at the same y before, so the strip read as four buttons
-        -- under the window and told nobody where they were.
-        btn:SetSize(width, current and (TAB_HEIGHT + TAB_LIFT) or TAB_HEIGHT)
+        btn:SetSize(width, TABBAR_HEIGHT)
         btn:ClearAllPoints()
-        btn:SetPoint("TOPLEFT", mainFrame, "BOTTOMLEFT", x, current and TAB_LIFT or 0)
-        x = x + width + 2
-        applyBackdrop(btn, current and C.panel or C.tabOff, C.border)
+        btn:SetPoint("TOPLEFT", tabBar, "TOPLEFT", x, 0)
+        x = x + width
+        -- A fill and nothing else. `applyBackdrop` with no border draws the four
+        -- sides in the fill's own colour, which on a transparent tab is four
+        -- lines of nothing -- the strip stays one continuous bar.
+        applyBackdrop(btn, current and C.tabOn or C.tabBar)
         btn.label:SetTextColor(unpack(current and C.ink or C.dim))
-        -- `border-top:0` on both, drawn rather than removed: a backdrop has four
-        -- sides. The current tab hides its top edge under the panel's own fill,
-        -- which is the same colour as the window above it, so the two meet with
-        -- no line between them.
-        if current then btn.merge:Show() else btn.merge:Hide() end
         -- `box-shadow: inset 0 -2px 0 accent`.
         if current then btn.underline:Show() else btn.underline:Hide() end
     end
@@ -3170,15 +3180,15 @@ end
 -- the screen has the last word: where it cannot hold them, the content scrolls,
 -- which is what the scroll area is for.
 --
--- What has to be reserved is NOT the window: the tab strip hangs TAB_HEIGHT
--- below the frame's bottom edge, and the window opens on SetPoint("CENTER"), so
--- whatever room is left over is split evenly above and below -- half of a
--- reserve meant for the bottom is spent on the top. The reserve therefore
--- carries the overhang TWICE, plus a breathing edge, or the strip goes off the
--- screen and no amount of dragging brings it back (SetClampedToScreen clamps the
--- frame, and the strip is not in it).
+-- What has to be reserved is a breathing edge and nothing else, now that the
+-- tabs are a strip INSIDE the window (decision 140). The old strip hung below
+-- the frame's bottom edge and the window opens on SetPoint("CENTER") -- whatever
+-- room is left over is split evenly above and below, so half of a reserve meant
+-- for the bottom was spent on the top and the overhang had to be carried twice.
+-- Nothing hangs out of the frame any more, and SetClampedToScreen covers the
+-- rest, so what is kept is the edge itself, at both ends.
 local SCREEN_EDGE = 10
-local SCREEN_MARGIN, SCREEN_FLOOR = 2 * (TAB_HEIGHT + SCREEN_EDGE), 300
+local SCREEN_MARGIN, SCREEN_FLOOR = 2 * SCREEN_EDGE, 300
 local function fitToScreen(frameHeight)
     local available = UIParent and UIParent.GetHeight and UIParent:GetHeight()
     if type(available) ~= "number" or available <= 0 then return frameHeight end
@@ -3216,7 +3226,7 @@ local function applyViewport(frameHeight, width)
     -- for the window as it is now, not as it opened.
     frameWidth = math.min(MAX_FRAME_WIDTH,
         math.max(MIN_FRAME_WIDTH, width or frameWidth))
-    local viewport = math.max(120, (frameHeight or MIN_FRAME_HEIGHT) - HEADER_HEIGHT - CONTENT_BOTTOM)
+    local viewport = math.max(120, (frameHeight or MIN_FRAME_HEIGHT) - CONTENT_TOP - CONTENT_BOTTOM)
     contentScroll:SetSize(frameWidth, viewport)
     local contentHeight = math.max(fittedNeed, viewport)
     contentFrame:SetWidth(frameWidth)
@@ -3277,7 +3287,7 @@ local function applyHeight(height)
         frameHeight = math.min(MAX_FRAME_HEIGHT, math.max(GRIP_MIN_FRAME_HEIGHT, frameHeight))
     else
         local bounded = math.min(MAX_HEIGHT, needed)
-        frameHeight = bounded + HEADER_HEIGHT + CONTENT_BOTTOM
+        frameHeight = bounded + CONTENT_TOP + CONTENT_BOTTOM
     end
     frameHeight = fitToScreen(frameHeight)
     applyResizeBounds()
@@ -3290,11 +3300,11 @@ local function selectTab(key)
     -- An open list belongs to the screen it was opened on: it draws over
     -- everything, so leaving it up would float eight durations over the Journal.
     closeOpenDropdown()
-    -- Changing screen closes the panel rather than being refused: the tab strip
-    -- hangs below the frame, so the veil cannot cover it, and of the two ways out
-    -- of that -- close, or ignore the click -- closing is the one that never
-    -- leaves a person clicking a live button that does nothing. A list of
-    -- allowed names floating over the Journal is a state the design never had.
+    -- Changing screen closes the panel rather than being refused. The strip is
+    -- inside the window now and the veil covers it, so this is not the path a
+    -- click normally takes any more -- but a tab can still be selected from
+    -- code (the debug tab disappearing is one), and a list of allowed names
+    -- floating over the Journal is a state the design never had.
     ns.ClosePanel()
     activeTab = key
     -- The scroll frame is one frame for the five screens, so its offset belongs
@@ -3441,8 +3451,18 @@ local function createMainFrame()
         mainFrame:Hide()
     end)
 
+    -- The strip of tabs, between the title bar and the content (decision 140).
+    -- Built before the content area so the buttons it holds are created before
+    -- the first `layoutTabs`, and given the strip's own fill so an inactive tab
+    -- -- which draws nothing of its own -- reads as part of one bar.
+    tabBar = CreateFrame("Frame", "SanctuaryTabBar", mainFrame, "BackdropTemplate")
+    tabBar:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -HEADER_HEIGHT)
+    tabBar:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", 0, -HEADER_HEIGHT)
+    tabBar:SetHeight(TABBAR_HEIGHT)
+    applyBackdrop(tabBar, C.tabBar, C.border)
+
     contentScroll = newScroll(mainFrame, "SanctuaryContentScroll", frameWidth, MIN_HEIGHT)
-    contentScroll:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -HEADER_HEIGHT)
+    contentScroll:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -CONTENT_TOP)
     contentFrame = contentScroll.child
 
     -- The content follows the window while the grip is being dragged, not only
@@ -3489,22 +3509,16 @@ local function createMainFrame()
         frame:Hide()
         tabFrames[def.key] = frame
 
-        local btn = CreateFrame("Button", "SanctuaryTab_" .. def.key, mainFrame, "BackdropTemplate")
-        btn:SetSize(80, TAB_HEIGHT)
+        local btn = CreateFrame("Button", "SanctuaryTab_" .. def.key, tabBar, "BackdropTemplate")
+        btn:SetSize(80, TABBAR_HEIGHT)
         btn.label = newLabel(btn, L[def.labelKey], FONT_DESC, C.dim, "CENTER")
         -- Centred on what is left once the underline has taken its two pixels,
         -- so the word does not sit visibly low in the current tab.
         btn.label:SetPoint("CENTER", btn, "CENTER", 0, 1)
-        btn.merge = btn:CreateTexture(nil, "ARTWORK")
-        btn.merge:SetHeight(TAB_LIFT)
-        btn.merge:SetPoint("TOPLEFT", btn, "TOPLEFT", 1, 0)
-        btn.merge:SetPoint("TOPRIGHT", btn, "TOPRIGHT", -1, 0)
-        btn.merge:SetColorTexture(unpack(C.panel))
-        btn.merge:Hide()
         btn.underline = btn:CreateTexture(nil, "OVERLAY")
-        btn.underline:SetHeight(TAB_LIFT)
-        btn.underline:SetPoint("BOTTOMLEFT", btn, "BOTTOMLEFT", 1, 1)
-        btn.underline:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -1, 1)
+        btn.underline:SetHeight(TAB_UNDERLINE)
+        btn.underline:SetPoint("BOTTOMLEFT", btn, "BOTTOMLEFT", 0, 0)
+        btn.underline:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 0, 0)
         btn.underline:SetColorTexture(unpack(C.accent))
         btn.underline:Hide()
         local key = def.key

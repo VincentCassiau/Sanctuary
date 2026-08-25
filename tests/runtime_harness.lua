@@ -6464,20 +6464,44 @@ check(sameColor(_G.SanctuaryChannel_keywords.rim.__colorTexture, { 0.4, 0.6, 1.0
     "the picked radio's rim answers too")
 _G.SanctuaryChannel_none:Click()
 
--- The tab strip: the current tab merges with the frame and the others sit under
--- it. All four were drawn at the same height with the same fill, so the strip
--- said nothing about where one was.
+-- The tab strip, decision 140: ONE bar the full width of the window, between the
+-- title bar and the content, on every screen. The current tab is filled with the
+-- accent tint and underlined towards the content; the others carry the strip's
+-- own fill. Nothing hangs below the frame any more.
+local TAB_ON_FILL = { 0.400, 0.600, 1.000, 0.14 }
+local TAB_OFF_FILL = { 0.078, 0.078, 0.141, 0.90 }
+local strip = _G.SanctuaryTabBar
+check(strip ~= nil, "the strip of tabs is a frame of its own")
+equal(strip:GetHeight(), 30, "as tall as the bar the mock-up draws")
+do
+    local point, relativeTo, relativePoint, _, offsetY = strip:GetPoint()
+    equal(point, "TOPLEFT", "hung from the window's top-left corner")
+    equal(relativeTo, mainFrame, "on the window itself")
+    equal(relativePoint, "TOPLEFT", "corner to corner")
+    equal(offsetY, -40, "just under the title bar, not below the frame")
+end
 local function tabState(key)
     local tab = _G["SanctuaryTab_" .. key]
-    return tab:GetHeight(), tab.underline:IsShown(), tab.merge:IsShown()
+    return tab:GetHeight(), tab.underline:IsShown(), tab.__backdropColor
 end
-local currentHeight, currentUnderline, currentMerge = tabState("protection")
-local otherHeight, otherUnderline, otherMerge = tabState("journal")
-check(currentHeight > otherHeight, "the current tab is taller than the others")
+local currentHeight, currentUnderline, currentFill = tabState("protection")
+local otherHeight, otherUnderline, otherFill = tabState("journal")
+equal(currentHeight, 30, "every tab is the height of the strip")
+equal(otherHeight, 30, "the current one included -- nothing climbs out of it")
 equal(currentUnderline, true, "it carries the two-pixel underline")
-equal(currentMerge, true, "and hides its top edge under the panel's own fill")
+check(sameColor(currentFill, TAB_ON_FILL), "and the accent tint behind its name")
 equal(otherUnderline, false, "a tab that is not current has no underline")
-equal(otherMerge, false, "and keeps its top edge")
+check(sameColor(otherFill, TAB_OFF_FILL), "and stays the colour of the strip")
+for _, key in ipairs({ "protection", "journal", "advanced", "about" }) do
+    equal(_G["SanctuaryTab_" .. key]:GetParent(), strip,
+        "the " .. key .. " tab lives in the strip, not under the window")
+end
+-- The five screens start BELOW the strip, or the first line of each is drawn
+-- under it: 40 of title bar plus 30 of tabs.
+do
+    local _, _, _, _, offsetY = _G.SanctuaryContentScroll:GetPoint()
+    equal(offsetY, -70, "the content area starts under the strip, not under the title bar")
+end
 _G["SanctuaryTab_journal"]:Click()
 local _, journalUnderline = tabState("journal")
 local _, protectionUnderline = tabState("protection")
@@ -8277,7 +8301,7 @@ local aboutHeight = mainFrame:GetHeight()
 _G["SanctuaryTab_protection"]:Click()
 local protectionHeight = mainFrame:GetHeight()
 check(protectionHeight >= aboutHeight, "the tallest screen is at least as tall as the shortest")
-check(protectionHeight <= 900 + 40 + 30, "and the fitted height stays within its bounds")
+check(protectionHeight <= 900 + 40 + 30 + 30, "and the fitted height stays within its bounds")
 
 -- "I choose" unfolded is taller than the fitted bound. The screen must stay
 -- reachable: the content area scrolls instead of being cut off.
@@ -8325,7 +8349,7 @@ local gripUp = grip:GetScript("OnMouseUp")
 -- used to call ns.refreshUI() by hand right after gripUp and hid it.
 local viewportOf = function() return _G.SanctuaryContentScroll:GetHeight() end
 local widthOf = function() return _G.SanctuaryContentScroll:GetWidth() end
-local expectedViewport = function() return mainFrame:GetHeight() - 40 - 30 end
+local expectedViewport = function() return mainFrame:GetHeight() - 40 - 30 - 30 end
 
 now = now + 5
 gripDown(grip)
@@ -8619,7 +8643,7 @@ equal(SanctuaryDB.uiSize, nil, "a double-click forgets the remembered size for g
 -- And the fitted mode is really back: the height follows the screen again, and
 -- the width goes back to the one the window is designed at.
 _G["SanctuaryTab_about"]:Click()
-equal(mainFrame:GetHeight(), 820 + 40 + 30, "the shortest screen is back to its fitted height")
+equal(mainFrame:GetHeight(), 820 + 40 + 30 + 30, "the shortest screen is back to its fitted height")
 equal(mainFrame:GetWidth(), 780, "and to the design width")
 local shortestFitted = mainFrame:GetHeight()
 -- Every screen opens in the same window: the height the window asks for is the
@@ -9040,11 +9064,11 @@ do
     local keptScreen, keptSize = UIParent.GetHeight, SanctuaryDB.uiSize
     SanctuaryDB.filters.preset = "all"
     SanctuaryDB.uiSize = nil
-    -- What the window leaves the screen for the tab strip hanging under it: the
-    -- strip's 22 px of overhang, counted on both sides of the centring, plus a
-    -- breathing edge. The block further down measures that overhang on the strip
-    -- itself; here it is the reserve that is being read back.
-    local reserve = 2 * (22 + 10)
+    -- What the window leaves the screen: a breathing edge at each end, and
+    -- nothing else. The strip of tabs is INSIDE the frame now (decision 140), so
+    -- there is no overhang left to carry twice -- the block further down
+    -- measures that the strip really is inside.
+    local reserve = 2 * 10
     for _, screen in ipairs({ 600, 768, 900 }) do
         UIParent.GetHeight = function() return screen end
         _G["SanctuaryTab_protection"]:Click()
@@ -9214,34 +9238,45 @@ do
     ns.refreshUI()
 end
 
--- A.2, fourth side: the part of the window that is not IN the window.
+-- A.2, fourth side: nothing of the window is outside the window.
 --
--- The tab strip is anchored under the frame's bottom edge, and the window opens
--- centred, so the room left over is split evenly above and below it: a reserve
--- of 20 px in total left 10 px under a window that had 22 px of tabs hanging
--- there, and on a default Retail screen -- 768 units -- the bottom half of every
--- tab was off the screen with its label cut. Nothing on the frame catches that:
--- SetClampedToScreen clamps the frame, which was inside the screen all along.
--- The overhang is read off the strip itself rather than written here, so this
--- still answers the day a tab changes height; what it measures is the reserve,
--- and it fails again the day the reserve stops covering both sides of the
--- centring.
+-- The strip of tabs used to be anchored under the frame's bottom edge, and the
+-- window opens centred, so the room left over was split evenly above and below
+-- it: a reserve of 20 px in total left 10 px under a window that had 22 px of
+-- tabs hanging there, and on a default Retail screen -- 768 units -- the bottom
+-- half of every tab was off the screen with its label cut. SetClampedToScreen
+-- never caught it: it clamps the frame, which was inside the screen all along.
+--
+-- Decision 140 took the whole problem away by putting the strip inside the
+-- window. This is the check that it stays there: every tab is anchored to the
+-- strip, the strip is anchored under the title bar, and the bottom of the tallest
+-- one is above the frame's own bottom edge -- so there is nothing left for a
+-- reserve to protect and nothing SetClampedToScreen cannot see.
 do
     local keptScreen, keptSize = UIParent.GetHeight, SanctuaryDB.uiSize
     SanctuaryDB.uiSize = nil
     UIParent.GetHeight = function() return 768 end
     _G["SanctuaryTab_protection"]:Click()
     ns.refreshUI()
-    -- The current tab climbs by TAB_LIFT and is that much taller, so every tab
-    -- ends on the same edge: its height, less its anchor's own offset.
-    local tab = _G["SanctuaryTab_protection"]
-    local _, _, _, _, tabY = tab:GetPoint()
-    local overhang = (tab:GetHeight() or 0) - (tabY or 0)
-    check(overhang > 0, "the tab strip hangs under the window (" .. overhang .. " px)")
-    local below = (768 - (mainFrame:GetHeight() or 0)) / 2
-    check(below - overhang >= 0,
-        "and on a default Retail screen the whole of it is on the screen ("
-            .. below .. " px of room for " .. overhang .. ")")
+    local strip = _G.SanctuaryTabBar
+    local _, _, _, _, stripY = strip:GetPoint()
+    for _, key in ipairs({ "protection", "journal", "advanced", "about" }) do
+        local tab = _G["SanctuaryTab_" .. key]
+        equal(tab:GetParent(), strip, "the " .. key .. " tab hangs from the strip")
+        local _, tabRelative, _, _, tabY = tab:GetPoint()
+        equal(tabRelative, strip, "and is placed against it, not against the window")
+        -- Inside the strip: it starts at the strip's top and is no taller than it.
+        equal(tabY, 0, "flush with the top of the strip")
+        check((tab:GetHeight() or 0) <= (strip:GetHeight() or 0),
+            "and no taller than the strip that holds it")
+    end
+    -- And the strip itself is inside the frame: it starts below the title bar
+    -- and ends well above the bottom edge.
+    check(-(stripY or 0) + (strip:GetHeight() or 0) < (mainFrame:GetHeight() or 0),
+        "the strip ends inside the window, not under it")
+    local spare = (768 - (mainFrame:GetHeight() or 0)) / 2
+    check(spare >= 10,
+        "and a default Retail screen keeps its breathing edge (" .. spare .. " px)")
     UIParent.GetHeight = keptScreen
     SanctuaryDB.uiSize = keptSize
     ns.refreshUI()
