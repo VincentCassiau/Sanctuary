@@ -11082,6 +11082,11 @@ end
 -- the leak that made it necessary: the section that borrows that global now
 -- hands it back.
 fire("ADDON_LOADED", "Sanctuary")
+-- The `nil` further down arms the switch back ON, which the three ON checks
+-- need; it is an arming, not a restitution. What this section FOUND is parked
+-- here and put back at the end, so a switch left off upstream is still off
+-- downstream instead of being quietly cleared here.
+asFound.masterSwitchOverride = SanctuaryCharDB.overrides.enabled
 SanctuaryCharDB.overrides.enabled = false
 -- Flipping the switch in game also refreshes the sound guard; the simulation
 -- reports the guard's actual state, not what the setting implies.
@@ -11097,6 +11102,8 @@ local onLine = ns.formatSimulationResult(ns.simulateInvite("SanctuaryTest"))
 check(onLine:find("popup=mask", 1, true) ~= nil, "back at ON the popup is masked again")
 check(onLine:find("chat=blocked", 1, true) ~= nil, "back at ON the chat line is suppressed again")
 check(onLine:find("sound-guard=yes", 1, true) ~= nil, "back at ON the sound guard is back")
+SanctuaryCharDB.overrides.enabled = asFound.masterSwitchOverride
+ns.refreshInviteSoundMuteState()
 ns.resetDebugLog()
 
 -- Both slash names, and every "unknown argument" path. Four more steps that
