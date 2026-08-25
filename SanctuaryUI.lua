@@ -3746,12 +3746,20 @@ local function createMainFrame()
     -- what "sans declencher un deplacement au passage" rests on: the client
     -- fires OnDragStart only once the mouse has actually travelled, so neither
     -- click of a double-click starts a move.
+    --
+    -- The other side of that same delay is why the pair is counted on RELEASE.
+    -- At the moment of the press, nobody knows yet whether it is a click or the
+    -- beginning of a move, and deciding there once undid the size somebody had
+    -- set as they took hold of the window again to move it.
     header:EnableMouse(true)
     header:RegisterForDrag("LeftButton")
     header:SetScript("OnDragStart", function(self)
-        -- A drag is not half of a double-click. Without this, a flick of the
-        -- window followed by a click inside the same 0.4 s counted as two, and
-        -- the window one had just placed went back to its opening size.
+        -- A drag is not half of a double-click, in either order. Marking the
+        -- gesture keeps the release that ends it from arming a pair; clearing
+        -- lastClick covers the other order, a flick of the window followed by a
+        -- click inside the same 0.4 s -- which sent the window somebody had
+        -- just placed back to its opening size.
+        self.dragging = true
         self.lastClick = 0
         mainFrame:StartMoving()
     end)
@@ -3761,12 +3769,26 @@ local function createMainFrame()
         if SanctuaryDB then SanctuaryDB.uiPosition = { point = point, x = x, y = y } end
     end)
     header.lastClick = 0
+    header.dragging = false
     header:SetScript("OnMouseDown", function(self, button)
+        -- The press decides nothing; it only opens a gesture. The mark is
+        -- cleared HERE rather than at the end of a move, because a press always
+        -- comes before the release it belongs to -- whereas nothing says a move
+        -- ends with a release this frame is told about.
+        if button ~= "LeftButton" then return end
+        self.dragging = false
+    end)
+    header:SetScript("OnMouseUp", function(self, button)
         -- The left button and nothing else: decision 136 gives this bar one
         -- gesture, and a right double-click is a menu somewhere else in the
         -- game, not a request to resize anything. The client always says which
         -- button it was, so an unnamed press is nobody's press.
         if button ~= "LeftButton" then return end
+        if self.dragging then
+            self.dragging = false
+            self.lastClick = 0
+            return
+        end
         local now = GetTime()
         if now - (self.lastClick or 0) < 0.4 then
             self.lastClick = 0

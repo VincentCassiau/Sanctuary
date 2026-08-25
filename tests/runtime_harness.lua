@@ -9254,67 +9254,148 @@ equal(SanctuaryDB.uiSize, nil, "twice over, and still nothing written")
 -- The way back to the default size is a double-click on the TITLE BAR
 -- (decision 136): two press/release pairs less than 0.4 s apart, where the title
 -- and the on/off control are.
-local titleBar = _G.SanctuaryTitleBar
-check(titleBar ~= nil, "the title bar is a frame of its own")
-local titleDown = titleBar:GetScript("OnMouseDown")
-check(type(titleDown) == "function", "and it answers a press")
-now = now + 5
-gripDown(grip)
-mainFrame:SetSize(700, 940)
-gripUp(grip)
-equal(SanctuaryDB.uiSize[1], 700, "a drag is still recorded")
-now = now + 5
-titleDown(titleBar, "LeftButton")
-now = now + 0.2
-titleDown(titleBar, "LeftButton")
-equal(SanctuaryDB.uiSize, nil,
-    "a double-click on the title bar forgets the remembered size for good")
--- A single click on the title bar is not half a gesture: it does nothing.
-now = now + 5
-gripDown(grip)
-mainFrame:SetSize(700, 940)
-gripUp(grip)
-now = now + 5
-titleDown(titleBar, "LeftButton")
-now = now + 2
-equal(SanctuaryDB.uiSize[1], 700, "one click on the title bar changes nothing")
-now = now + 5
-titleDown(titleBar, "LeftButton")
-now = now + 0.2
-titleDown(titleBar, "LeftButton")
-equal(SanctuaryDB.uiSize, nil, "and the pair still counts once the pause is over")
-
--- The pair is a LEFT one, and a drag is not half of it. Decision 136 gives this
--- bar one gesture; two right clicks are a menu somewhere else in the game, and a
--- flick of the window followed by a click inside the same 0.4 s was a window
--- somebody had just placed going back to its opening size on its own.
-now = now + 5
-gripDown(grip)
-mainFrame:SetSize(700, 940)
-gripUp(grip)
-equal(SanctuaryDB.uiSize[1], 700, "a drag is recorded once more")
-now = now + 5
-titleDown(titleBar, "RightButton")
-now = now + 0.2
-titleDown(titleBar, "RightButton")
-equal(SanctuaryDB.uiSize[1], 700, "two right clicks on the title bar change nothing")
-now = now + 5
-titleDown(titleBar, "LeftButton")
-titleBar:GetScript("OnDragStart")(titleBar)
-titleBar:GetScript("OnDragStop")(titleBar)
-now = now + 0.2
-titleDown(titleBar, "LeftButton")
-equal(SanctuaryDB.uiSize[1], 700,
-    "and a click, a drag and a click are three gestures rather than a double-click")
-SanctuaryDB.uiSize = nil
-ns.refreshUI()
-
--- Dragging the title bar moves the window and never resizes it: the two
--- gestures live in two zones and neither does the other's work.
+--
+-- This bar has now cost three defects of the same shape, so the whole family of
+-- gestures it can receive is played out here in one block, each with its own
+-- assertion. What ties them together: the client only says a press has become a
+-- move once the mouse has travelled, so the pair is counted on the RELEASE, and
+-- a release that ends a move is neither half of a pair nor the start of one.
 do
+    local titleBar = _G.SanctuaryTitleBar
+    check(titleBar ~= nil, "the title bar is a frame of its own")
+    local titleDown = titleBar:GetScript("OnMouseDown")
+    local titleUp = titleBar:GetScript("OnMouseUp")
+    local dragStart = titleBar:GetScript("OnDragStart")
+    local dragStop = titleBar:GetScript("OnDragStop")
+    check(type(titleDown) == "function", "and it answers a press")
+    check(type(titleUp) == "function", "and the release that goes with it")
+
+    local click = function(button)
+        button = button or "LeftButton"
+        titleDown(titleBar, button)
+        titleUp(titleBar, button)
+    end
+    -- A move as the client plays it: the press first, the move declared only
+    -- once the mouse has travelled, then the end of the move. Whether the frame
+    -- is also told about the release is not something this project has
+    -- established, so both endings are played.
+    local drag = function(withRelease)
+        titleDown(titleBar, "LeftButton")
+        dragStart(titleBar)
+        dragStop(titleBar)
+        if withRelease then titleUp(titleBar, "LeftButton") end
+    end
+    local sized = function()
+        now = now + 5
+        gripDown(grip)
+        mainFrame:SetSize(700, 940)
+        gripUp(grip)
+        now = now + 5
+    end
+    -- Read through a guard: the defect this block exists for is the remembered
+    -- size being ERASED, and indexing it straight would abort the run instead of
+    -- naming the case that broke.
+    local remembered = function() return SanctuaryDB.uiSize and SanctuaryDB.uiSize[1] end
+
+    -- A move on its own: the window is placed, and its size is not touched.
+    sized()
+    equal(remembered(), 700, "a grip drag is still recorded")
+    local placed = SanctuaryDB.uiPosition
+    drag(true)
+    check(SanctuaryDB.uiPosition ~= nil and SanctuaryDB.uiPosition ~= placed,
+        "a title-bar drag records where the window now is")
+    equal(remembered(), 700, "and leaves the remembered size alone")
+    equal(mainFrame:GetWidth(), 700, "the window with it")
+
+    -- Two clicks inside 0.4 s: the size goes back to the default, and only the
+    -- size -- where the window sits is a separate gesture and a separate memory.
+    placed = SanctuaryDB.uiPosition
+    now = now + 5
+    click()
+    now = now + 0.2
+    click()
+    equal(SanctuaryDB.uiSize, nil,
+        "a double-click on the title bar forgets the remembered size for good")
+    equal(mainFrame:GetWidth(), 780, "and the window is back to its design width")
+    equal(SanctuaryDB.uiPosition, placed, "without moving an inch")
+
+    -- The same two clicks, with a pause: two clicks.
+    sized()
+    click()
+    now = now + 2
+    equal(remembered(), 700, "one click on the title bar changes nothing")
+    click()
+    now = now + 2
+    click()
+    equal(remembered(), 700, "and two clicks two seconds apart are two clicks")
+    now = now + 0.2
+    click()
+    equal(SanctuaryDB.uiSize, nil, "while a pair inside 0.4 s counts, whatever came before")
+
+    -- A click, then somebody takes hold of the window again inside 0.4 s to move
+    -- it. The press that opens that move is not the second click of anything:
+    -- deciding at the press erased the size that had been set, mid-gesture.
+    sized()
+    local kept = SanctuaryDB.uiPosition
+    click()
+    now = now + 0.2
+    drag(true)
+    equal(remembered(), 700,
+        "a click then a press that becomes a move keeps the size that was set")
+    equal(mainFrame:GetWidth(), 700, "and the window does not jump back mid-gesture")
+    check(SanctuaryDB.uiPosition ~= kept, "what that gesture did was move the window")
+
+    -- The same, with a move that ends without a release this frame hears about:
+    -- the next press starts from a clean slate either way.
+    sized()
+    click()
+    now = now + 0.2
+    drag(false)
+    equal(remembered(), 700, "the size survives a move that ends without a release")
+    now = now + 5
+    click()
+    now = now + 0.2
+    click()
+    equal(SanctuaryDB.uiSize, nil, "and the double-click after it is still heard as one")
+
+    -- A move then a click inside the same 0.4 s: a window somebody had just
+    -- placed used to go back to its opening size on its own.
+    sized()
+    drag(true)
+    now = now + 0.2
+    click()
+    equal(remembered(), 700, "a move then a click are two gestures, not a pair")
+    equal(mainFrame:GetWidth(), 700, "and the window keeps the size it was given")
+    now = now + 5
+    click()
+    drag(true)
+    now = now + 0.2
+    click()
+    equal(remembered(), 700,
+        "and a click, a move and a click are three gestures rather than a double-click")
+
+    -- Decision 136 gives this bar one gesture: two right clicks are a menu
+    -- somewhere else in the game, and the client always says which button it
+    -- was, so an unnamed release is nobody's release.
+    now = now + 5
+    click("RightButton")
+    now = now + 0.2
+    click("RightButton")
+    equal(remembered(), 700, "two right clicks on the title bar change nothing")
+    now = now + 5
+    titleUp(titleBar)
+    now = now + 0.2
+    titleUp(titleBar)
+    equal(remembered(), 700, "and two releases with no button named change nothing")
+
+    SanctuaryDB.uiSize = nil
+    ns.refreshUI()
+
+    -- Back in the fitted mode, a title-bar drag still writes a position and
+    -- nothing else: the two gestures live in two zones and neither does the
+    -- other's work.
     local movedSize = { mainFrame:GetWidth(), mainFrame:GetHeight() }
-    titleBar:GetScript("OnDragStart")(titleBar)
-    titleBar:GetScript("OnDragStop")(titleBar)
+    drag(true)
     equal(mainFrame:GetWidth(), movedSize[1], "a title-bar drag leaves the width alone")
     equal(mainFrame:GetHeight(), movedSize[2], "and the height")
     equal(SanctuaryDB.uiSize, nil, "and never writes a manual size")
