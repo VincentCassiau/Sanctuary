@@ -6089,7 +6089,16 @@ local function newWidget(kind, name, parent, template)
     -- top" is a question only the offset can answer (constat G.4).
     function w:SetVerticalScroll(value) self.__verticalScroll = value end
     function w:GetVerticalScroll() return self.__verticalScroll or 0 end
-    function w:GetFont() return "Fonts\\FRIZQT__.TTF", 12, "" end
+    -- Recorded, because "how big is this text" is a rule the interface is held
+    -- to -- nothing visible under 12 px -- and a stub that swallows SetFont
+    -- makes it a rule nothing can check.
+    function w:SetFont(file, size, flags)
+        self.__fontFile, self.__fontSize, self.__fontFlags = file, size, flags
+    end
+    function w:GetFont()
+        return self.__fontFile or "Fonts\\FRIZQT__.TTF", self.__fontSize or 12,
+            self.__fontFlags or ""
+    end
     -- Recorded rather than stubbed: what a texture is filled with, and whether
     -- it was rounded, is exactly what "the box is invisible" and "the radio is a
     -- square" are made of.
@@ -6628,6 +6637,210 @@ local _, protectionUnderline = tabState("protection")
 equal(journalUnderline, true, "changing screen moves the underline")
 equal(protectionUnderline, false, "and takes it off the one left behind")
 _G["SanctuaryTab_protection"]:Click()
+
+-- Decision 143: every card of choice carries a ring -- filled when it is the
+-- answer, empty when it is not -- and the convention it settles is that round
+-- means an exclusive choice and square means a switch, everywhere, without
+-- exception. What was on screen carried the pick in the border alone, which is a
+-- meaning in a colour.
+do
+    local CARDS = { "SanctuaryQ1_strangers", "SanctuaryQ1_blockedOnly",
+        "SanctuaryQ2_all", "SanctuaryQ2_custom", "SanctuaryQ3_yes", "SanctuaryQ3_no",
+        "SanctuaryQ4_silent", "SanctuaryQ4_minimal", "SanctuaryQ4_verbose" }
+    for _, name in ipairs(CARDS) do
+        local card = _G[name]
+        check(card ~= nil and card.rim ~= nil and card.fill ~= nil and card.mark ~= nil,
+            name .. " draws a rim, a fill and a dot")
+        check(card.mark.__mask ~= nil, name .. "'s dot is rounded by a mask")
+    end
+    -- Round is an exclusive choice; square is a switch. A check's mark is a
+    -- plain texture with no mask on it, and that difference is the convention.
+    check(_G.SanctuaryFilter_duel.mark.__mask == nil,
+        "a checkbox's mark stays square -- round is for an exclusive choice")
+
+    -- Filled when picked, empty when not, and it follows the answer rather than
+    -- the click: the model is what both cards are drawn from.
+    SanctuaryDB.filters.scope = "strangers"
+    ns.refreshUI()
+    equal(_G.SanctuaryQ1_strangers.mark:IsShown(), true, "the chosen card's ring is filled")
+    equal(_G.SanctuaryQ1_blockedOnly.mark:IsShown(), false, "and the other one's is empty")
+    check(sameColor(_G.SanctuaryQ1_strangers.rim.__colorTexture, { 0.4, 0.6, 1.0, 1.0 }),
+        "the chosen ring's rim answers in the accent too")
+    _G.SanctuaryQ1_blockedOnly:Click()
+    equal(_G.SanctuaryQ1_blockedOnly.mark:IsShown(), true, "picking the other moves the fill")
+    equal(_G.SanctuaryQ1_strangers.mark:IsShown(), false, "and empties the one left behind")
+    SanctuaryDB.filters.scope = "strangers"
+    ns.refreshUI()
+end
+
+-- Decision 139, "B en trait long": a hairline of accent between two questions of
+-- the home screen, the full width of the column, and NOWHERE else.
+do
+    _G["SanctuaryTab_protection"]:Click()
+    ns.refreshUI()
+    local content = _G.SanctuaryTabContent_protection
+    -- Four joins between five questions, so four rules.
+    local found = {}
+    for _, child in ipairs(content.__children or {}) do
+        if child.__kind == "Texture" and child:GetHeight() == 1
+            and sameColor(child.__colorTexture, { 0.4, 0.6, 1.0, 0.32 }) then
+            found[#found + 1] = child
+        end
+    end
+    equal(#found, 4, "four rules, one between each pair of questions")
+    for _, rule in ipairs(found) do
+        equal(rule:GetWidth(), _G.SanctuaryMainFrame:GetWidth() - 36,
+            "each one runs the whole column, padding aside")
+    end
+    -- Ordered down the screen, and each of them between the block above and the
+    -- block below rather than stacked at one place.
+    local previous = 1
+    for index, rule in ipairs(found) do
+        local _, _, _, _, y = rule:GetPoint()
+        check((y or 0) < previous, "rule " .. index .. " sits under the one before it")
+        previous = y or 0
+    end
+    -- And nowhere else in the interface: the other four screens carry none.
+    for _, key in ipairs({ "journal", "advanced", "about", "diagnostics" }) do
+        local elsewhere = 0
+        for _, child in ipairs((_G["SanctuaryTabContent_" .. key] or {}).__children or {}) do
+            if child.__kind == "Texture"
+                and sameColor(child.__colorTexture, { 0.4, 0.6, 1.0, 0.32 }) then
+                elsewhere = elsewhere + 1
+            end
+        end
+        equal(elsewhere, 0, "the " .. key .. " screen carries no rule of its own")
+    end
+end
+
+-- Decisions 142-143: the tile IS the button. "Gerer" is gone, the whole tile
+-- opens the drawer, and what says so is a chevron at the right edge plus the
+-- fill lightening under the pointer -- a shape and a colour, not a colour alone.
+do
+    for _, name in ipairs({ "SanctuaryTileAllowed", "SanctuaryTileBlocked" }) do
+        local tile = _G[name]
+        check(tile ~= nil, name .. " is on the home screen")
+        equal(tile.manage, nil, name .. " has no Manage button left in it")
+        check(tile.chevron ~= nil and (tile.chevron.__text or "") ~= "",
+            name .. " carries a chevron at its right edge")
+        check(type(tile:GetScript("OnClick")) == "function", name .. " is clickable whole")
+        check(type(tile:GetScript("OnEnter")) == "function", name .. " lightens under the pointer")
+        equal(tile:GetHeight(), 46, name .. " is the thin tile of the mock-up")
+    end
+    -- The pointer really does change the fill, and puts it back.
+    local tile = _G.SanctuaryTileAllowed
+    tile:GetScript("OnEnter")(tile)
+    check(sameColor(tile.__backdropColor, { 0.4, 0.6, 1.0, 0.12 }),
+        "the hovered tile is lit")
+    tile:GetScript("OnLeave")(tile)
+    check(sameColor(tile.__backdropColor, { 0.078, 0.078, 0.141, 0.60 }),
+        "and goes back when the pointer leaves")
+    -- And the click opens the drawer it names.
+    tile:Click()
+    equal(_G.SanctuaryPanelAllowed:IsShown(), true, "clicking the tile opens its list")
+    ns.ClosePanel()
+    _G.SanctuaryTileBlocked:Click()
+    equal(_G.SanctuaryPanelBlocked:IsShown(), true, "and the other tile opens the other")
+    ns.ClosePanel()
+end
+
+-- Decision 142: the standing note under question 3 is off the screen, and its
+-- key is out of both locales -- a string nobody can reach is a translation
+-- nobody will read. What is left under that question is the "already covered"
+-- sentence, which is rule 4 of the styles section: a greyed question says why.
+do
+    equal(defaultLocale.ANTISPAM_NOTE, nil, "ANTISPAM_NOTE is gone from the default locale")
+    equal(frenchLocale.ANTISPAM_NOTE, nil, "and from the French one")
+    equal(defaultLocale.MANAGE_BTN, nil, "and so is the label of the button that went with the tile")
+    equal(frenchLocale.MANAGE_BTN, nil, "in both locales again")
+    check((ns.L["ANTISPAM_COVERED"] or "") ~= "", "the covered sentence stays")
+    -- Not covered: nothing is written under question 3 at all.
+    SanctuaryDB.filters.channelMode = "none"
+    SanctuaryDB.filters.scope = "strangers"
+    ns.refreshUI()
+    equal(_G.SanctuaryAntiSpamNote:GetText(), "",
+        "question 3 says nothing while it has something to say")
+    -- Covered: the sentence appears, in the colour of a warning.
+    SanctuaryDB.filters.channelMode = "all"
+    ns.refreshUI()
+    equal(_G.SanctuaryAntiSpamNote:GetText(), ns.L["ANTISPAM_COVERED"],
+        "and says why it is greyed once the channels are all filtered")
+    equal(_G.SanctuaryQ3_yes.enabled, false, "with the cards greyed beside it")
+    equal(_G.SanctuaryQ3_yes:GetAlpha(), 0.8, "and dimmed, not only greyed")
+    SanctuaryDB.filters.channelMode = "none"
+    ns.refreshUI()
+end
+
+-- Rule 2 of the styles section: nothing visible is set under 12 px. The mock-up
+-- drew its descriptions at 11.5 and that is what was refused -- a description is
+-- the smallest thing on the screen and the one a person most needs to read.
+do
+    local tooSmall = {}
+    for _, widget in ipairs(createdWidgets) do
+        if widget.__kind == "FontString" and widget.__fontSize
+            and widget.__fontSize < 12 then
+            tooSmall[#tooSmall + 1] = tostring(widget.__text or "?")
+                .. " (" .. tostring(widget.__fontSize) .. ")"
+        end
+    end
+    equal(#tooSmall, 0,
+        "no visible text is set under 12 px (" .. table.concat(tooSmall, ", ") .. ")")
+end
+
+-- Decisions 141-142, the density: 24 px of air between two questions with the
+-- rule halfway through it, and a title row of 22. And the cards MEASURE
+-- themselves -- a description wraps over two lines at 900 px and four at 500, so
+-- a flat height was room booked for the worst case on every screen and text over
+-- the edge on the case nobody had measured.
+do
+    local kept = SanctuaryDB.uiSize
+    SanctuaryDB.filters.preset = "all"
+    SanctuaryDB.uiSize = { 900, 700 }
+    ns.refreshUI()
+    local wide = _G.SanctuaryQ1_strangers:GetHeight()
+    equal(_G.SanctuaryQ1_blockedOnly:GetHeight(), wide,
+        "the two answers to one question are one row, at one height")
+    SanctuaryDB.uiSize = { 500, 700 }
+    ns.refreshUI()
+    local narrow = _G.SanctuaryQ1_strangers:GetHeight()
+    check(narrow > wide, "a card grows when its description has less room to wrap in ("
+        .. narrow .. " at 500, " .. wide .. " at 900)")
+    -- The description itself is given the column it has to fold into, ring and
+    -- padding taken off: 11 of padding, a 15 px ring, 9 of gap, 11 again.
+    equal(_G.SanctuaryQ1_strangers.desc:GetWidth(),
+        _G.SanctuaryQ1_strangers:GetWidth() - 46,
+        "and the text it folds is given the column left beside the ring")
+
+    -- The air between two questions, measured on the screen itself.
+    SanctuaryDB.uiSize = { 780, 700 }
+    ns.refreshUI()
+    local _, _, _, _, firstCard = _G.SanctuaryQ1_strangers:GetPoint()
+    local bottom = firstCard - _G.SanctuaryQ1_strangers:GetHeight()
+    local _, _, _, _, secondCard = _G.SanctuaryQ2_all:GetPoint()
+    equal(bottom - secondCard, 24 + 22,
+        "24 px of air between two questions, then the title row of the next")
+    SanctuaryDB.uiSize = kept
+    ns.refreshUI()
+end
+
+-- Decision 137: the Trust tooltip is a field of explanation, not a second half
+-- of its own label -- "un tooltip n'est pas une suite au label". The sentence
+-- Vincent validated says what happens, for how long, and how to undo it.
+do
+    local trust = _G.SanctuaryAutoTrust
+    trust:GetScript("OnEnter")(trust)
+    local shown = tostring(rawget(GameTooltip, "__lastText") or "")
+    equal(shown, ns.L["ADV_TRUST_DESC"], "hovering the box shows the explanation")
+    check(shown:find("5 minutes", 1, true) ~= nil, "which says how long it takes")
+    check(shown:find(ns.L["TILE_ALLOWED"], 1, true) ~= nil, "where the player ends up")
+    check(#shown > 150, "and it is a paragraph, not a trailing clause")
+    trust:GetScript("OnLeave")(trust)
+    -- The label carries it too, since the label is half the target now.
+    trust.labelHit:GetScript("OnEnter")(trust.labelHit)
+    equal(tostring(rawget(GameTooltip, "__lastText") or ""), ns.L["ADV_TRUST_DESC"],
+        "and so do the words beside it")
+    trust.labelHit:GetScript("OnLeave")(trust.labelHit)
+end
 
 -- Automatic trust left Advanced for the home screen, decision 103.
 check(_G.SanctuaryAutoTrust:GetParent() == _G.SanctuaryTabContent_protection,
@@ -8423,14 +8636,26 @@ local protectionHeight = mainFrame:GetHeight()
 check(protectionHeight >= aboutHeight, "the tallest screen is at least as tall as the shortest")
 check(protectionHeight <= 900 + 40 + 30 + 30, "and the fitted height stays within its bounds")
 
--- "I choose" unfolded is taller than the fitted bound. The screen must stay
--- reachable: the content area scrolls instead of being cut off.
-SanctuaryDB.filters.preset = "custom"
-ns.refreshUI()
+-- "I choose" unfolds two columns of boxes into the middle of the screen: the
+-- window grows for them, and where it cannot -- a size the person dragged it to
+-- -- what is under the fold stays reachable through the bar rather than being
+-- cut off.
 local chooseScroll = _G.SanctuaryContentScroll
 check(chooseScroll ~= nil, "the content area is a scroll")
+-- Measured in a window the person shrank, so both answers are the screen's own
+-- height rather than the viewport they are both floored at.
+SanctuaryDB.uiSize = { 780, 520 }
+SanctuaryDB.filters.preset = "all"
+ns.refreshUI()
+local foldedContent = chooseScroll:GetScrollChild():GetHeight() or 0
+SanctuaryDB.filters.preset = "custom"
+ns.refreshUI()
+check((chooseScroll:GetScrollChild():GetHeight() or 0) > foldedContent,
+    "unfolding the detailed boxes makes the screen taller")
 check((chooseScroll:GetScrollChild():GetHeight() or 0) > (chooseScroll:GetHeight() or 0),
-    "and it is taller than the window when the detailed boxes are unfolded")
+    "and the fold is under the bar rather than cut off")
+equal(chooseScroll.bar:IsShown(), true, "which is what the bar is there to say")
+SanctuaryDB.uiSize = nil
 SanctuaryDB.filters.preset = "all"
 ns.refreshUI()
 equal(mainFrame:GetWidth(), 780, "the window opens at its design width")
@@ -8827,7 +9052,7 @@ end
 -- And the fitted mode is really back: the height follows the screen again, and
 -- the width goes back to the one the window is designed at.
 _G["SanctuaryTab_about"]:Click()
-equal(mainFrame:GetHeight(), 820 + 40 + 30 + 30, "the shortest screen is back to its fitted height")
+equal(mainFrame:GetHeight(), 740 + 40 + 30 + 30, "the shortest screen is back to its fitted height")
 equal(mainFrame:GetWidth(), 780, "and to the design width")
 local shortestFitted = mainFrame:GetHeight()
 -- Every screen opens in the same window: the height the window asks for is the
@@ -9232,13 +9457,19 @@ do
 end
 
 
--- A.2 -- the home screen scrolls, and the grip keeps a vertical travel.
+-- A.2 -- the home screen scrolls where it has to, and the grip keeps a vertical
+-- travel.
 --
--- Decision 134: the window opens at the tallest the client's screen allows, the
--- home screen scrolls under it with a bar that reaches the tester, and the other
--- screens -- shorter -- do not scroll. The height is read off the screen, never
--- off a design constant: a Retail client at the default UI scale measures 768
--- units, and the design asks for 908.
+-- Decision 134: the window opens at the tallest the client's screen allows -- or
+-- at what the screen on show asked for, whichever is the smaller -- and where
+-- that is not enough, the home screen scrolls under it with a bar that reaches
+-- the tester. The height is read off the screen, never off a design constant: a
+-- Retail client at the default UI scale measures 768 units.
+--
+-- The "Compact doux v2" home screen (decisions 141-143) is short enough to fit
+-- whole on a tall screen, which it was not before, so scrolling is no longer an
+-- invariant of this screen -- what IS an invariant is that the bar shows exactly
+-- when there is something under the fold, and that what is under it is reachable.
 --
 -- The travel is the part nothing was watching. `SetResizeBounds` had no double
 -- in this harness, so applying the screen to BOTH bounds -- which collapses them
@@ -9257,8 +9488,11 @@ do
         UIParent.GetHeight = function() return screen end
         _G["SanctuaryTab_protection"]:Click()
         ns.refreshUI()
-        equal(mainFrame:GetHeight(), screen - reserve,
-            "at " .. screen .. " units the window opens as tall as the screen allows")
+        -- The screen is a ceiling, not an order: a window whose content asks for
+        -- less than the screen holds takes what it asked for.
+        check(mainFrame:GetHeight() <= screen - reserve,
+            "at " .. screen .. " units the window fits inside the screen ("
+                .. tostring(mainFrame:GetHeight()) .. ")")
 
         local minWidth, minHeight, maxWidth, maxHeight = mainFrame:GetResizeBounds()
         equal(minWidth, 500, "the grip keeps its narrowest width at " .. screen)
@@ -9272,18 +9506,25 @@ do
         local scroll = _G.SanctuaryContentScroll
         local child = scroll:GetScrollChild():GetHeight() or 0
         local viewport = scroll:GetHeight() or 0
-        check(child > viewport, "the home screen is taller than the window at " .. screen
-            .. " (" .. child .. " over " .. viewport .. ")")
-        equal(scroll.bar:IsShown(), true, "so it has a bar to say so at " .. screen)
-        equal(scroll.bar:GetHeight(), viewport,
-            "a track exactly as tall as the window at " .. screen)
-        -- And a thumb that says how much of the screen is on show. Whether it
-        -- can be pulled, and where it lands, is the A.2 block above; here it is
-        -- that a lift exists on every screen the window opens on.
-        check((scroll.thumb:GetHeight() or 0) < (scroll.bar:GetHeight() or 0),
-            "with a thumb shorter than its own track at " .. screen
-                .. " (" .. tostring(scroll.thumb:GetHeight()) .. " of "
-                .. tostring(scroll.bar:GetHeight()) .. ")")
+        -- The bar shows exactly when there is something under the fold, and
+        -- never otherwise: a bar beside a screen with nothing to scroll to is
+        -- constat G.4, and a screen taller than its window with no bar is the
+        -- half of decision 134 that says the home screen may scroll.
+        local under = child > viewport
+        equal(scroll.bar:IsShown(), under,
+            "the bar shows exactly when the home screen runs under the fold at "
+                .. screen .. " (" .. child .. " over " .. viewport .. ")")
+        if under then
+            equal(scroll.bar:GetHeight(), viewport,
+                "a track exactly as tall as the window at " .. screen)
+            -- And a thumb that says how much of the screen is on show. Whether
+            -- it can be pulled, and where it lands, is the A.2 block above; here
+            -- it is that a lift exists wherever there is something to lift to.
+            check((scroll.thumb:GetHeight() or 0) < (scroll.bar:GetHeight() or 0),
+                "with a thumb shorter than its own track at " .. screen
+                    .. " (" .. tostring(scroll.thumb:GetHeight()) .. " of "
+                    .. tostring(scroll.bar:GetHeight()) .. ")")
+        end
         -- The tester is the last row of the screen: what matters now is not that
         -- it is on show, it is that it is inside the height the bar scrolls
         -- through. Its own anchor, plus the padding the tab frames are offset by
@@ -9340,7 +9581,7 @@ do
     _G["SanctuaryTab_protection"]:Click()
     ns.refreshUI()
     local asked = mainFrame:GetHeight()
-    check(asked >= 820 + 40 + 30,
+    check(asked >= 740 + 40 + 30 + 30,
         "with no screen to fit, the window is as tall as the home screen asked ("
             .. tostring(asked) .. ")")
     for _, answer in ipairs({ "nil", 0, -100, "tall" }) do

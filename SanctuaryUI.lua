@@ -86,8 +86,12 @@ local C = {
 -- of the text and nothing else.
 local DISABLED_ALPHA = 0.8
 
--- 16 / 14 / 13 / 12, the hierarchy Vincent asked for.
-local FONT_TITLE, FONT_SECTION, FONT_DESC, FONT_BODY = 16, 14, 13, 12
+-- 15 / 14 / 13 / 12, the hierarchy Vincent asked for, thinned by one step at the
+-- top: decision 141 asked the modal to gain room without losing its air, and a
+-- question title reads as a title at 15 px just as well as at 16. Nothing here
+-- goes under 12 -- rule 2 of the section head, which is why the mock-up's
+-- 11.5 px descriptions were refused.
+local FONT_TITLE, FONT_SECTION, FONT_DESC, FONT_BODY = 15, 14, 13, 12
 
 -- The width the window opens at, and what the grip may take it to. Both axes
 -- move now: the bounds are the brief's own, 500x380 to 900x700, measured on the
@@ -98,17 +102,23 @@ local DEFAULT_WIDTH = 780
 local MIN_FRAME_WIDTH, MAX_FRAME_WIDTH = 500, 900
 -- The height the window ASKS for when it opens. The home screen is the tallest
 -- thing here that never folds -- five questions, the tester and its answer --
--- and 820 is that screen measured at the smallest width, the width where the
--- note under question 3 wraps and the screen is at its tallest. Every screen
--- opens in that same window rather than the window jumping size from tab to tab.
+-- and this is that screen measured at DEFAULT_WIDTH, which is the only width the
+-- fitted mode ever has: a remembered width comes with a remembered height, and
+-- that pair is applied instead of this one. Every screen opens in that same
+-- window rather than the window jumping size from tab to tab.
+--
+-- Recalculated on the "Compact doux v2" home screen (decisions 141-143): thinner
+-- cards, thinner tiles, a title row two pixels shorter, one note fewer, against
+-- 24 px of air between questions instead of 20. The screen that asked for 820
+-- asks for 740.
 --
 -- What the window GETS is the screen's to decide, never this number: a Retail
--- client at the default UI scale measures 768 units, which leaves 704 px of
--- window for 890 asked, so the home screen scrolls there and its bar says so
--- (decision 134 -- "on a jamais parle de rendre la page d'accueil non
+-- client at the default UI scale measures 768 units, which leaves 748 px of
+-- window for 840 asked, so the home screen still scrolls there and its bar says
+-- so (decision 134 -- "on a jamais parle de rendre la page d'accueil non
 -- scrollable"). The other screens are shorter than the window they are given and
 -- do not scroll.
-local MIN_HEIGHT, MAX_HEIGHT = 820, 900
+local MIN_HEIGHT, MAX_HEIGHT = 740, 900
 -- The smallest window the grip may drag to, which is NOT the height above. The
 -- content scrolls (decision 3), so a person may make the window smaller than
 -- what is in it; and a floor set at the height the window OPENS at is a floor
@@ -239,8 +249,11 @@ local function newDisc(frame, layer, size, color)
     return tex
 end
 
-local function newLabel(parent, text, size, color, justify)
-    local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+-- `name` is optional and almost never given: a FontString is read through the
+-- table that holds it. The one exception is a sentence a check has to read back
+-- by itself, which needs a global to reach.
+local function newLabel(parent, text, size, color, justify, name)
+    local label = parent:CreateFontString(name, "OVERLAY", "GameFontNormal")
     local fontFile = label:GetFont()
     label:SetFont(fontFile, size or FONT_BODY, "")
     label:SetTextColor(unpack(color or C.ink))
@@ -410,29 +423,61 @@ local function newRadio(parent, name, text, tooltip, isOn, select)
     return frame
 end
 
+-- What a card spends on anything that is not its own text. "Compact doux"
+-- (decisions 141-142) is dense INSIDE a block and airy between blocks, so this
+-- is the dense half: 11 px of side padding where there were 12, 8 above and
+-- below where there were 10, and a title sitting 4 px off its description.
+local CARD = { pad = 11, top = 8, bottom = 8, ring = 15, ringGap = 9,
+    titleLine = 16, titleGap = 4 }
+
 -- Card: an exclusive choice with a title and a description. Clicking anywhere
 -- on it selects it -- the whole card is the target, not a 16-pixel dot.
+--
+-- Decision 143 gave it the dot as well, and made it a convention: round is an
+-- exclusive choice, square is a switch, everywhere and without exception. What
+-- was on screen carried the pick in the border and the title's colour and
+-- nothing else, which is a meaning in a colour -- rule 1 of the section head,
+-- and what "les maquettes C2 validees avaient des ronds" was pointing at. Three
+-- discs, the same shape as a radio, so the two read as one family.
 local function newCard(parent, name, titleText, descText, width, isOn, select)
     local card = CreateFrame("Button", name, parent, "BackdropTemplate")
-    card:SetSize(width or 340, 74)
     card.enabled = true
 
+    -- The ring is a frame of its own so `newDisc` can centre its three textures
+    -- AND their circular mask on it. A texture re-anchored away from its parent
+    -- leaves the mask behind, and a mask left behind is a square dot.
+    card.ringFrame = CreateFrame("Frame", nil, card)
+    card.ringFrame:SetSize(CARD.ring, CARD.ring)
+    card.ringFrame:SetPoint("TOPLEFT", card, "TOPLEFT", CARD.pad, -(CARD.top + 2))
+    card.rim = newDisc(card.ringFrame, "BACKGROUND", CARD.ring, C.border)
+    card.fill = newDisc(card.ringFrame, "BORDER", CARD.ring - 2, C.checkBg)
+    card.mark = newDisc(card.ringFrame, "OVERLAY", CARD.ring - 8, C.checkOn)
+
+    local textLeft = CARD.pad + CARD.ring + CARD.ringGap
     card.title = newLabel(card, titleText, FONT_DESC, C.ink)
-    card.title:SetPoint("TOPLEFT", card, "TOPLEFT", 12, -10)
+    card.title:SetPoint("TOPLEFT", card, "TOPLEFT", textLeft, -CARD.top)
     card.desc = newLabel(card, descText, FONT_BODY, C.dim)
-    card.desc:SetPoint("TOPLEFT", card.title, "BOTTOMLEFT", 0, -6)
-    card.desc:SetWidth((width or 340) - 24)
+    card.desc:SetPoint("TOPLEFT", card.title, "BOTTOMLEFT", 0, -CARD.titleGap)
     card.desc:SetJustifyH("LEFT")
 
     function card:Refresh()
         local on = isOn() and true or false
+        if self.mark then
+            if on then self.mark:Show() else self.mark:Hide() end
+        end
         if not self.enabled then
             applyBackdrop(self, C.tile, C.border)
+            self.rim:SetColorTexture(unpack(C.disabled))
             self.title:SetTextColor(unpack(C.disabled))
             self.desc:SetTextColor(unpack(C.disabled))
+            -- Rule 4: the fill dims as well as greying.
+            self:SetAlpha(DISABLED_ALPHA)
             return
         end
+        self:SetAlpha(1)
         applyBackdrop(self, on and C.accentBg or C.tile, on and C.accent or C.border)
+        -- `.rd.on { border-color: accent }`: the rim answers too.
+        self.rim:SetColorTexture(unpack(on and C.accent or C.border))
         self.title:SetTextColor(unpack(on and C.accent or C.ink))
         self.desc:SetTextColor(unpack(C.dim))
     end
@@ -447,7 +492,19 @@ local function newCard(parent, name, titleText, descText, width, isOn, select)
     -- folded to the width it was built at.
     function card:SetCardWidth(newWidth)
         self:SetWidth(newWidth)
-        self.desc:SetWidth(newWidth - 24)
+        self.desc:SetWidth(newWidth - textLeft - CARD.pad)
+    end
+
+    -- What this card needs, at the width it is at RIGHT NOW.
+    --
+    -- The description wraps, and how many lines it takes is the window's
+    -- business rather than a constant's: the longest of them is two lines at
+    -- 900 px and four at 500. A flat height was room booked for the worst case
+    -- on every screen and, once the ring took 24 px off the text column, text
+    -- over the edge on the case nobody had measured.
+    function card:NeededHeight()
+        local desc = math.max(NOTE_LINE, self.desc:GetStringHeight() or NOTE_LINE)
+        return CARD.top + CARD.titleLine + CARD.titleGap + desc + CARD.bottom
     end
 
     card:SetScript("OnClick", function(self)
@@ -456,7 +513,21 @@ local function newCard(parent, name, titleText, descText, width, isOn, select)
         PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
         if ns.refreshUI then ns.refreshUI() end
     end)
+    card:SetCardWidth(width or 340)
     return card
+end
+
+-- The cards answering one question are a row: they take the tallest height any
+-- of them needs, or two answers to the same question sit in boxes of different
+-- sizes. Answers that height, which is what the screen below counts in.
+local function sizeCardRow(cards, width)
+    local tallest = 0
+    for _, card in ipairs(cards) do
+        card:SetCardWidth(width)
+        tallest = math.max(tallest, card:NeededHeight())
+    end
+    for _, card in ipairs(cards) do card:SetHeight(tallest) end
+    return tallest
 end
 
 -- Input with a grey hint. The hint is a separate FontString rather than
@@ -1132,59 +1203,73 @@ end
 
 local protection = {}
 
--- The mock-up's own metrics, named once. `.content { padding:18px; gap:20px }`,
--- `.cards { gap:10px }`, and one row for a `.qt` at 16 px. Written here rather
--- than as numbers at the two places that need them: the build lays the screen
--- out top-down and the refresh re-lays it from question 3, so a height spelt out
--- twice is a screen that agrees with itself only until somebody edits one half.
-local Q_TITLE_ROW, CARD_HEIGHT, CARD_GUTTER, BLOCK_GAP = 26, 74, 10, 20
--- Where the block under question 2 begins, written as the sum of the two
--- question blocks above it rather than as one number so a change to any of them
--- is visible here.
-local CHOOSE_TOP = -(Q_TITLE_ROW + CARD_HEIGHT + BLOCK_GAP
-    + Q_TITLE_ROW + CARD_HEIGHT + 14)
--- One row of a check or a radio, and the extra a wrapped sub-line takes.
-local ROW_HEIGHT = 24
--- A check is 18 px square, so a row leaves ROW_HEIGHT - CHECK_SIZE between two
--- of them. `.cbr.sub { padding-left:26px }` of the mock-up is the indent a box
--- takes when it belongs to the box above it.
-local CHECK_SIZE, SUB_INDENT = 18, 26
--- The tester's own row: the 24 px field, hung 4 px above the line the label sits
--- on, plus the gap its answer keeps below it. What the answer itself takes is
--- measured, never reserved -- it is only there while a name is being tested.
-local TEST_ROW = 28
+-- The metrics of the "Compact doux v2" mock-up, named once and kept in one
+-- table: the enclosing chunk is at Lua's ceiling of 200 registers, and this
+-- screen is measured in a dozen numbers.
+--
+-- The shape decisions 141-142 asked for is dense inside a block, airy between
+-- blocks: `titleRow` and the card metrics thinned by a step or two, `blockGap`
+-- opened from 20 to 24 -- twice `ruleGap`, so the hairline of decision 139 sits
+-- exactly halfway between two questions.
+--
+--   titleRow   one row for a "N Question" at FONT_TITLE
+--   gutter     `.cards { gap:10px }`, between two cards of the same row
+--   blockGap   the air between two questions, the rule in the middle of it
+--   ruleGap    half of it, which is where the rule goes
+--   rowHeight  one row of a check or a radio
+--   checkSize  a check is 18 px square, so a row leaves 6 between two of them
+--   subIndent  `.cbr.sub { padding-left:26px }`, a box that belongs to a box
+--   tile       a list tile: 20 px count, a title and its detail, thin
+--   tileGap    what the tile row keeps under it before the tester
+--   testRow    the 24 px field, hung 4 px above the line its label sits on
+local HOME = { titleRow = 22, gutter = 10, blockGap = 24, ruleGap = 12,
+    rowHeight = 24, checkSize = 18, subIndent = 26,
+    tile = 46, tileGap = 16, testRow = 28 }
 
+-- The build MAKES the screen; `refreshTab.protection` PLACES it, all of it, from
+-- the top down. Questions 1 and 2 used to be positioned here and never touched
+-- again, because nothing above them ever folds -- but the cards measure their
+-- own height now (the description wraps differently at every width), and a rule
+-- has to be dropped between two questions whose heights are only known once
+-- they have been measured. Two halves of one layout is how a screen ends up
+-- agreeing with itself only until somebody edits one of them.
 local function buildProtectionTab(parent)
     protection.frame = parent
     local width = innerWidth()
-    local y = 0
 
-    -- `.qt` is two pieces, not one string: a small accent number and a 16 px
+    -- `.qt` is two pieces, not one string: a small accent number and a 15 px
     -- white title, ten pixels apart. Three spaces in one accent-coloured
     -- 14 px string gave neither the hierarchy nor the air.
     local function stepTitle(text, number)
         local num = newLabel(parent, number, FONT_BODY, C.accent)
-        num:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y - 4)
         local head = newLabel(parent, text, FONT_TITLE, C.ink)
         head:SetPoint("TOPLEFT", num, "TOPRIGHT", 10, 4)
-        y = y - Q_TITLE_ROW
         return head, num
     end
 
+    -- Decision 139, "B en trait long": a hairline of accent between two
+    -- questions of the home screen, the full width of it, and NOWHERE else in
+    -- the interface. Four of them, one per join, made here and placed by the
+    -- refresh -- which is the only pass that knows where a question ends.
+    protection.rules = {}
+    for index = 1, 4 do
+        local rule = parent:CreateTexture(nil, "ARTWORK")
+        rule:SetHeight(1)
+        rule:SetColorTexture(unpack(C.rule))
+        protection.rules[index] = rule
+    end
+
     -- Question 1 ------------------------------------------------------------
-    stepTitle(L["Q1_TITLE"], "1")
-    local cardWidth = (width - CARD_GUTTER) / 2
+    protection.q1Title, protection.q1Number = stepTitle(L["Q1_TITLE"], "1")
+    local cardWidth = (width - HOME.gutter) / 2
     protection.q1Strangers = newCard(parent, "SanctuaryQ1_strangers",
         L["Q1_STRANGERS_TITLE"], L["Q1_STRANGERS_DESC"], cardWidth,
         function() return ns.getScope() == "strangers" end,
         function() setFilter("scope", "strangers") end)
-    protection.q1Strangers:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
     protection.q1Blocked = newCard(parent, "SanctuaryQ1_blockedOnly",
         L["Q1_BLOCKEDONLY_TITLE"], L["Q1_BLOCKEDONLY_DESC"], cardWidth,
         function() return ns.getScope() == "blockedOnly" end,
         function() setFilter("scope", "blockedOnly") end)
-    protection.q1Blocked:SetPoint("TOPLEFT", protection.q1Strangers, "TOPRIGHT", CARD_GUTTER, 0)
-    y = y - CARD_HEIGHT - BLOCK_GAP
 
     -- Question 2 ------------------------------------------------------------
     protection.q2Title, protection.q2Number = stepTitle(L["Q2_TITLE"], "2")
@@ -1192,13 +1277,10 @@ local function buildProtectionTab(parent)
         L["Q2_ALL_TITLE"], L["Q2_ALL_DESC"], cardWidth,
         function() return ns.getPreset() == "all" end,
         function() setFilter("preset", "all") end)
-    protection.q2All:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
     protection.q2Custom = newCard(parent, "SanctuaryQ2_custom",
         L["Q2_CUSTOM_TITLE"], L["Q2_CUSTOM_DESC"], cardWidth,
         function() return ns.getPreset() == "custom" end,
         function() setFilter("preset", "custom") end)
-    protection.q2Custom:SetPoint("TOPLEFT", protection.q2All, "TOPRIGHT", CARD_GUTTER, 0)
-    y = y - CARD_HEIGHT - 14
 
     -- The enhanced-instance box is a single widget with two homes: under the two
     -- cards in "Everything", indented under "Block group invitations" in "I
@@ -1256,7 +1338,11 @@ local function buildProtectionTab(parent)
     protection.q3Interval = newDropdown(parent, "SanctuaryAntiSpamInterval", 130, durationRows,
         function() return ns.getAntiSpamInterval() end,
         function(value) ns.setAntiSpamInterval(value) end)
-    protection.q3Note = newLabel(parent, L["ANTISPAM_NOTE"], FONT_BODY, C.dim)
+    -- Only ever the "already covered" sentence now. Decision 142 struck the
+    -- standing note ("Groupe, raid, amis Battle.net... comptees dans le
+    -- Journal") off the home screen for saying twice what "un inconnu" already
+    -- says, and the key went with it, out of both locales.
+    protection.q3Note = newLabel(parent, "", FONT_BODY, C.dim, nil, "SanctuaryAntiSpamNote")
 
     -- The detailed boxes, folded away until "I choose" is picked.
     local choose = CreateFrame("Frame", "SanctuaryChoose", parent)
@@ -1312,21 +1398,21 @@ local function buildProtectionTab(parent)
     -- guessed -- a wrong constant here is a screen that fits on the developer's
     -- layout and is cut off on the real one.
     function protection.layoutChoose(innerWidth)
-        local colWidth = (innerWidth - BLOCK_GAP) / 2
-        local colX = { 0, colWidth + BLOCK_GAP }
+        local colWidth = (innerWidth - HOME.blockGap) / 2
+        local colX = { 0, colWidth + HOME.blockGap }
         local colY = { 0, 0 }
         for _, row in ipairs(CHECK_ROWS) do
             local col = row.col
             local check = protection.checks[row.key]
             check:ClearAllPoints()
             check:SetPoint("TOPLEFT", choose, "TOPLEFT", colX[col], colY[col])
-            colY[col] = colY[col] - ROW_HEIGHT
+            colY[col] = colY[col] - HOME.rowHeight
             if row.key == "groupInvite" then
                 -- The row the strict box takes under its parent, kept clear
                 -- whether the box is there or not. The box itself hangs from the
                 -- parent check, not from this number: only the room is booked
                 -- here, so the column below it does not climb over the child.
-                colY[col] = colY[col] - ROW_HEIGHT
+                colY[col] = colY[col] - HOME.rowHeight
             end
         end
 
@@ -1355,7 +1441,7 @@ local function buildProtectionTab(parent)
     protection.q4Number = newLabel(parent, "4", FONT_BODY, C.accent)
     protection.q4Title = newLabel(parent, L["Q4_TITLE"], FONT_TITLE, C.ink)
     protection.q4Title:SetPoint("TOPLEFT", protection.q4Number, "TOPRIGHT", 10, 4)
-    local thirdWidth = (width - CARD_GUTTER * 2) / 3
+    local thirdWidth = (width - HOME.gutter * 2) / 3
     protection.q4 = {}
     local Q4_ROWS = {
         { key = "silent",  titleKey = "Q4_SILENT_TITLE",  descKey = "Q4_SILENT_DESC" },
@@ -1375,18 +1461,49 @@ local function buildProtectionTab(parent)
     protection.q5Title = newLabel(parent, L["Q5_TITLE"], FONT_TITLE, C.ink)
     protection.q5Title:SetPoint("TOPLEFT", protection.q5Number, "TOPRIGHT", 10, 4)
 
-    local function newTile(name, titleText, onManage)
-        local tile = CreateFrame("Frame", name, parent, "BackdropTemplate")
-        tile:SetSize(cardWidth, 84)
+    -- The tile IS the button (decisions 142-143): the "Manage" button inside it
+    -- is gone and the whole tile opens the drawer. A button sitting in a box
+    -- that also reacts to a click is two targets for one destination, and the
+    -- smaller of the two was the one that worked.
+    --
+    -- What replaces the button is what says the tile opens something: a chevron
+    -- at the right edge, and the fill lightening under the pointer. Both are
+    -- needed -- the chevron is a shape, so the affordance is not carried by a
+    -- colour change alone (rule 1 of the section head), and the highlight is
+    -- what answers the pointer.
+    --
+    -- Thin, and laid out along ONE line rather than stacked: a 20 px count, the
+    -- name of the list beside it with its detail under it, the chevron at the
+    -- far end. 84 px of tile became 46.
+    local function newTile(name, titleText, onOpen)
+        local tile = CreateFrame("Button", name, parent, "BackdropTemplate")
+        tile:SetSize(cardWidth, HOME.tile)
         applyBackdrop(tile, C.tile, C.border)
+        tile.count = newLabel(tile, "0", 20, C.accent)
+        tile.count:SetPoint("LEFT", tile, "LEFT", 12, 0)
+        -- The two lines of text ride on the count rather than on the tile, so a
+        -- three-digit list pushes them along instead of running under them.
         tile.title = newLabel(tile, titleText, FONT_DESC, C.ink)
-        tile.title:SetPoint("TOPLEFT", tile, "TOPLEFT", 12, -10)
-        tile.count = newLabel(tile, "0", FONT_TITLE, C.accent)
-        tile.count:SetPoint("TOPLEFT", tile.title, "BOTTOMLEFT", 0, -4)
+        tile.title:SetPoint("BOTTOMLEFT", tile.count, "RIGHT", 10, 1)
         tile.detail = newLabel(tile, "", FONT_BODY, C.dim)
-        tile.detail:SetPoint("LEFT", tile.count, "RIGHT", 10, 0)
-        tile.manage = newButton(tile, nil, L["MANAGE_BTN"], 80, 22, onManage)
-        tile.manage:SetPoint("BOTTOMRIGHT", tile, "BOTTOMRIGHT", -10, 10)
+        tile.detail:SetPoint("TOPLEFT", tile.title, "BOTTOMLEFT", 0, -2)
+        -- U+203A, the single right angle quote. Windows-1252, so Friz Quadrata
+        -- draws it -- unlike the geometric triangle the duration field used to
+        -- ask for, which is why that one is drawn from bars instead.
+        tile.chevron = newLabel(tile, "\226\128\186", FONT_SECTION, C.dim)
+        tile.chevron:SetPoint("RIGHT", tile, "RIGHT", -12, 0)
+        tile:SetScript("OnEnter", function(self)
+            applyBackdrop(self, C.accentBg, C.accent)
+            self.chevron:SetTextColor(unpack(C.accent))
+        end)
+        tile:SetScript("OnLeave", function(self)
+            applyBackdrop(self, C.tile, C.border)
+            self.chevron:SetTextColor(unpack(C.dim))
+        end)
+        tile:SetScript("OnClick", function()
+            PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+            onOpen()
+        end)
         return tile
     end
 
@@ -1477,35 +1594,35 @@ function ns.RefreshTestAnswer(text)
     end
 end
 
--- Everything on this screen whose size comes from the window's width. Questions
--- 1, 2, 3 and 4 and the two tiles are laid out at build time -- what sits above
--- them never folds -- and the fold itself is measured from the same number, so
--- all of it has to be handed the live width again whenever the window changes.
+-- Everything on this screen whose size comes from the window's width, and the
+-- heights that fall out of it: a card's description wraps, so what a row of
+-- cards measures is a consequence of the width and is settled here, in the one
+-- pass that knows it. `protection.rowHeight` is what the refresh below counts in.
 applyTabWidth.protection = function()
     -- The last widget the builder makes: the guard means "this screen is
     -- finished", not "it has been started".
     if not protection.testAnswer then return end
     local width = innerWidth()
-    local cardWidth = (width - CARD_GUTTER) / 2
-    for _, card in ipairs({ protection.q1Strangers, protection.q1Blocked,
-        protection.q2All, protection.q2Custom,
-        protection.q3Yes, protection.q3No }) do
-        card:SetCardWidth(cardWidth)
-    end
+    local cardWidth = (width - HOME.gutter) / 2
+    protection.rowHeight = {
+        q1 = sizeCardRow({ protection.q1Strangers, protection.q1Blocked }, cardWidth),
+        q2 = sizeCardRow({ protection.q2All, protection.q2Custom }, cardWidth),
+        q3 = sizeCardRow({ protection.q3Yes, protection.q3No }, cardWidth),
+        q4 = sizeCardRow({ protection.q4.silent, protection.q4.minimal,
+            protection.q4.verbose }, (width - HOME.gutter * 2) / 3),
+    }
     -- The note under question 3 is a sentence, not a label: it wraps, so it is
     -- the one thing on this screen that has to be told the width it wraps at.
     protection.q3Note:SetWidth(width)
     protection.tileAllowed:SetWidth(cardWidth)
     protection.tileBlocked:SetWidth(cardWidth)
-    local thirdWidth = (width - CARD_GUTTER * 2) / 3
-    for _, key in ipairs({ "silent", "minimal", "verbose" }) do
-        protection.q4[key]:SetCardWidth(thirdWidth)
-    end
     -- The invisible frame question 4 hangs from, and the two columns of "I
     -- choose": `layoutChoose` is what shares the width between them, and it
     -- answers the height the fold needs, which the refresh below reads.
     protection.q4Anchor:SetWidth(width)
     protection.layoutChoose(width)
+    -- The rules between the questions run the whole column, decision 139.
+    for _, rule in ipairs(protection.rules) do rule:SetWidth(width) end
     -- The tester's answer is a sentence under the field, not a label beside it:
     -- it runs the whole width, it wraps, and the height the screen is measured
     -- from comes out of this number.
@@ -1549,11 +1666,51 @@ refreshTab.protection = function()
     protection.q2Title:SetTextColor(unpack(blockedOnly and C.disabled or C.ink))
     protection.q2Number:SetTextColor(unpack(blockedOnly and C.disabled or C.accent))
 
-    local y = CHOOSE_TOP
+    -- One pass, from the top of the screen down. Questions 1 and 2 used to be
+    -- placed once at build time and this pass started at question 3; a card
+    -- measures its own height now, and a rule has to be dropped between two
+    -- questions, so where anything sits is only known here.
+    local frame, y = protection.frame, 0
+    local function place(widget, offsetY)
+        widget:ClearAllPoints()
+        widget:SetPoint("TOPLEFT", frame, "TOPLEFT", PAD, y + (offsetY or 0))
+    end
+    -- A "N Question" row. The title rides on the number, so only one of the two
+    -- is ever moved.
+    local function stepRow(number)
+        place(number, -4)
+        y = y - HOME.titleRow
+    end
+    -- Decision 139: the rule sits exactly halfway through the air between two
+    -- questions, so the same gap is left above and below it.
+    local ruleIndex = 0
+    local function separator()
+        ruleIndex = ruleIndex + 1
+        y = y - HOME.ruleGap
+        place(protection.rules[ruleIndex])
+        y = y - HOME.ruleGap
+    end
+
+    -- Question 1 ------------------------------------------------------------
+    stepRow(protection.q1Number)
+    place(protection.q1Strangers)
+    protection.q1Blocked:ClearAllPoints()
+    protection.q1Blocked:SetPoint("TOPLEFT", protection.q1Strangers, "TOPRIGHT", HOME.gutter, 0)
+    y = y - protection.rowHeight.q1
+    separator()
+
+    -- Question 2 ------------------------------------------------------------
+    stepRow(protection.q2Number)
+    place(protection.q2All)
+    protection.q2Custom:ClearAllPoints()
+    protection.q2Custom:SetPoint("TOPLEFT", protection.q2All, "TOPRIGHT", HOME.gutter, 0)
+    protection.q2All:Refresh()
+    protection.q2Custom:Refresh()
+    y = y - protection.rowHeight.q2 - 14
+
     if custom then
         protection.choose:Show()
-        protection.choose:ClearAllPoints()
-        protection.choose:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
+        place(protection.choose)
         protection.strict:ClearAllPoints()
         -- Anchored on the very box it depends on rather than on the column plus
         -- a number: an indent written as an offset from somewhere else drifts
@@ -1561,27 +1718,26 @@ refreshTab.protection = function()
         -- longer sits under its parent reads as a row of its own -- which is
         -- exactly how it was read in session.
         protection.strict:SetPoint("TOPLEFT", protection.checks.groupInvite,
-            "BOTTOMLEFT", SUB_INDENT, -(ROW_HEIGHT - CHECK_SIZE))
+            "BOTTOMLEFT", HOME.subIndent, -(HOME.rowHeight - HOME.checkSize))
         protection.strictNote:Hide()
         y = y - protection.chooseHeight - 4
     else
         protection.choose:Hide()
-        protection.strict:ClearAllPoints()
-        protection.strict:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
+        place(protection.strict)
         protection.strictNote:ClearAllPoints()
         protection.strictNote:SetPoint("LEFT", protection.strict.label, "RIGHT", 8, 0)
         protection.strictNote:Show()
-        y = y - ROW_HEIGHT
+        y = y - HOME.rowHeight
     end
     protection.strict:Refresh()
 
     -- Under the strict box in both modes: in "I choose" the strict box has gone
     -- into the left column, and this line stays at the screen's own left margin
     -- because it answers question 1, not question 2.
-    protection.trust:ClearAllPoints()
-    protection.trust:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
+    place(protection.trust)
     protection.trust:Refresh()
-    y = y - ROW_HEIGHT - BLOCK_GAP
+    y = y - HOME.rowHeight
+    separator()
 
     -- Question 3 -- the anti-spam of the public channels.
     --
@@ -1602,66 +1758,65 @@ refreshTab.protection = function()
     protection.q3Title:SetTextColor(unpack(covered and C.disabled or C.ink))
     protection.q3Number:SetTextColor(unpack(covered and C.disabled or C.accent))
 
-    protection.q3Number:ClearAllPoints()
-    protection.q3Number:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y - 4)
-    y = y - Q_TITLE_ROW
-    protection.q3Yes:ClearAllPoints()
-    protection.q3Yes:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
+    stepRow(protection.q3Number)
+    place(protection.q3Yes)
     protection.q3No:ClearAllPoints()
-    protection.q3No:SetPoint("TOPLEFT", protection.q3Yes, "TOPRIGHT", CARD_GUTTER, 0)
+    protection.q3No:SetPoint("TOPLEFT", protection.q3Yes, "TOPRIGHT", HOME.gutter, 0)
     protection.q3Yes:Refresh()
     protection.q3No:Refresh()
-    y = y - CARD_HEIGHT - 8
+    y = y - protection.rowHeight.q3 - 8
 
     -- The field rides on the right of its own label rather than at a fixed
     -- offset: the sentence is not the same length in the two locales, and a
     -- number picked for one of them cuts the other.
-    protection.q3IntervalLabel:ClearAllPoints()
-    protection.q3IntervalLabel:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y - 6)
+    place(protection.q3IntervalLabel, -6)
     protection.q3Interval:ClearAllPoints()
     protection.q3Interval:SetPoint("LEFT", protection.q3IntervalLabel, "RIGHT", 10, 0)
     protection.q3Interval:Refresh()
-    y = y - ROW_HEIGHT - 4
+    y = y - HOME.rowHeight - 4
 
-    protection.q3Note:SetText(covered and L["ANTISPAM_COVERED"] or L["ANTISPAM_NOTE"])
-    protection.q3Note:SetTextColor(unpack(covered and C.orange or C.dim))
-    protection.q3Note:ClearAllPoints()
-    protection.q3Note:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
-    -- Measured rather than assumed: the note wraps over one line at 900 px and
-    -- over three at 500, and everything below it hangs from this number.
-    y = y - math.max(16, protection.q3Note:GetStringHeight() or 16) - BLOCK_GAP
+    -- Rule 4 of the section head: a greyed-out question says so in words as well
+    -- as in grey. This is the sentence, and it is the only thing left under
+    -- question 3 -- decision 142 struck the standing note off the screen.
+    -- Nothing is reserved for it: it is on screen only while the answer is
+    -- already decided elsewhere.
+    protection.q3Note:SetText(covered and L["ANTISPAM_COVERED"] or "")
+    protection.q3Note:SetTextColor(unpack(C.orange))
+    place(protection.q3Note)
+    if covered then
+        -- Measured rather than assumed: the sentence wraps over one line at
+        -- 900 px and over two at 500, and everything below it hangs from this.
+        y = y - math.max(NOTE_LINE, protection.q3Note:GetStringHeight() or NOTE_LINE) - 4
+    end
+    separator()
 
-    protection.q4Number:ClearAllPoints()
-    protection.q4Number:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y - 4)
-    y = y - Q_TITLE_ROW
+    stepRow(protection.q4Number)
     -- The first card is placed against the screen, the two others against the
     -- card before them -- the shape questions 1 and 2 already have. Placed at
-    -- `PAD + index * (thirdWidth + CARD_GUTTER)` they carried a copy of the
-    -- width inside their own position, so the width pass could not widen them
-    -- without moving them too, and the same layout would have been written a
-    -- second time. Chained, widening a card carries the next one along, and the
-    -- width itself is `applyTabWidth.protection`'s, above, for every screen.
+    -- `PAD + index * (thirdWidth + gutter)` they carried a copy of the width
+    -- inside their own position, so the width pass could not widen them without
+    -- moving them too, and the same layout would have been written a second
+    -- time. Chained, widening a card carries the next one along, and the width
+    -- itself is `applyTabWidth.protection`'s, above, for every screen.
     local previous = nil
     for _, key in ipairs({ "silent", "minimal", "verbose" }) do
         local card = protection.q4[key]
-        card:ClearAllPoints()
         if previous then
-            card:SetPoint("TOPLEFT", previous, "TOPRIGHT", CARD_GUTTER, 0)
+            card:ClearAllPoints()
+            card:SetPoint("TOPLEFT", previous, "TOPRIGHT", HOME.gutter, 0)
         else
-            card:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
+            place(card)
         end
         card:Refresh()
         previous = card
     end
-    y = y - CARD_HEIGHT - BLOCK_GAP
+    y = y - protection.rowHeight.q4
+    separator()
 
-    protection.q5Number:ClearAllPoints()
-    protection.q5Number:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y - 4)
-    y = y - Q_TITLE_ROW
-    protection.tileAllowed:ClearAllPoints()
-    protection.tileAllowed:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
+    stepRow(protection.q5Number)
+    place(protection.tileAllowed)
     protection.tileBlocked:ClearAllPoints()
-    protection.tileBlocked:SetPoint("TOPLEFT", protection.tileAllowed, "TOPRIGHT", CARD_GUTTER, 0)
+    protection.tileBlocked:SetPoint("TOPLEFT", protection.tileAllowed, "TOPRIGHT", HOME.gutter, 0)
 
     local counts = ns.getListCounts and ns.getListCounts()
         or { allowed = { total = 0, manual = 0, trust = 0, bnet = 0 }, blocked = { total = 0, names = 0, patterns = 0 } }
@@ -1675,10 +1830,9 @@ refreshTab.protection = function()
     protection.tileBlocked.count:SetText(tostring(counts.blocked.total))
     protection.tileBlocked.detail:SetText(string.format(L["TILE_BLOCKED_DETAIL"],
         tostring(counts.blocked.names), tostring(counts.blocked.patterns)))
-    y = y - 100
+    y = y - HOME.tile - HOME.tileGap
 
-    protection.testLabel:ClearAllPoints()
-    protection.testLabel:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
+    place(protection.testLabel)
     protection.testInput:ClearAllPoints()
     protection.testInput:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD + 130, y + 4)
 
@@ -1692,7 +1846,7 @@ refreshTab.protection = function()
     if protection.testInput and ns.RefreshTestAnswer then
         ns.RefreshTestAnswer(protection.testInput:GetText())
     end
-    y = y - TEST_ROW
+    y = y - HOME.testRow
 
     -- The answer under the field, over the whole width, and MEASURED.
     --
@@ -1706,8 +1860,7 @@ refreshTab.protection = function()
     -- question 3, and nothing is reserved while the field is empty -- the answer
     -- only exists during a test, and A.2 asks the minimum height to hold the home
     -- screen, not a sentence that is not on it.
-    protection.testAnswer:ClearAllPoints()
-    protection.testAnswer:SetPoint("TOPLEFT", protection.frame, "TOPLEFT", PAD, y)
+    place(protection.testAnswer)
     if (protection.testAnswer:GetText() or "") ~= "" then
         y = y - math.max(NOTE_LINE, protection.testAnswer:GetStringHeight() or NOTE_LINE)
     end
