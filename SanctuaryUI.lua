@@ -1548,7 +1548,11 @@ local function buildProtectionTab(parent)
     -- "(experimental)" is part of the label and not a mention beside it
     -- (decision 162e): set on the right of the row it read as a word belonging
     -- to the far edge of the window rather than to the box, and the row had to
-    -- reserve room for it at every width.
+    -- reserve room for it at every width. It is the one word of the screen that
+    -- is not the colour of its own sentence, and the colour travels IN the
+    -- locale string (decision 170b): the escape is what the client draws, so
+    -- each language says where its own mention starts and ends, and the label
+    -- stays one key somebody can search for.
     --
     -- Ticking it writes, like any other box (decision 170c): the warning of
     -- 167b is gone. What it does is on hover, in the tooltip, where the rest of

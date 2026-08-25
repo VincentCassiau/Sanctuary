@@ -6422,7 +6422,16 @@ local function newWidget(kind, name, parent, template)
     -- A stand-in with one property that matters: it grows with the text. The
     -- chips measure themselves through it, so a name too long for its row is a
     -- case a check can set up rather than a screenshot somebody has to read.
-    function w:GetStringWidth() return #(self.__text or "") * 7 end
+    -- Colour escapes are instructions, not letters: the client draws none of
+    -- `|cffff9933` and none of `|r`, so a label that carries one has to be
+    -- measured on what is left. Counted as text, the twelve bytes of the
+    -- enhanced-filtering label's orange mention were 84 px of nothing, enough to
+    -- fold the row an extra line at the narrow end of the window and to make
+    -- every height measured from here wrong about it.
+    function w:GetStringWidth()
+        local text = (self.__text or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+        return #text * 7
+    end
     function w:SetWordWrap(value) self.__wordWrap = value and true or false end
     -- Recorded, because "does changing screen put the shared frame back at the
     -- top" is a question only the offset can answer (constat G.4).
@@ -7420,16 +7429,35 @@ do
     -- Decision 162e: the mention is part of the label, in brackets, and there is
     -- no second string beside the box any more. Set on the right of the row it
     -- read as a word belonging to the edge of the window rather than to the box
-    -- it qualifies.
+    -- it qualifies. Decision 170b paints it, and only it: the label keeps its
+    -- words and the mention takes the orange -- in BOTH locales and in every
+    -- mode, because a label with two colours depending on where you came from
+    -- is not one label.
     equal(frenchLocale.FILTER_STRICT_GROUP_INVITE_SYSTEM,
-        "Filtrage renforc\195\169 en instance (exp\195\169rimental)",
-        "the label carries the mention itself, in French")
+        "Filtrage renforc\195\169 en instance |cffff9933(exp\195\169rimental)|r",
+        "the label carries the mention itself, in French, and paints it")
     equal(defaultLocale.FILTER_STRICT_GROUP_INVITE_SYSTEM,
-        "Enhanced filtering in instances (experimental)",
+        "Enhanced filtering in instances |cffff9933(experimental)|r",
         "and says the same thing in the default locale")
     equal(frenchLocale.STRICT_EXPERIMENTAL, nil,
         "the mention that used to sit beside it is gone")
     equal(defaultLocale.STRICT_EXPERIMENTAL, nil, "from both locales")
+    -- The hex is not a hex somebody liked: it is `C.orange`, the colour the two
+    -- state notes are drawn in, read off the note itself so that moving the
+    -- palette and forgetting the label is a failure rather than a drift.
+    local orange = string.format("%02x%02x%02x",
+        math.floor((_G.SanctuaryQ2Note.__colorR or 0) * 255 + 0.5),
+        math.floor((_G.SanctuaryQ2Note.__colorG or 0) * 255 + 0.5),
+        math.floor((_G.SanctuaryQ2Note.__colorB or 0) * 255 + 0.5))
+    for locale, name in pairs({ [frenchLocale] = "French", [defaultLocale] = "default" }) do
+        local label = locale.FILTER_STRICT_GROUP_INVITE_SYSTEM
+        equal(label:match("|c%x%x(%x%x%x%x%x%x)%("), orange,
+            "the " .. name .. " mention wears the orange of the state notes")
+        check(label:find("|r", 1, true) > label:find("|c", 1, true),
+            "and the " .. name .. " label closes the colour before it ends")
+        equal(select(2, label:gsub("|c%x%x%x%x%x%x%x%x", "")), 1,
+            "one coloured run in the " .. name .. " label, no more")
+    end
     -- The warning of 167b left the locales with the dialog (decision 170c).
     for _, key in ipairs({ "STRICT_CONFIRM", "STRICT_CONFIRM_OK", "STRICT_CONFIRM_CANCEL" }) do
         equal(frenchLocale[key], nil, key .. " is gone from the French block")

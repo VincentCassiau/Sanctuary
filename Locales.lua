@@ -69,7 +69,13 @@ L["Q2_CUSTOM_TITLE"] = "I choose"
 L["Q2_CUSTOM_DESC"] = "Pick what gets blocked yourself."
 L["Q2_COVERED"] = "Nothing to choose here: You have chosen to only filter blocked players."
 L["FILTER_GROUP_INVITE"] = "Block group invitations"
-L["FILTER_STRICT_GROUP_INVITE_SYSTEM"] = "Enhanced filtering in instances (experimental)"
+-- The mention is part of the label (decision 162e) and it is the one word on the
+-- screen drawn in another colour than its own sentence (decision 170b): the
+-- orange the state notes wear, `C.orange` of SanctuaryUI, written as the escape
+-- the client draws. In the string rather than beside it, because the label folds
+-- at the narrow end of the window and a second FontString chasing the end of a
+-- folded line is a position nobody can keep right.
+L["FILTER_STRICT_GROUP_INVITE_SYSTEM"] = "Enhanced filtering in instances |cffff9933(experimental)|r"
 L["FILTER_WHISPER"] = "Block private messages (/w)"
 L["FILTER_SAY"] = "Block /say (/s)"
 L["FILTER_YELL"] = "Block /yell (/y)"
@@ -349,7 +355,7 @@ L["Q2_CUSTOM_TITLE"] = "Je choisis"
 L["Q2_CUSTOM_DESC"] = "Choisissez vous-m\195\170me ce qui est bloqu\195\169."
 L["Q2_COVERED"] = "Rien \195\160 choisir ici : Vous avez d\195\169cid\195\169 de ne filtrer que les personnes bloqu\195\169es."
 L["FILTER_GROUP_INVITE"] = "Bloquer les invitations de groupe"
-L["FILTER_STRICT_GROUP_INVITE_SYSTEM"] = "Filtrage renforc\195\169 en instance (exp\195\169rimental)"
+L["FILTER_STRICT_GROUP_INVITE_SYSTEM"] = "Filtrage renforc\195\169 en instance |cffff9933(exp\195\169rimental)|r"
 L["FILTER_WHISPER"] = "Bloquer les messages priv\195\169s (/w)"
 L["FILTER_SAY"] = "Bloquer le /dire (/s)"
 L["FILTER_YELL"] = "Bloquer le /crier (/y)"
