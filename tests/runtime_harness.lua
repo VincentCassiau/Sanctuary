@@ -8501,6 +8501,11 @@ undo.button:Click()
 equal(SanctuaryDB.blockedNames[blockedKey], nil, "Annuler takes the new entry back out")
 check(SanctuaryDB.manualWhitelist["bothways-testrealm"] ~= nil, "and puts the old one back")
 equal(undo:IsShown(), false, "the offer goes with it")
+-- And so does the green line that confirmed the addition: it said yes to the
+-- very gesture Annuler has just taken back, on the screen a person comes to
+-- read the state of her lists off.
+equal(nameBox.note:GetText(), "", "and the field stops saying the name went in")
+equal(nameBox.note:IsShown(), false, "sentence and room together")
 
 -- The other direction, through the allowed panel.
 ns.ClosePanel()

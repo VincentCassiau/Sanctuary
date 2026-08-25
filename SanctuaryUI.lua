@@ -1343,7 +1343,7 @@ local DISPLACED_UNDO = {
     blocked = { titleKey = "TILE_BLOCKED", remove = "removeAllowed", restore = "restoreBlocked" },
 }
 
-local function offerDisplacedUndo(addedKey, displaced)
+local function offerDisplacedUndo(addedKey, displaced, box)
     if type(displaced) ~= "table" then return end
     local spec = DISPLACED_UNDO[displaced.list]
     if not spec or not addedKey then return end
@@ -1353,6 +1353,10 @@ local function offerDisplacedUndo(addedKey, displaced)
     offerUndoLine(string.format(L["UNDO_MOVED"], label, L[spec.titleKey]), function()
         ns[spec.remove](addedKey)
         ns[spec.restore](displaced.key, displaced.data)
+        -- The green "Ajouté" under the field confirmed the very addition this
+        -- takes back: left standing it would go on saying yes to a gesture that
+        -- no longer happened, on the one screen a person comes to check.
+        if box then box:ClearNote() end
     end)
 end
 
@@ -3203,7 +3207,7 @@ local function submitEntry(box, addFn)
         -- and the last answer goes rather than standing over a new gesture.
         box:ClearNote()
     end
-    if ok then offerDisplacedUndo(key, displaced) end
+    if ok then offerDisplacedUndo(key, displaced, box) end
     if ok and ns.refreshUI then ns.refreshUI() end
 end
 
