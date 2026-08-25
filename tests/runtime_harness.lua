@@ -10321,24 +10321,6 @@ check(mixedDeployOutput:find("RELEVE COMPLET", 1, true) == nil,
 check(mixedDeployOutput:find("Build     : 20260820-8", 1, true) ~= nil,
     "and the header names the build the code itself carries")
 
--- The twin surface: the in-game summary has the same two identities and used to
--- say nothing about them. It grades through the same rule, so the screen the
--- maintainer reads and the offline check cannot disagree.
-equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "a",
-    version = "v", addonMetaVersion = "v" })), "ok", "matching identities pass")
-equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "b",
-    version = "v", addonMetaVersion = "v" })), "partial", "a stale .toc build is partial")
--- The version is the twin of the build in the same .toc, and desyncs on its own.
-equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "a",
-    version = "v", addonMetaVersion = "w" })), "partial", "so is a stale .toc version")
-equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "unavailable",
-    version = "v", addonMetaVersion = "v" })), "unknown", "an unreadable .toc is not a verdict")
-SanctuaryDB.debugEnabled = true
-ns.resetDebugLog()
-local deploySummary = ns.buildDebugSummaryText()
-check(deploySummary:find("Deploiement: OK", 1, true) ~= nil,
-    "the in-game summary states the deployment, not only the offline check")
-
 -- The third branch of the same check, and the only correctile of the previous
 -- round whose mutation did not bite. It is reachable for real:
 -- C_AddOns.GetAddOnMetadata unavailable makes the client report the .toc build
@@ -10353,16 +10335,6 @@ check(unreadableTocOutput:find("build_meta_unreadable", 1, true) ~= nil,
     "naming which identity could not be read")
 check(unreadableTocOutput:find("RELEVE COMPLET", 1, true) == nil,
     "such a recording is never reported as complete")
-
--- The same absence on the other side. An identity missing from the code used to
--- skip the comparison and fall through to `ok` -- an unknown turning green on
--- the side nobody was watching.
-equal(select(1, ns.getDeploymentVerdict({ addonMetaBuild = "a",
-    version = "v", addonMetaVersion = "v" })), "unknown",
-    "a manifest with no code build is unknown, not ok")
-equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "a",
-    addonMetaVersion = "v" })), "unknown",
-    "and one with no code version too")
 
 -- "Died and never came back" is a session that ended on a corpse, not the
 -- scenario the step asks for.
@@ -10478,6 +10450,50 @@ check(os.execute(string.format('python3 %q --check >/dev/null 2>&1',
     "the session protocol passes its own structural check")
 
 end)()
+end
+
+-- ---------------------------------------------------------------------------
+-- The deployment verdict, which is the add-on's own rule
+-- ---------------------------------------------------------------------------
+
+-- `ns.getDeploymentVerdict` is add-on code (Sanctuary.lua), called in production
+-- by the summary the maintainer reads on screen. These assertions used to sit
+-- INSIDE the block above, which only runs where internal_docs/qa is present: a
+-- clone of the published repository therefore never checked the rule that
+-- decides whether a copy is fully deployed. Nothing here needs the session
+-- tooling, so nothing here is conditioned on it.
+do
+    local keptDebug = SanctuaryDB.debugEnabled
+    -- The two identities of one copy: what the code carries, and what the client
+    -- reads out of the .toc. They grade through the same rule as the offline
+    -- check, so the screen and the check cannot disagree.
+    equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "a",
+        version = "v", addonMetaVersion = "v" })), "ok", "matching identities pass")
+    equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "b",
+        version = "v", addonMetaVersion = "v" })), "partial", "a stale .toc build is partial")
+    -- The version is the twin of the build in the same .toc, and desyncs on its own.
+    equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "a",
+        version = "v", addonMetaVersion = "w" })), "partial", "so is a stale .toc version")
+    -- An unreadable .toc is not a mismatch -- it is a read failure, and a read
+    -- failure must not pass for agreement.
+    equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "unavailable",
+        version = "v", addonMetaVersion = "v" })), "unknown", "an unreadable .toc is not a verdict")
+    -- The same absence on the other side. An identity missing from the code used
+    -- to skip the comparison and fall through to `ok` -- an unknown turning green
+    -- on the side nobody was watching.
+    equal(select(1, ns.getDeploymentVerdict({ addonMetaBuild = "a",
+        version = "v", addonMetaVersion = "v" })), "unknown",
+        "a manifest with no code build is unknown, not ok")
+    equal(select(1, ns.getDeploymentVerdict({ build = "a", addonMetaBuild = "a",
+        addonMetaVersion = "v" })), "unknown",
+        "and one with no code version too")
+    -- And the surface the maintainer actually reads: the in-game summary states
+    -- the deployment, not only the offline check.
+    SanctuaryDB.debugEnabled = true
+    ns.resetDebugLog()
+    check(ns.buildDebugSummaryText():find("Deploiement: OK", 1, true) ~= nil,
+        "the in-game summary states the deployment, not only the offline check")
+    SanctuaryDB.debugEnabled = keptDebug
 end
 
 -- ---------------------------------------------------------------------------
