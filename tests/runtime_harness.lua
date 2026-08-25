@@ -6544,6 +6544,46 @@ check(sameColor(_G.SanctuaryChannel_keywords.rim.__colorTexture, { 0.4, 0.6, 1.0
     "the picked radio's rim answers too")
 _G.SanctuaryChannel_none:Click()
 
+-- Decision 135: clicking the TEXT of a box or a dot works the box or the dot.
+-- An 18 px square is a small target and every interface a person has used lets
+-- them hit the words instead.
+do
+    -- `say` is the box the block above rewired to answer false for ever; `yell`
+    -- is untouched and reads its own stored value.
+    local box = _G.SanctuaryFilter_yell
+    local hit = box.labelHit
+    check(hit ~= nil, "a checkbox's label is a target of its own")
+    equal(hit:GetParent(), box, "belonging to the box, so it hides with it")
+    -- Anchored on the FontString at both corners: the target is the text and
+    -- nothing past it. Given the row's width it would turn the empty half of
+    -- the line into a switch nobody meant to touch.
+    do
+        local point, relativeTo = hit:GetPoint(1)
+        equal(point, "TOPLEFT", "pinned to the top-left of the words")
+        equal(relativeTo, box.label, "on the label itself")
+        local corner, other = hit:GetPoint(2)
+        equal(corner, "BOTTOMRIGHT", "and to their bottom-right")
+        equal(other, box.label, "so it stops where the text stops")
+    end
+    local before = SanctuaryDB.filters.yell
+    hit:Click()
+    equal(SanctuaryDB.filters.yell, not before, "clicking the words works the box")
+    hit:Click()
+    equal(SanctuaryDB.filters.yell, before, "and works it back")
+    -- A disabled box refuses the words exactly as it refuses the square.
+    box:SetEnabledState(false)
+    hit:Click()
+    equal(SanctuaryDB.filters.yell, before, "a greyed box ignores its label too")
+    box:SetEnabledState(true)
+
+    local radio = _G.SanctuaryChannel_keywords
+    check(radio.labelHit ~= nil, "and a radio's label is a target as well")
+    radio.labelHit:Click()
+    equal(SanctuaryDB.filters.channelMode, "keywords", "clicking the words picks the dot")
+    _G.SanctuaryChannel_none.labelHit:Click()
+    equal(SanctuaryDB.filters.channelMode, "none", "and moves it to the next one")
+end
+
 -- The tab strip, decision 140: ONE bar the full width of the window, between the
 -- title bar and the content, on every screen. The current tab is filled with the
 -- accent tint and underlined towards the content; the others carry the strip's

@@ -249,6 +249,30 @@ local function newLabel(parent, text, size, color, justify)
     return label
 end
 
+-- The label of a box or a dot is part of the control, not a caption beside it:
+-- "cliquer le texte d'une case a cocher doit cocher/decocher" (decision 135).
+-- Every interface a person has used works that way, and an 18 px square is a
+-- small target.
+--
+-- The hit area is anchored on the FontString itself at both corners, so it
+-- covers the text and NOTHING past it -- a button given the row's width would
+-- turn the empty half of the line into a switch nobody meant to touch. It is a
+-- child of the control rather than of the screen, so hiding the control hides
+-- its second target with it; and it calls the OnClick handler rather than
+-- `Click()`, which on a CheckButton would also flip the drawn state behind the
+-- model's back.
+local function makeLabelClickable(control)
+    local hit = CreateFrame("Button", nil, control)
+    hit:SetPoint("TOPLEFT", control.label, "TOPLEFT", 0, 2)
+    hit:SetPoint("BOTTOMRIGHT", control.label, "BOTTOMRIGHT", 0, -2)
+    hit:SetScript("OnClick", function()
+        local onClick = control:GetScript("OnClick")
+        if onClick then onClick(control) end
+    end)
+    control.labelHit = hit
+    return hit
+end
+
 local function setTooltip(frame, text)
     if not text or text == "" then return end
     frame:SetScript("OnEnter", function(self)
@@ -334,6 +358,10 @@ local function newCheck(parent, name, text, tooltip, get, set)
         if ns.refreshUI then ns.refreshUI() end
     end)
     setTooltip(frame, tooltip)
+    -- The label is the other half of the target, and it carries the same
+    -- tooltip: a sentence a person reaches by hovering the box has to be
+    -- reachable from the words that name it.
+    setTooltip(makeLabelClickable(frame), tooltip)
     return frame
 end
 
@@ -378,6 +406,7 @@ local function newRadio(parent, name, text, tooltip, isOn, select)
         if ns.refreshUI then ns.refreshUI() end
     end)
     setTooltip(frame, tooltip)
+    setTooltip(makeLabelClickable(frame), tooltip)
     return frame
 end
 
