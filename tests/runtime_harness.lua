@@ -2883,12 +2883,13 @@ equal(verdict.verdict, "always_allowed", "a Battle.net tag is answered on the ac
 equal(verdict.list, "bnet", "and named as a Battle.net friend")
 
 -- Question 1 in the other mode: the same unknown name, the other answer.
+asFound.testBoardScope = SanctuaryDB.filters.scope
 SanctuaryDB.filters.scope = "blockedOnly"
 verdict = ns.describeAccessDecision("Nobody")
 equal(verdict.verdict, "unknown", "an unknown name is still unknown")
 equal(verdict.blockedNow, false, "but nothing blocks it when only blocked names are filtered")
 equal(verdict.scope, "blockedOnly", "and the answer says which mode it was given in")
-SanctuaryDB.filters.scope = "strangers"
+SanctuaryDB.filters.scope = asFound.testBoardScope
 
 -- The blocked list beats the allowed one, and the answer says so rather than
 -- silently dropping the entry the person typed.
@@ -4090,10 +4091,11 @@ for _, event in ipairs(ns.GROUP_CHAT_EVENTS) do
     equal(dispatchChatFilter(event, "hello", "Victim-TestRealm"), false,
         event .. " never hides the player")
 end
+asFound.groupChatOverride = SanctuaryCharDB.overrides.enabled
 SanctuaryCharDB.overrides.enabled = false
 equal(dispatchChatFilter("CHAT_MSG_PARTY", "spam", "Pest"), false,
     "and nothing at all while the add-on is off")
-SanctuaryCharDB.overrides.enabled = nil
+SanctuaryCharDB.overrides.enabled = asFound.groupChatOverride
 
 -- One journal entry, one session counter, one verbose line -- like any other
 -- blocked interaction.
@@ -4496,12 +4498,14 @@ equal(listCounts.blocked.total, 2, "and the blocked total is their sum")
 
 local protectionInfo = ns.describeProtection()
 equal(#protectionInfo.kinds, 5, "\"I choose\" with everything ticked lists five kinds")
+asFound.protectionScope = SanctuaryDB.filters.scope
+asFound.protectionPreset = SanctuaryDB.filters.preset
 SanctuaryDB.filters.preset = "all"
 equal(#ns.describeProtection().kinds, 5, "the recommended preset lists the same five")
 SanctuaryDB.filters.scope = "blockedOnly"
 equal(#ns.describeProtection().kinds, 0, "and the open mode lists none")
-SanctuaryDB.filters.scope = "strangers"
-SanctuaryDB.filters.preset = "custom"
+SanctuaryDB.filters.scope = asFound.protectionScope
+SanctuaryDB.filters.preset = asFound.protectionPreset
 
 -- C12 -- the writes.
 resetModelState()
@@ -4592,6 +4596,9 @@ equal(#chatMessages, 1, "and one more block produces one again")
 SanctuaryDB.notifications.mode = "silent"
 
 -- C15 -- the schema reset.
+asFound.schemaResetScope = SanctuaryDB.filters.scope
+asFound.schemaResetLimit = SanctuaryDB.logging.maxEntries
+asFound.schemaResetOverride = SanctuaryCharDB.overrides.enabled
 local oldWhitelist = { oldfriend = { displayName = "Oldfriend", addedAt = 42 } }
 local oldKeywords = { "oldpattern" }
 SanctuaryDB = {
@@ -4639,9 +4646,9 @@ SanctuaryDB.logging.maxEntries = 1234
 fire("ADDON_LOADED", "Sanctuary")
 equal(SanctuaryDB.filters.scope, "blockedOnly", "a second load resets nothing")
 equal(SanctuaryDB.logging.maxEntries, 1234, "and keeps what was set since")
-SanctuaryDB.filters.scope = "strangers"
-SanctuaryDB.logging.maxEntries = 5000
-SanctuaryCharDB.overrides.enabled = nil
+SanctuaryDB.filters.scope = asFound.schemaResetScope
+SanctuaryDB.logging.maxEntries = asFound.schemaResetLimit
+SanctuaryCharDB.overrides.enabled = asFound.schemaResetOverride
 
 do
 
@@ -4731,15 +4738,18 @@ fire("ADDON_LOADED", "Sanctuary")
 equal(#chatMessages, 1, "loading prints exactly one line")
 check(chatMessages[1]:find(ns.L["ADDON_LOADED_ACTIVE"], 1, true) ~= nil,
     "and it says the protection is active")
+asFound.loadLineOverride = SanctuaryCharDB.overrides.enabled
 SanctuaryCharDB.overrides.enabled = false
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
 equal(#chatMessages, 1, "still exactly one when the protection is off")
 check(chatMessages[1]:find(ns.L["ADDON_LOADED_INACTIVE"], 1, true) ~= nil,
     "and it says so")
-SanctuaryCharDB.overrides.enabled = nil
+SanctuaryCharDB.overrides.enabled = asFound.loadLineOverride
 
 -- C18 -- the anti-spam setting, and the one question the interface asks.
+asFound.antiSpamBlockLimit = SanctuaryDB.logging.maxEntries
+asFound.antiSpamBlockScope = SanctuaryDB.filters.scope
 do
 
 resetModelState()
@@ -4758,8 +4768,8 @@ equal(SanctuaryDB.antiSpam.enabled, false, "off, like a fresh one")
 equal(SanctuaryDB.antiSpam.intervalSeconds, 300, "with the same window")
 equal(SanctuaryDB.logging.maxEntries, 1234, "and nothing else in the file is touched")
 equal(SanctuaryDB.filters.scope, "blockedOnly", "including the answer to question 1")
-SanctuaryDB.logging.maxEntries = 5000
-SanctuaryDB.filters.scope = "strangers"
+SanctuaryDB.logging.maxEntries = asFound.antiSpamBlockLimit
+SanctuaryDB.filters.scope = asFound.antiSpamBlockScope
 
 ns.resetToSchemaV2()
 equal(SanctuaryDB.antiSpam.enabled, false, "the 1.0.0 reset rebuilds it off")
@@ -4814,10 +4824,11 @@ for _, case in ipairs(COVERAGE) do
         "channel coverage for " .. case.scope .. "+" .. case.preset .. "+" .. case.channelMode)
     -- Switched off, nothing is filtered at all, so nothing is covered either --
     -- whatever "Filter everything" is still remembering.
+    asFound.coverageOverride = SanctuaryCharDB.overrides.enabled
     SanctuaryCharDB.overrides.enabled = false
     equal(ns.isChannelSpamCovered(), false,
         "and nothing is covered while Sanctuary is off (" .. case.channelMode .. ")")
-    SanctuaryCharDB.overrides.enabled = nil
+    SanctuaryCharDB.overrides.enabled = asFound.coverageOverride
 end
 
 -- The snapshot publishes it, so a report answers "was the anti-spam on".
@@ -5063,6 +5074,7 @@ end
 -- Switched off, either of the two ways, nothing happens.
 do
     armAntiSpam(300)
+    asFound.antiSpamOffOverride = SanctuaryCharDB.overrides.enabled
     SanctuaryCharDB.overrides.enabled = false
     local message = freshMessage()
     equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "the first copy"), false,
@@ -5070,7 +5082,7 @@ do
     now = now + 10
     equal(deliverCopy("filters_first", message, SPAMMER, nextLine(), "the repeat"), false,
         "and so is the repeat")
-    SanctuaryCharDB.overrides.enabled = nil
+    SanctuaryCharDB.overrides.enabled = asFound.antiSpamOffOverride
 
     armAntiSpam(300)
     SanctuaryDB.antiSpam.enabled = false
@@ -5642,11 +5654,12 @@ equal(#chatMessages, 0, "with the Journal switched off nothing is said")
 SanctuaryDB.logging.enabled = asFound.journalWarningRecording
 
 fillJournal(100)
+asFound.journalWarningOverride = SanctuaryCharDB.overrides.enabled
 SanctuaryCharDB.overrides.enabled = false
 chatMessages = {}
 fire("PLAYER_ENTERING_WORLD")
 equal(#chatMessages, 0, "and with Sanctuary switched off nothing is said either")
-SanctuaryCharDB.overrides.enabled = nil
+SanctuaryCharDB.overrides.enabled = asFound.journalWarningOverride
 
 -- Emptying the journal arms it again: it is a different journal now.
 fillJournal(100)
@@ -6934,6 +6947,7 @@ _G["SanctuaryTab_protection"]:Click()
 -- exception. What was on screen carried the pick in the border alone, which is a
 -- meaning in a colour.
 do
+    local keptScope = SanctuaryDB.filters.scope
     local CARDS = { "SanctuaryQ1_strangers", "SanctuaryQ1_blockedOnly",
         "SanctuaryQ2_all", "SanctuaryQ2_custom", "SanctuaryQ3_yes", "SanctuaryQ3_no",
         "SanctuaryQ4_silent", "SanctuaryQ4_minimal", "SanctuaryQ4_verbose" }
@@ -6959,7 +6973,7 @@ do
     _G.SanctuaryQ1_blockedOnly:Click()
     equal(_G.SanctuaryQ1_blockedOnly.mark:IsShown(), true, "picking the other moves the fill")
     equal(_G.SanctuaryQ1_strangers.mark:IsShown(), false, "and empties the one left behind")
-    SanctuaryDB.filters.scope = "strangers"
+    SanctuaryDB.filters.scope = keptScope
     ns.refreshUI()
 end
 
@@ -7124,6 +7138,7 @@ end
 -- cannot tell two greys apart read a question that had stopped answering and
 -- nothing that said why. Decision 153 settles the sentence, in both languages.
 do
+    local keptScope = SanctuaryDB.filters.scope
     SanctuaryDB.filters.scope = "strangers"
     ns.refreshUI()
     equal(_G.SanctuaryQ2Note:GetText(), "",
@@ -7175,7 +7190,7 @@ do
         "and so is the one under question 3")
     equal(frenchLocale.STRICT_EXPERIMENTAL, "\226\128\148 exp\195\169rimental",
         "the experimental mention says the word and nothing more")
-    SanctuaryDB.filters.scope = "strangers"
+    SanctuaryDB.filters.scope = keptScope
     ns.refreshUI()
 end
 
@@ -7687,10 +7702,11 @@ check(testAnswerFor("Superspam"):find("spam", 1, true) ~= nil,
 -- character the answer covers -- so the sentence has to say which one it is.
 check(testAnswerFor("Zorglub"):find(string.format(ns.L["TEST_UNKNOWN_BLOCKED"], "Zorglub-TestRealm"), 1, true) ~= nil,
     "an unknown name is blocked while question 1 filters strangers")
+asFound.testAnswerScope = SanctuaryDB.filters.scope
 SanctuaryDB.filters.scope = "blockedOnly"
 check(testAnswerFor("Zorglub"):find(string.format(ns.L["TEST_UNKNOWN_ALLOWED"], "Zorglub-TestRealm"), 1, true) ~= nil,
     "and allowed in the other mode")
-SanctuaryDB.filters.scope = "strangers"
+SanctuaryDB.filters.scope = asFound.testAnswerScope
 -- The last line of the board: blocked wins over a trust source, and the answer
 -- names the list it overrides rather than silently dropping it. A guild mate,
 -- not a Battle.net friend -- one of those cannot be blocked at all now.
@@ -10182,6 +10198,7 @@ end
 
 -- A.6 -- "Enhanced filtering in instances" answers to the box above it.
 do
+    local keptScope = SanctuaryDB.filters.scope
     SanctuaryDB.filters.scope = "strangers"
     SanctuaryDB.filters.preset = "custom"
     SanctuaryDB.filters.groupInvite = true
@@ -10214,7 +10231,7 @@ do
     SanctuaryDB.filters.scope = "blockedOnly"
     ns.refreshUI()
     equal(strict.enabled, false, "and greyed with the rest when nothing is filtered")
-    SanctuaryDB.filters.scope = "strangers"
+    SanctuaryDB.filters.scope = keptScope
     ns.refreshUI()
 end
 
@@ -11210,6 +11227,7 @@ local STATES = {
     { label = "add-on off",      gate = true,  enabled = false },
 }
 
+asFound.parityOverride = SanctuaryCharDB.overrides.enabled
 for _, state in ipairs(STATES) do
     -- Written straight into the override rather than through `ns.setEnabled`,
     -- which prints a line: the chat line is one of the four things counted here.
@@ -11254,7 +11272,7 @@ for _, state in ipairs(STATES) do
         end
     end
 end
-SanctuaryCharDB.overrides.enabled = nil
+SanctuaryCharDB.overrides.enabled = asFound.parityOverride
 
 -- The open defect this release was sent back to the plan for. A player writing
 -- themselves a note gets a CHAT_MSG_WHISPER whose sender is the player; the
