@@ -658,6 +658,12 @@ local SENTINEL_IGNORED = {
     ["SanctuaryCharDB.sessionStats"] = true,
 }
 
+-- Every leaf is read out WITH ITS TYPE. `tostring` alone loses the difference
+-- between the boolean false and the string "false", and between the number 5000
+-- and the string "5000" -- exactly the shapes a settings bug takes -- so a
+-- section that hands back a right-looking value of the wrong type reads as no
+-- change at all. The empty table carries its type for the same reason: a string
+-- whose value is literally "{}" would otherwise read as an emptied list.
 local function collectPersisted(source, path, out)
     for key, value in pairs(source) do
         local at = path .. "." .. tostring(key)
@@ -667,12 +673,12 @@ local function collectPersisted(source, path, out)
                 -- that came back with names in it and a list that came back
                 -- empty would read the same way here.
                 if next(value) == nil then
-                    out[at] = "{}"
+                    out[at] = "table:{}"
                 else
                     collectPersisted(value, at, out)
                 end
             else
-                out[at] = tostring(value)
+                out[at] = type(value) .. ":" .. tostring(value)
             end
         end
     end
