@@ -10810,11 +10810,34 @@ do
     equal(relativePoint, "BOTTOMLEFT", "on the row under it")
     equal(offsetX, 26, "indented by the sub-row indent of the mock-up")
     equal(strict.enabled, true, "and it can be ticked while its parent is ticked")
+    -- Read while it is live, so what follows compares the box to itself.
+    local function markColour(box) return table.concat(box.mark.__colorTexture, ",") end
+    local litMark = markColour(strict)
 
     SanctuaryDB.filters.strictGroupInviteSystemMessages = false
     _G.SanctuaryFilter_groupInvite:Click()
     equal(SanctuaryDB.filters.groupInvite, false, "unticking the parent")
     equal(strict.enabled, false, "greys the child")
+    -- Greyed the ordinary way, which is NOT the witness of a dead question:
+    -- decision 170a is about automatic trust and about it alone. Here the
+    -- question is alive and so is the option -- it is the box above that is
+    -- unticked -- so the child keeps a control's dimming, its own mark, and
+    -- above all its sentence. An option marked "(experimental)" with nothing
+    -- anywhere saying what it does is worse than a greyed one, and the tooltip
+    -- is all there is left: the paragraph that explained it on the click went
+    -- out with the dialog (decision 170c).
+    equal(strict:GetAlpha(), 0.8, "and dims it as a control, not as a witness")
+    equal(markColour(strict), litMark, "leaving its mark the blue of every other box")
+    rawset(GameTooltip, "__lastText", nil)
+    strict:GetScript("OnEnter")(strict)
+    equal(rawget(GameTooltip, "__lastText"), ns.L["TIP_STRICT_GROUP_INVITE_SYSTEM"],
+        "while it goes on answering under the pointer")
+    strict:GetScript("OnLeave")(strict)
+    rawset(GameTooltip, "__lastText", nil)
+    strict.labelHit:GetScript("OnEnter")(strict.labelHit)
+    equal(rawget(GameTooltip, "__lastText"), ns.L["TIP_STRICT_GROUP_INVITE_SYSTEM"],
+        "and so do the words beside it")
+    strict.labelHit:GetScript("OnLeave")(strict.labelHit)
     strict:GetScript("OnClick")(strict)
     equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false,
         "and a click on a greyed child changes nothing -- constat D.1")

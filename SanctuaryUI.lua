@@ -346,10 +346,14 @@ local function makeLabelClickable(control)
     return hit
 end
 
--- `isLive`, when given, is asked before anything is drawn: a control that has
--- been greyed out answers nothing on hover either (decision 170a). A tooltip is
--- the explanation of a live control; hung on a witness of a setting that no
+-- `isLive`, when given, is asked before anything is drawn: a witness of a dead
+-- question answers nothing on hover either (decision 170a). A tooltip is the
+-- explanation of a live control; hung on the witness of a setting that no
 -- longer applies, it is a paragraph describing something that is not happening.
+-- A witness only: a box greyed the ordinary way, because the box above it is
+-- unticked, keeps its sentence -- it is the one place on the screen saying what
+-- the option would do, and an option nobody can read is worse than a greyed
+-- one.
 local function setTooltip(frame, text, isLive)
     if not text or text == "" then return end
     frame:SetScript("OnEnter", function(self)
@@ -482,8 +486,9 @@ local function newCheck(parent, name, text, tooltip, get, set)
         if ns.refreshUI then ns.refreshUI() end
     end)
     -- Both halves of the control answer the same question, so both are gated on
-    -- the same state: greyed takes the click away and the hover with it.
-    local function live() return frame.enabled end
+    -- the same state: what a witness has stopped saying, the words beside it
+    -- have stopped saying too.
+    local function live() return not frame.witness end
     setTooltip(frame, tooltip, live)
     -- The label is the other half of the target, and it carries the same
     -- tooltip: a sentence a person reaches by hovering the box has to be
