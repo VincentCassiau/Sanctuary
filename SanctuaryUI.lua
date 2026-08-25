@@ -19,6 +19,23 @@ local L = ns.L
 -- SECTION 1: Palette, metrics, small helpers
 -- ============================================================================
 
+-- The four accessibility rules this file is held to. They are rules, not taste,
+-- and they apply to every screen -- a new widget that breaks one of them is a
+-- defect even when it looks right on the developer's monitor.
+--
+--   1. Never a meaning carried by colour alone. A picked card has a filled ring
+--      AND an accent border; a blocked verdict has a word; the protection state
+--      has a sentence beside its dot. Someone who cannot tell the two greens
+--      apart still reads the screen.
+--   2. No visible face under 12 px. Descriptions are the smallest thing here and
+--      they sit at FONT_BODY; the mock-up's 11.5 px was refused on that ground.
+--   3. Secondary text is a notch lighter than the mock-up's #9A9AAA, which sits
+--      at about 6.9:1 on this panel. `C.dim` is what carries it and it is the
+--      colour every description, hint and note reads from.
+--   4. A greyed-out control shows it TWICE: the fill dims (opacity) and a
+--      sentence says why. Question 3 covered by the channel filters is the
+--      shape -- `ANTISPAM_COVERED` is that sentence.
+--
 -- Transposed from the validated mock-ups (maquettes/cible2.py). One appearance,
 -- "Moderne": the dark palette the add-on already used.
 local C = {
@@ -29,10 +46,20 @@ local C = {
     header     = { 0.078, 0.078, 0.149, 1.00 },
     border     = { 0.302, 0.302, 0.400, 0.85 },
     ink        = { 1.000, 1.000, 1.000, 1.00 },
-    dim        = { 0.604, 0.604, 0.667, 1.00 },
-    soft       = { 0.749, 0.749, 0.800, 1.00 },
+    -- Rule 3: the mock-up's #9A9AAA, one notch lighter. #B3B3C2 reads at about
+    -- 9.3:1 on the panel where #9A9AAA read at 6.9 -- the same grey to look at,
+    -- a different one to read on a screen that is not the developer's.
+    dim        = { 0.702, 0.702, 0.761, 1.00 },
+    soft       = { 0.800, 0.800, 0.847, 1.00 },
     accent     = { 0.400, 0.600, 1.000, 1.00 },
     accentBg   = { 0.400, 0.600, 1.000, 0.12 },
+    -- `height:1px; background:rgba(102,153,255,0.32)` -- the rule between two
+    -- questions of the home screen, and nowhere else (decision 139).
+    rule       = { 0.400, 0.600, 1.000, 0.32 },
+    -- The strip of tabs under the title bar (decision 140), and the tint the
+    -- current one is filled with: `rgba(20,20,36,0.9)` and `rgba(102,153,255,.14)`.
+    tabBar     = { 0.078, 0.078, 0.141, 0.90 },
+    tabOn      = { 0.400, 0.600, 1.000, 0.14 },
     green      = { 0.400, 0.902, 0.400, 1.00 },
     greenBg    = { 0.157, 0.470, 0.157, 0.28 },
     red        = { 1.000, 0.420, 0.420, 1.00 },
@@ -48,8 +75,16 @@ local C = {
     button     = { 0.149, 0.149, 0.251, 1.00 },
     buttonHot  = { 0.220, 0.220, 0.345, 1.00 },
     tabOff     = { 0.047, 0.047, 0.086, 0.90 },
-    disabled   = { 0.380, 0.380, 0.420, 1.00 },
+    -- Rule 4: a greyed control dims as well as greys, so `disabled` is read
+    -- through DISABLED_ALPHA and has to start light enough to survive it.
+    disabled   = { 0.545, 0.545, 0.588, 1.00 },
 }
+
+-- Rule 4, the other half of it: what a disabled control is drawn at. Not so
+-- faint that its label stops being readable -- a person has to be able to read
+-- what they cannot click -- and not so close to 1 that the state is the colour
+-- of the text and nothing else.
+local DISABLED_ALPHA = 0.8
 
 -- 16 / 14 / 13 / 12, the hierarchy Vincent asked for.
 local FONT_TITLE, FONT_SECTION, FONT_DESC, FONT_BODY = 16, 14, 13, 12
