@@ -9762,6 +9762,30 @@ do
     -- and ends well above the bottom edge.
     check(-(stripY or 0) + (strip:GetHeight() or 0) < (mainFrame:GetHeight() or 0),
         "the strip ends inside the window, not under it")
+
+    -- Sideways too, and at the width where it is tightest: five French labels at
+    -- the mock-up's padding come to more than the 500 px the grip may drag the
+    -- window down to, and a tab hanging off the right edge of a strip is a tab
+    -- nobody can click -- there is nowhere for a row of tabs to wrap to.
+    for _, width in ipairs({ 500, 640, 900 }) do
+        SanctuaryDB.debugEnabled = true
+        SanctuaryDB.uiSize = { width, 700 }
+        ns.refreshTabBar()
+        ns.refreshUI()
+        local far = 0
+        for _, key in ipairs({ "protection", "journal", "advanced", "about", "diagnostics" }) do
+            local tab = _G["SanctuaryTab_" .. key]
+            local _, _, _, tabX = tab:GetPoint()
+            check(tab:IsShown(), "the " .. key .. " tab is on the strip at " .. width)
+            far = math.max(far, (tabX or 0) + (tab:GetWidth() or 0))
+        end
+        check(far <= width + 1,
+            "the five tabs fit the strip at " .. width .. " (" .. far .. " px used)")
+    end
+    SanctuaryDB.debugEnabled = false
+    SanctuaryDB.uiSize = nil
+    ns.refreshTabBar()
+    ns.refreshUI()
     local spare = (768 - (mainFrame:GetHeight() or 0)) / 2
     check(spare >= 10,
         "and a default Retail screen keeps its breathing edge (" .. spare .. " px)")

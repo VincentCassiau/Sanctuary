@@ -1433,11 +1433,8 @@ local function buildProtectionTab(parent)
     protection.layoutChoose(width)
 
     -- Question 4 ------------------------------------------------------------
-    protection.q4Anchor = CreateFrame("Frame", nil, parent)
-    protection.q4Anchor:SetSize(width, 1)
-    -- Same two pieces as the questions above, but placed by the refresh rather
-    -- than here: what sits over them folds and unfolds. The title rides on the
-    -- number, so the refresh only ever moves one of the two.
+    -- Same two pieces as the questions above. The title rides on the number, so
+    -- the refresh only ever moves one of the two.
     protection.q4Number = newLabel(parent, "4", FONT_BODY, C.accent)
     protection.q4Title = newLabel(parent, L["Q4_TITLE"], FONT_TITLE, C.ink)
     protection.q4Title:SetPoint("TOPLEFT", protection.q4Number, "TOPRIGHT", 10, 4)
@@ -1616,10 +1613,9 @@ applyTabWidth.protection = function()
     protection.q3Note:SetWidth(width)
     protection.tileAllowed:SetWidth(cardWidth)
     protection.tileBlocked:SetWidth(cardWidth)
-    -- The invisible frame question 4 hangs from, and the two columns of "I
-    -- choose": `layoutChoose` is what shares the width between them, and it
-    -- answers the height the fold needs, which the refresh below reads.
-    protection.q4Anchor:SetWidth(width)
+    -- And the two columns of "I choose": `layoutChoose` is what shares the width
+    -- between them, and it answers the height the fold needs, which the refresh
+    -- below reads.
     protection.layoutChoose(width)
     -- The rules between the questions run the whole column, decision 139.
     for _, rule in ipairs(protection.rules) do rule:SetWidth(width) end
@@ -3322,6 +3318,9 @@ local function stateTooltipText()
 end
 
 local function layoutTabs()
+    -- Called from the window's own OnSizeChanged as well as from the refresh, so
+    -- it has to survive being asked before the strip exists.
+    if not tabBar then return end
     local visible = {}
     for _, def in ipairs(TAB_DEFS) do
         local btn = tabButtons[def.key]
@@ -3336,21 +3335,36 @@ local function layoutTabs()
     -- strip that runs its whole width just under the title bar, on every screen.
     -- The current one is filled with the accent tint and underlined in accent
     -- along its bottom edge, towards the content it opens; the others are grey
-    -- on the strip's own fill. No backdrop, no border, no corner: the strip is
-    -- the frame, and decision 140 refused the rounded segment for not being
-    -- "fidele au reste" -- everything here is square.
+    -- on the strip's own fill. No border, no corner: the strip IS the frame, and
+    -- decision 140 refused the rounded segment for not being "fidele au reste".
+    --
+    -- `padding: 8px 17px` around a label measured in BYTES, which over-estimates
+    -- an accented French word and never under-estimates it -- the safe direction
+    -- for a width. Five tabs at that padding come to 522 px in French, more than
+    -- the 500 px the window may be dragged down to, so the row is scaled to fit
+    -- when it has to: a Diagnostics tab hanging off the right edge of the strip
+    -- is a tab nobody can click, and there is nowhere for it to wrap to.
+    local widths, total = {}, 0
+    for index, def in ipairs(visible) do
+        widths[index] = math.max(70, (#L[def.labelKey] * 8) + 34)
+        total = total + widths[index]
+    end
+    if total > frameWidth and total > 0 then
+        for index = 1, #widths do
+            widths[index] = math.floor(widths[index] * frameWidth / total)
+        end
+    end
     local x = 0
-    for _, def in ipairs(visible) do
+    for index, def in ipairs(visible) do
         local btn = tabButtons[def.key]
-        local width = math.max(70, (#L[def.labelKey] * 8) + 34)
         local current = (def.key == activeTab)
-        btn:SetSize(width, TABBAR_HEIGHT)
+        btn:SetSize(widths[index], TABBAR_HEIGHT)
         btn:ClearAllPoints()
         btn:SetPoint("TOPLEFT", tabBar, "TOPLEFT", x, 0)
-        x = x + width
-        -- A fill and nothing else. `applyBackdrop` with no border draws the four
-        -- sides in the fill's own colour, which on a transparent tab is four
-        -- lines of nothing -- the strip stays one continuous bar.
+        x = x + widths[index]
+        -- A fill and nothing else: `applyBackdrop` given no border colour asks
+        -- for no edge at all, so the strip stays one continuous bar with the
+        -- current tab tinted inside it.
         applyBackdrop(btn, current and C.tabOn or C.tabBar)
         btn.label:SetTextColor(unpack(current and C.ink or C.dim))
         -- `box-shadow: inset 0 -2px 0 accent`.
@@ -3473,6 +3487,11 @@ local function applyViewport(frameHeight, width)
     -- one on show.
     for _, applyHeightOf in pairs(applyTabHeight) do applyHeightOf(viewport) end
     contentScroll:RefreshBar()
+    -- And the strip of tabs, which shares the width with nothing else: five
+    -- French labels at the mock-up's padding are wider than the narrowest window,
+    -- so what the row does about that has to be redone on every pixel of a drag
+    -- rather than only when the button is let go.
+    layoutTabs()
     -- The panels are not inside the content area, so nothing above resizes them:
     -- they answer to the window itself, on the same pass.
     applyPanelViewport(frameHeight)
@@ -3552,10 +3571,11 @@ end
 function ns.refreshUI()
     if not mainFrame or not mainFrame:IsShown() then return end
     refreshStateButton()
-    layoutTabs()
-    -- The width first, before a single screen measures itself: `applyHeight`
-    -- applies it further down, but by then the screen has already been drawn.
+    -- The width first, before a single screen measures itself -- the strip of
+    -- tabs included, which sizes its row against it. `applyHeight` applies it
+    -- further down, but by then the screen has already been drawn.
     frameWidth = resolveWidth()
+    layoutTabs()
     local height = MIN_HEIGHT
     local refresh = refreshTab[activeTab]
     if refresh then height = refresh() or MIN_HEIGHT end
