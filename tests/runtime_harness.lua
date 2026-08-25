@@ -4707,9 +4707,6 @@ assertModelAtRest()
 local realSavedVariables, realCharSavedVariables = SanctuaryDB, SanctuaryCharDB
 
 -- C15 -- the schema reset.
-asFound.schemaResetScope = SanctuaryDB.filters.scope
-asFound.schemaResetLimit = SanctuaryDB.logging.maxEntries
-asFound.schemaResetOverride = SanctuaryCharDB.overrides.enabled
 local oldWhitelist = { oldfriend = { displayName = "Oldfriend", addedAt = 42 } }
 local oldKeywords = { "oldpattern" }
 SanctuaryDB = {
@@ -4757,9 +4754,6 @@ SanctuaryDB.logging.maxEntries = 1234
 fire("ADDON_LOADED", "Sanctuary")
 equal(SanctuaryDB.filters.scope, "blockedOnly", "a second load resets nothing")
 equal(SanctuaryDB.logging.maxEntries, 1234, "and keeps what was set since")
-SanctuaryDB.filters.scope = asFound.schemaResetScope
-SanctuaryDB.logging.maxEntries = asFound.schemaResetLimit
-SanctuaryCharDB.overrides.enabled = asFound.schemaResetOverride
 
 do
 
@@ -4859,8 +4853,6 @@ check(chatMessages[1]:find(ns.L["ADDON_LOADED_INACTIVE"], 1, true) ~= nil,
 SanctuaryCharDB.overrides.enabled = asFound.loadLineOverride
 
 -- C18 -- the anti-spam setting, and the one question the interface asks.
-asFound.antiSpamBlockLimit = SanctuaryDB.logging.maxEntries
-asFound.antiSpamBlockScope = SanctuaryDB.filters.scope
 do
 
 resetModelState()
@@ -4879,8 +4871,6 @@ equal(SanctuaryDB.antiSpam.enabled, false, "off, like a fresh one")
 equal(SanctuaryDB.antiSpam.intervalSeconds, 300, "with the same window")
 equal(SanctuaryDB.logging.maxEntries, 1234, "and nothing else in the file is touched")
 equal(SanctuaryDB.filters.scope, "blockedOnly", "including the answer to question 1")
-SanctuaryDB.logging.maxEntries = asFound.antiSpamBlockLimit
-SanctuaryDB.filters.scope = asFound.antiSpamBlockScope
 
 ns.resetToSchemaV2()
 equal(SanctuaryDB.antiSpam.enabled, false, "the 1.0.0 reset rebuilds it off")
