@@ -19,7 +19,7 @@ local L = ns.L
 -- SECTION 1: Palette, metrics, small helpers
 -- ============================================================================
 
--- The four accessibility rules this file is held to. They are rules, not taste,
+-- The accessibility rules this file is held to. They are rules, not taste,
 -- and they apply to every screen -- a new widget that breaks one of them is a
 -- defect even when it looks right on the developer's monitor.
 --
@@ -38,6 +38,10 @@ local L = ns.L
 --      the people I block", `ANTISPAM_COVERED` under question 3 when the
 --      channels are already all filtered. Small (12 px) and muted, never
 --      italic -- decision 153, and the game has no italic face to embed.
+--   5. Bound every FontString that can be longer than its column. One with no
+--      width draws on one line as far as it needs, over whatever is beside it:
+--      a card title folds, a tile's line is cut. French is the language that
+--      overflows and it is the user's own.
 --
 -- Transposed from the validated mock-ups (maquettes/cible2.py). One appearance,
 -- "Moderne": the dark palette the add-on already used.
@@ -499,24 +503,36 @@ local function newCard(parent, name, titleText, descText, width, isOn, select)
         self:Refresh()
     end
 
-    -- The card and the wrapping width of its description are one measurement,
-    -- so they are set together: a card widened on its own leaves its own text
+    -- The card and the wrapping width of its two texts are one measurement, so
+    -- they are set together: a card widened on its own leaves its own text
     -- folded to the width it was built at.
+    --
+    -- The TITLE is bounded like the description, and that is not symmetry for
+    -- its own sake. A FontString with no width draws on one line as far as it
+    -- needs, and the text column here is the card minus the ring: 181 px at the
+    -- 500 px the grip goes down to, against the 190 px "Tout le monde, sauf ceux
+    -- que je bloque" asks for at its very thinnest. French is the language that
+    -- overflows, which is the user's own, and no width settles it -- it is the
+    -- ratio between the two that does. So the title folds instead.
     function card:SetCardWidth(newWidth)
         self:SetWidth(newWidth)
-        self.desc:SetWidth(newWidth - textLeft - CARD.pad)
+        local column = newWidth - textLeft - CARD.pad
+        self.title:SetWidth(column)
+        self.desc:SetWidth(column)
     end
 
     -- What this card needs, at the width it is at RIGHT NOW.
     --
-    -- The description wraps, and how many lines it takes is the window's
-    -- business rather than a constant's: the longest of them is two lines at
-    -- 900 px and four at 500. A flat height was room booked for the worst case
-    -- on every screen and, once the ring took 24 px off the text column, text
-    -- over the edge on the case nobody had measured.
+    -- Both texts wrap, and how many lines they take is the window's business
+    -- rather than a constant's: the longest description is two lines at 900 px
+    -- and four at 500, and the longest title is one line at 900 and two at 500.
+    -- A flat height was room booked for the worst case on every screen and,
+    -- once the ring took 24 px off the text column, text over the edge on the
+    -- case nobody had measured.
     function card:NeededHeight()
+        local title = math.max(CARD.titleLine, self.title:GetStringHeight() or CARD.titleLine)
         local desc = math.max(NOTE_LINE, self.desc:GetStringHeight() or NOTE_LINE)
-        return CARD.top + CARD.titleLine + CARD.titleGap + desc + CARD.bottom
+        return CARD.top + title + CARD.titleGap + desc + CARD.bottom
     end
 
     card:SetScript("OnClick", function(self)
@@ -1515,6 +1531,26 @@ local function buildProtectionTab(parent)
         -- ask for, which is why that one is drawn from bars instead.
         tile.chevron = newLabel(tile, "\226\128\186", FONT_SECTION, C.dim)
         tile.chevron:SetPoint("RIGHT", tile, "RIGHT", -12, 0)
+        -- One line each, and BOUNDED. A FontString with no width of its own
+        -- draws as far as it needs, and what is at the far end of this one is
+        -- the chevron: "12 ajoutes / 5 amis Battle.net" runs under it at the
+        -- 500 px the grip goes down to. Word wrap is off rather than on, unlike
+        -- a card -- the tile is 46 px of exactly two lines, so a third has
+        -- nowhere to go and the client cuts the sentence instead of the tile.
+        tile.title:SetWordWrap(false)
+        tile.detail:SetWordWrap(false)
+        -- The room between the count and the chevron, measured rather than
+        -- guessed: the count is one to four digits, the two lines ride on it,
+        -- and what is left over changes with the size of the lists. 12 of
+        -- margin, the count, 10 to the text, then the text, 8 of air, the
+        -- chevron and its own 12 of margin.
+        function tile:FitText()
+            local room = math.max(20, (self:GetWidth() or 0) - 42
+                - (self.count:GetStringWidth() or 0)
+                - (self.chevron:GetStringWidth() or 0))
+            self.title:SetWidth(room)
+            self.detail:SetWidth(room)
+        end
         tile:SetScript("OnEnter", function(self)
             applyBackdrop(self, C.accentBg, C.accent)
             self.chevron:SetTextColor(unpack(C.accent))
@@ -1638,8 +1674,14 @@ applyTabWidth.protection = function()
     -- they have to be told the width they wrap at.
     protection.q2Note:SetWidth(width)
     protection.q3Note:SetWidth(width)
+    -- A tile's two lines are bounded by what the count and the chevron leave
+    -- them, so the tile is widened and re-fitted in one go. The counts are the
+    -- ones the last refresh wrote, which is what a resize needs: the lists do
+    -- not change size because the window did.
     protection.tileAllowed:SetWidth(cardWidth)
+    protection.tileAllowed:FitText()
     protection.tileBlocked:SetWidth(cardWidth)
+    protection.tileBlocked:FitText()
     -- And the two columns of "I choose": `layoutChoose` is what shares the width
     -- between them, and it answers the height the fold needs, which the refresh
     -- below reads.
@@ -1863,6 +1905,11 @@ refreshTab.protection = function()
     protection.tileBlocked.count:SetText(tostring(counts.blocked.total))
     protection.tileBlocked.detail:SetText(string.format(L["TILE_BLOCKED_DETAIL"],
         tostring(counts.blocked.names), tostring(counts.blocked.patterns)))
+    -- After the counts and never before them: the two lines are bounded by what
+    -- the count leaves them, and a list that has just grown from 9 to 10 pushes
+    -- them one digit along.
+    protection.tileAllowed:FitText()
+    protection.tileBlocked:FitText()
     y = y - HOME.tile - HOME.tileGap
 
     place(protection.testLabel)

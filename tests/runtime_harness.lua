@@ -6782,6 +6782,51 @@ do
     ns.ClosePanel()
 end
 
+-- Rule 5 of the styles section, on the tiles: what a tile writes is bounded by
+-- what the count and the chevron leave it. A FontString with no width draws on
+-- one line as far as it needs, and at the far end of this one is the chevron --
+-- "12 ajoutes / 5 amis Battle.net" ran under it at the narrow end of the grip.
+do
+    local kept = SanctuaryDB.uiSize
+    SanctuaryDB.uiSize = { 500, 700 }
+    ns.refreshUI()
+    for _, name in ipairs({ "SanctuaryTileAllowed", "SanctuaryTileBlocked" }) do
+        local tile = _G[name]
+        -- 12 of margin, the count, 10 to the text, then 8 of air, the chevron
+        -- and its own 12: what is left is the column the two lines get.
+        local room = tile:GetWidth() - 42 - tile.count:GetStringWidth()
+            - tile.chevron:GetStringWidth()
+        check((tile.title:GetWidth() or 0) > 0, name .. " gives its title a width of its own")
+        check((tile.title:GetWidth() or 0) <= room,
+            name .. " keeps the chevron's room outside its title")
+        check((tile.detail:GetWidth() or 0) > 0, name .. " bounds its detail too")
+        check((tile.detail:GetWidth() or 0) <= room,
+            name .. " and leaves the chevron alone with it")
+        -- On one line each: the tile is 46 px of exactly two lines, so a third
+        -- has nowhere to go and the client cuts the sentence instead.
+        equal(tile.title.__wordWrap, false, name .. " writes its title on one line")
+        equal(tile.detail.__wordWrap, false, name .. " and its detail on one")
+        equal(tile:GetHeight(), 46, name .. " stays the thin tile whatever it holds")
+    end
+    -- The French detail really is longer than that column: this is the case the
+    -- bound is here for, and it is the user's own language.
+    local allowed = _G.SanctuaryTileAllowed
+    local frenchDetail = string.format(frenchLocale.TILE_ALLOWED_DETAIL, "12", "5")
+    local column = allowed:GetWidth() - 42 - allowed.count:GetStringWidth()
+        - allowed.chevron:GetStringWidth()
+    check(#frenchDetail * 7 > column,
+        "the French detail is wider than the room a 500 px tile leaves it ("
+        .. (#frenchDetail * 7) .. " against " .. column .. ")")
+    -- And the bound follows the lists rather than being a constant: a count of
+    -- four digits pushes the two lines along and takes room off them.
+    local before = allowed.title:GetWidth()
+    allowed.count:SetText("1234")
+    allowed:FitText()
+    check(allowed.title:GetWidth() < before, "a longer count leaves the two lines less room")
+    SanctuaryDB.uiSize = kept
+    ns.refreshUI()
+end
+
 -- Decision 142: the standing note under question 3 is off the screen, and its
 -- key is out of both locales -- a string nobody can reach is a translation
 -- nobody will read. What is left under that question is the "already covered"
@@ -6904,6 +6949,40 @@ do
     equal(_G.SanctuaryQ1_strangers.desc:GetWidth(),
         _G.SanctuaryQ1_strangers:GetWidth() - 46,
         "and the text it folds is given the column left beside the ring")
+    -- Rule 5: the TITLE is bounded in the same column, and that is the defect
+    -- this lot closes. Left free it draws on one line as far as it needs, and
+    -- "Tout le monde, sauf ceux que je bloque" needs more than the column of a
+    -- 500 px window has -- at no width does it fit, so it has to fold.
+    equal(_G.SanctuaryQ1_strangers.title:GetWidth(),
+        _G.SanctuaryQ1_strangers:GetWidth() - 46,
+        "the title folds into the same column as the description")
+    -- All nine of them, and not the one that was measured by hand: a card built
+    -- somewhere else is a card whose title has no width.
+    for _, name in ipairs({ "SanctuaryQ1_strangers", "SanctuaryQ1_blockedOnly",
+        "SanctuaryQ2_all", "SanctuaryQ2_custom", "SanctuaryQ3_yes", "SanctuaryQ3_no",
+        "SanctuaryQ4_silent", "SanctuaryQ4_minimal", "SanctuaryQ4_verbose" }) do
+        local each = _G[name]
+        check((each.title:GetWidth() or 0) > 0, name .. " bounds its title")
+        equal(each.title:GetWidth(), each:GetWidth() - 46,
+            name .. " bounds it to the column beside the ring")
+    end
+    local card = _G.SanctuaryQ1_blockedOnly
+    local column = card:GetWidth() - 46
+    local frenchTitle = frenchLocale.Q1_BLOCKEDONLY_TITLE
+    check(#frenchTitle * 7 > column,
+        "the French title really is wider than that column ("
+        .. (#frenchTitle * 7) .. " against " .. column .. ")")
+    -- And a folded title is MEASURED: the row grows for it, so nothing under it
+    -- climbs over the second line.
+    local keptTitle = card.title:GetText()
+    card.title:SetText("Court")
+    local oneLine = card:NeededHeight()
+    card.title:SetText(frenchTitle)
+    check(card:NeededHeight() > oneLine,
+        "and the card answers a taller height once its title folds ("
+        .. card:NeededHeight() .. " against " .. oneLine .. ")")
+    card.title:SetText(keptTitle)
+    ns.refreshUI()
 
     -- The air between two questions, measured on the screen itself.
     SanctuaryDB.uiSize = { 780, 700 }
