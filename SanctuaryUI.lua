@@ -2304,9 +2304,39 @@ end
 local SHOW_MSG_X = 320
 -- The box, then the gap `newCheck` leaves between a box and its label.
 local CHECK_LABEL_GAP = 18 + 8
-local JOURNAL_ROW_ONE, JOURNAL_ROW_TWO = -30, -52
-local JOURNAL_LIST_TOP, JOURNAL_LIST_HEIGHT = -60, 300
-local JOURNAL_ROW_DROP = JOURNAL_ROW_ONE - JOURNAL_ROW_TWO
+-- The screen's own metrics, in one table for the same reason the home screen
+-- keeps `HOME`: this chunk is at Lua's ceiling of 200 registers.
+--
+-- `listMin` is a FLOOR and not a height (constat 165.1). The list was built 300
+-- px tall and the button row pinned 370 px down whatever the window measured,
+-- so in a window twice as tall the Journal was a short list with the emptiness
+-- spread out under the buttons. The list takes what is left between its own top
+-- and the row of buttons now, and the buttons ride at its bottom edge, which
+-- puts them at the bottom of the window and keeps them there through a drag.
+local JOURNAL = {
+    rowOne = -30, rowTwo = -52,
+    listTop = -60, listMin = 120,
+    buttonRow = 24, buttonGap = 12,
+}
+JOURNAL.rowDrop = JOURNAL.rowOne - JOURNAL.rowTwo
+
+-- Where the list ends and where the buttons begin. One function, because two
+-- passes change the answer and neither of them knows what the other did: how
+-- far the list starts down is the width pass's business -- one row of boxes at
+-- the top of the screen or two -- and how much room there is below is the
+-- window's. The list is what is left between them, never less than its floor,
+-- and the buttons hang from its bottom edge rather than from a number.
+local function layoutJournalList()
+    if not journal.scroll or not journal.frame then return end
+    local top = -(JOURNAL.listTop - (journal.drop or 0))
+    local height = math.max(JOURNAL.listMin,
+        (journal.viewport or MIN_HEIGHT) - top - JOURNAL.buttonGap - JOURNAL.buttonRow - PAD)
+    journal.scroll:ClearAllPoints()
+    journal.scroll:SetPoint("TOPLEFT", journal.frame, "TOPLEFT", PAD, -top)
+    journal.scroll:SetViewportSize(innerWidth(), height)
+    journal.clearBtn:ClearAllPoints()
+    journal.clearBtn:SetPoint("TOPLEFT", journal.scroll, "BOTTOMLEFT", 0, -JOURNAL.buttonGap)
+end
 
 local function buildJournalTab(parent)
     journal.frame = parent
@@ -2320,29 +2350,38 @@ local function buildJournalTab(parent)
         L["TIP_LOGS_ENABLE"],
         function() return SanctuaryDB and SanctuaryDB.logging.enabled == true end,
         function(value) SanctuaryDB.logging.enabled = value end)
-    journal.enable:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, JOURNAL_ROW_ONE)
+    journal.enable:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, JOURNAL.rowOne)
 
     journal.showMsg = newCheck(parent, "SanctuaryJournalShowMessages", L["LOGS_SHOW_MSG"], nil,
         function() return SanctuaryDB and SanctuaryDB.uiSettings.showMessageColumn == true end,
         function(value) SanctuaryDB.uiSettings.showMessageColumn = value end)
-    journal.showMsg:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + SHOW_MSG_X, JOURNAL_ROW_ONE)
+    journal.showMsg:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + SHOW_MSG_X, JOURNAL.rowOne)
 
-    journal.scroll = newScroll(parent, "SanctuaryJournalScroll", width, JOURNAL_LIST_HEIGHT)
-    journal.scroll:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, JOURNAL_LIST_TOP)
+    journal.scroll = newScroll(parent, "SanctuaryJournalScroll", width, JOURNAL.listMin)
     journal.rows = {}
     journal.rowPool = {}
 
-    journal.clearBtn = newButton(parent, nil, L["LOGS_CLEAR_BTN"], 140, 24, function()
-        StaticPopup_Show("SANCTUARY_CLEAR_LOG")
-    end, true)
-    journal.copyBtn = newButton(parent, nil, L["LOGS_COPY_BTN"], 140, 24, function()
+    -- Named, the two of them: one is the anchor the other two hang from, and
+    -- "the buttons sit at the bottom of the window" is not a property a test can
+    -- prove through a widget it cannot reach. The third rides on the second.
+    journal.clearBtn = newButton(parent, "SanctuaryJournalClearBtn", L["LOGS_CLEAR_BTN"],
+        140, JOURNAL.buttonRow, function()
+            StaticPopup_Show("SANCTUARY_CLEAR_LOG")
+        end, true)
+    journal.copyBtn = newButton(parent, nil, L["LOGS_COPY_BTN"], 140, JOURNAL.buttonRow, function()
         ns.ShowTextWindow(L["LOGS_HEADER"], buildJournalText())
     end)
-    journal.expandBtn = newButton(parent, nil, L["LOGS_EXPAND_ALL"], 120, 24, function()
-        allExpanded = not allExpanded
-        wipe(expandedGroups)
-        if ns.refreshUI then ns.refreshUI() end
-    end)
+    journal.expandBtn = newButton(parent, "SanctuaryJournalExpandBtn", L["LOGS_EXPAND_ALL"],
+        120, JOURNAL.buttonRow, function()
+            allExpanded = not allExpanded
+            wipe(expandedGroups)
+            if ns.refreshUI then ns.refreshUI() end
+        end)
+    -- The row is built once and never moved again: the list is the only thing
+    -- that changes height, and the three buttons hang from its bottom edge.
+    journal.copyBtn:SetPoint("LEFT", journal.clearBtn, "RIGHT", 10, 0)
+    journal.expandBtn:SetPoint("LEFT", journal.copyBtn, "RIGHT", 10, 0)
+    layoutJournalList()
 end
 
 local function acquireJournalRow(parent)
@@ -2378,14 +2417,12 @@ applyTabWidth.journal = function()
     journal.showMsg:ClearAllPoints()
     journal.showMsg:SetPoint("TOPLEFT", journal.frame, "TOPLEFT",
         sameRow and (PAD + SHOW_MSG_X) or PAD,
-        sameRow and JOURNAL_ROW_ONE or JOURNAL_ROW_TWO)
+        sameRow and JOURNAL.rowOne or JOURNAL.rowTwo)
     -- What the second row takes, the list gives back: it starts lower AND ends
-    -- at the same place, so the Clear / Copy / Expand row anchored under it stays
+    -- at the same place, so the Clear / Copy / Expand row hanging under it stays
     -- where it is and the screen keeps the height it reports.
-    local drop = sameRow and 0 or JOURNAL_ROW_DROP
-    journal.scroll:ClearAllPoints()
-    journal.scroll:SetPoint("TOPLEFT", journal.frame, "TOPLEFT", PAD, JOURNAL_LIST_TOP - drop)
-    journal.scroll:SetViewportSize(width, JOURNAL_LIST_HEIGHT - drop)
+    journal.drop = sameRow and 0 or JOURNAL.rowDrop
+    layoutJournalList()
     -- The pool as well as the live rows: a pooled row is handed out with the
     -- current width, but it is still a frame carrying a size, and leaving stale
     -- ones behind would make "no row is wider than the screen" true only for the
@@ -2393,6 +2430,15 @@ applyTabWidth.journal = function()
     for _, list in ipairs({ journal.rows, journal.rowPool }) do
         for _, row in ipairs(list) do row:SetWidth(width - 10) end
     end
+end
+
+-- The list fills whatever is left under it, so it is sized where the room is
+-- known: the viewport is what the window measures and a screen does not. Same
+-- rule as the diagnostics columns, and the same reason -- constat 165.1 is what
+-- a list built at a fixed 300 px looks like in a window twice that tall.
+applyTabHeight.journal = function(viewport)
+    journal.viewport = viewport
+    layoutJournalList()
 end
 
 refreshTab.journal = function()
@@ -2463,14 +2509,12 @@ refreshTab.journal = function()
     child:SetHeight(math.max(1, -y))
     journal.scroll:RefreshBar()
 
-    journal.clearBtn:ClearAllPoints()
-    journal.clearBtn:SetPoint("TOPLEFT", journal.frame, "TOPLEFT", PAD, -370)
-    journal.copyBtn:ClearAllPoints()
-    journal.copyBtn:SetPoint("LEFT", journal.clearBtn, "RIGHT", 10, 0)
-    journal.expandBtn:ClearAllPoints()
-    journal.expandBtn:SetPoint("LEFT", journal.copyBtn, "RIGHT", 10, 0)
-
-    return 410
+    -- The list fills what it is given and the buttons ride at its bottom edge,
+    -- so what this screen asks for is only its floor: the boxes above the list,
+    -- the shortest list it may be squeezed to, and the row of buttons under it.
+    -- `applyTabHeight` hands it everything beyond that.
+    return -(JOURNAL.listTop - (journal.drop or 0))
+        + JOURNAL.listMin + JOURNAL.buttonGap + JOURNAL.buttonRow
 end
 
 -- ============================================================================

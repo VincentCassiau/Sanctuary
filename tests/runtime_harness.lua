@@ -10038,8 +10038,35 @@ do
         "and so does the second, which used to run off the right edge")
     check(row(showMsg) < row(enable),
         "because at that width the second box has moved under the first")
-    equal(listEnd(), -360,
-        "the list gives back what the second row took, so the buttons under it do not move")
+    local narrowListEnd = listEnd()
+
+    -- Constat 165.1: the list was built 300 px tall and the buttons pinned 370
+    -- px down whatever the window measured, so a window twice as tall was a
+    -- short list with the emptiness spread out under the row of buttons. The
+    -- list takes what is left now, and the buttons hang from its bottom edge --
+    -- which puts them one margin above the bottom of the window, at every
+    -- height, without anything having to be kept in step with anything.
+    local clear = _G.SanctuaryJournalClearBtn
+    check(clear ~= nil, "the Journal's button row is reachable")
+    equal(select(2, clear:GetPoint()), list, "the buttons hang from the list, not from a number")
+    local function buttonRowBottom()
+        local _, _, _, _, y = clear:GetPoint()
+        return listEnd() + y - clear:GetHeight()
+    end
+    equal(-buttonRowBottom(), viewportOf() - 18,
+        "the row of buttons ends one margin above the bottom of the window")
+    local tallList = list:GetHeight()
+    now = now + 5
+    gripDown(grip)
+    mainFrame:SetSize(500, 620)
+    gripUp(grip)
+    check(list:GetHeight() < tallList, "dragging the window shorter shortens the list with it")
+    equal(-buttonRowBottom(), viewportOf() - 18, "and the buttons stay at the bottom of it")
+    now = now + 5
+    gripDown(grip)
+    mainFrame:SetSize(500, 940)
+    gripUp(grip)
+    equal(list:GetHeight(), tallList, "and dragging it back gives the list its height back")
 
     -- And it only moves when it has to: at the design width and at the wide
     -- bound the two boxes read as one row, which is what the screen is drawn as.
@@ -10054,7 +10081,8 @@ do
             "the second one back at its designed column at " .. width)
         check(labelEnd(showMsg) <= width - 18 * 2,
             "and its label fits there at " .. width)
-        equal(listEnd(), -360, "the list is back at its full height at " .. width)
+        equal(listEnd(), narrowListEnd,
+            "the list gives back what the second row took, so nothing under it moves at " .. width)
     end
 end
 
