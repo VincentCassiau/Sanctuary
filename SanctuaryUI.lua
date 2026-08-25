@@ -2271,6 +2271,43 @@ local function groupLogsByName()
     return sorted
 end
 
+-- The order the tab is actually drawn in. Decision 166: it is decided when the
+-- tab is opened and does not move again while it is on screen -- counts and
+-- times go on living in place, and somebody who was not in the list yet comes
+-- in at the top and stays where they came in. Sorting on every refresh is
+-- constat 165.2: unfolding an entry rebuilds the list, and a spam still running
+-- re-sorted it under the reader, so the line they had just clicked left from
+-- under the cursor.
+--
+-- `journal.order` is the frozen order, and nil means "decide it now": opening
+-- the tab and closing the window both clear it, which is what makes coming back
+-- give a fresh order. Emptying the journal needs no clearing of its own: an
+-- empty list writes an empty order on the way out, so whoever is blocked after
+-- "Clear the journal" opens a fresh one rather than being slotted back into the
+-- place of somebody who is no longer in the list.
+local function orderedJournalGroups()
+    local fresh = groupLogsByName()
+    if journal.order then
+        local rank = {}
+        for index, name in ipairs(journal.order) do rank[name] = index end
+        local kept, arrived = {}, {}
+        for _, group in ipairs(fresh) do
+            local into = rank[group.name] and kept or arrived
+            into[#into + 1] = group
+        end
+        table.sort(kept, function(a, b) return rank[a.name] < rank[b.name] end)
+        -- `fresh` is most recent first, so newcomers arrive in that order, ahead
+        -- of everyone already listed. They are written into the frozen order on
+        -- the way out: without that, the next newcomer would push this one back
+        -- down, which is the movement the decision is about.
+        for _, group in ipairs(kept) do arrived[#arrived + 1] = group end
+        fresh = arrived
+    end
+    journal.order = {}
+    for index, group in ipairs(fresh) do journal.order[index] = group.name end
+    return fresh
+end
+
 local function buildJournalText()
     local escape = ns.escapeExportText or tostring
     local lines = { L["EXPORT_HEADER"] }
@@ -2457,7 +2494,7 @@ refreshTab.journal = function()
     journal.expandBtn.label:SetText(allExpanded and L["LOGS_COLLAPSE_ALL"] or L["LOGS_EXPAND_ALL"])
 
     local child = journal.scroll.child
-    local groups = groupLogsByName()
+    local groups = orderedJournalGroups()
     local y = 0
 
     if #groups == 0 then
@@ -3992,6 +4029,10 @@ local function selectTab(key)
     -- code (the debug tab disappearing is one), and a list of allowed names
     -- floating over the Journal is a state the design never had.
     ns.ClosePanel()
+    -- Opening the Journal is what decides its order (decision 166): while the
+    -- tab is on screen no line changes place, and coming back into it is the
+    -- gesture that asks for a fresh one.
+    if key == "journal" then journal.order = nil end
     activeTab = key
     -- The scroll frame is one frame for the five screens, so its offset belongs
     -- to none of them: a Journal read to the bottom left About showing its own
@@ -4061,6 +4102,9 @@ local function clearTransientFields()
     end
     clearDiagnosticsPanel()
     clearUndo()
+    -- Closing the window is leaving the Journal: reopening it on that tab is a
+    -- fresh reading, and a fresh reading gets a fresh order.
+    journal.order = nil
 end
 
 local function createMainFrame()

@@ -10748,6 +10748,133 @@ do
     field:ShowFromStart()
 end
 
+-- A.10 -- the Journal's order freezes while the tab is on screen (decision 166).
+-- Constat 165.2: unfolding an entry rebuilds the list, and every rebuild
+-- re-sorted it by "last seen" -- so a spam still running carried the line that
+-- had just been clicked away from under the cursor. Counts and times go on
+-- living in place; only opening the tab again asks for a fresh order.
+do
+    local keptLog, keptLogging = SanctuaryDB.log, SanctuaryDB.logging.enabled
+    SanctuaryDB.logging.enabled = true
+    ns.clearJournal()
+
+    -- The group headers on screen, top to bottom. Read off the rows the screen
+    -- actually drew, not off the model: the order IS the drawing.
+    local function drawnNames()
+        local rows = {}
+        for _, row in ipairs(_G.SanctuaryJournalScrollChild.__children or {}) do
+            local text = row.label and tostring(row.label.__text or "") or ""
+            local name = text:match("^[>v] ([^%(]+) %(")
+            if name and row:IsShown() then
+                local _, _, _, _, y = row:GetPoint()
+                rows[#rows + 1] = { name = (name:gsub("%s+$", "")), y = y or 0 }
+            end
+        end
+        table.sort(rows, function(a, b) return a.y > b.y end)
+        local names = {}
+        for index, entry in ipairs(rows) do names[index] = entry.name end
+        return names
+    end
+
+    now = now + 60
+    ns.logBlock("whisper", "Alpha-TestRealm", "one")
+    now = now + 60
+    ns.logBlock("whisper", "Beta-TestRealm", "two")
+    now = now + 60
+    ns.logBlock("whisper", "Gamma-TestRealm", "three")
+
+    _G["SanctuaryTab_journal"]:Click()
+    ns.refreshUI()
+    equal(table.concat(drawnNames(), ","), "Gamma-TestRealm,Beta-TestRealm,Alpha-TestRealm",
+        "opening the tab sorts the people most recent first")
+
+    -- The oldest of the three starts up again. Its count moves, its place does
+    -- not: that is the whole of the decision.
+    now = now + 60
+    ns.logBlock("whisper", "Alpha-TestRealm", "again")
+    ns.refreshUI()
+    equal(table.concat(drawnNames(), ","), "Gamma-TestRealm,Beta-TestRealm,Alpha-TestRealm",
+        "a person still at it does not climb while the tab is on screen")
+    local alphaLine
+    for _, row in ipairs(_G.SanctuaryJournalScrollChild.__children or {}) do
+        local text = row.label and tostring(row.label.__text or "") or ""
+        if text:find("Alpha-TestRealm", 1, true) and text:find("^[>v] ") then alphaLine = text end
+    end
+    check(alphaLine and alphaLine:find("(2)", 1, true) ~= nil,
+        "but its count goes on living in place")
+
+    -- Unfolding is a rebuild, and the rebuild used to re-sort. So is "Expand
+    -- all", which is the same gesture on every line at once.
+    local header
+    for _, row in ipairs(_G.SanctuaryJournalScrollChild.__children or {}) do
+        local text = row.label and tostring(row.label.__text or "") or ""
+        if text:find("Gamma-TestRealm", 1, true) and text:find("^[>v] ") then header = row end
+    end
+    check(header ~= nil, "a group header is clickable")
+    header:GetScript("OnClick")(header)
+    equal(table.concat(drawnNames(), ","), "Gamma-TestRealm,Beta-TestRealm,Alpha-TestRealm",
+        "unfolding an entry moves nothing -- constat 165.2")
+    _G.SanctuaryJournalExpandBtn:GetScript("OnClick")(_G.SanctuaryJournalExpandBtn)
+    equal(table.concat(drawnNames(), ","), "Gamma-TestRealm,Beta-TestRealm,Alpha-TestRealm",
+        "and neither does Expand all")
+    _G.SanctuaryJournalExpandBtn:GetScript("OnClick")(_G.SanctuaryJournalExpandBtn)
+
+    -- Somebody who was not in the list comes in AT THE TOP, and stays there when
+    -- the next newcomer arrives behind them.
+    now = now + 60
+    ns.logBlock("whisper", "Delta-TestRealm", "new")
+    ns.refreshUI()
+    equal(table.concat(drawnNames(), ","),
+        "Delta-TestRealm,Gamma-TestRealm,Beta-TestRealm,Alpha-TestRealm",
+        "a person nobody had seen yet comes in at the top")
+    now = now + 60
+    ns.logBlock("whisper", "Epsilon-TestRealm", "newer")
+    ns.refreshUI()
+    equal(table.concat(drawnNames(), ","),
+        "Epsilon-TestRealm,Delta-TestRealm,Gamma-TestRealm,Beta-TestRealm,Alpha-TestRealm",
+        "and the next one arrives above them without pushing them back down")
+
+    -- Closing the window is leaving the Journal, so it asks for a fresh order
+    -- too: reopening on that tab is a new reading, not the continuation of one.
+    mainFrame:Hide()
+    mainFrame:Show()
+    equal(table.concat(drawnNames(), ","),
+        "Epsilon-TestRealm,Delta-TestRealm,Alpha-TestRealm,Gamma-TestRealm,Beta-TestRealm",
+        "closing and reopening the window sorts it again")
+
+    -- And so does coming back into the tab from another one.
+    now = now + 60
+    ns.logBlock("whisper", "Beta-TestRealm", "later")
+    ns.refreshUI()
+    equal(table.concat(drawnNames(), ","),
+        "Epsilon-TestRealm,Delta-TestRealm,Alpha-TestRealm,Gamma-TestRealm,Beta-TestRealm",
+        "Beta is still at it and still in its place")
+    _G["SanctuaryTab_protection"]:Click()
+    _G["SanctuaryTab_journal"]:Click()
+    ns.refreshUI()
+    equal(table.concat(drawnNames(), ","),
+        "Beta-TestRealm,Epsilon-TestRealm,Delta-TestRealm,Alpha-TestRealm,Gamma-TestRealm",
+        "coming back into the tab sorts it again, most recent first")
+
+    -- And emptying the journal drops the order with the entries it described:
+    -- what is blocked afterwards opens a fresh one instead of being slotted back
+    -- into the places of people who are no longer in the list.
+    StaticPopupDialogs.SANCTUARY_CLEAR_LOG.OnAccept()
+    now = now + 60
+    ns.logBlock("whisper", "Epsilon-TestRealm", "back")
+    now = now + 60
+    ns.logBlock("whisper", "Gamma-TestRealm", "back")
+    ns.refreshUI()
+    equal(table.concat(drawnNames(), ","), "Gamma-TestRealm,Epsilon-TestRealm",
+        "emptying the journal opens a fresh order for whoever comes next")
+
+    ns.clearJournal()
+    SanctuaryDB.log = keptLog
+    SanctuaryDB.logging.enabled = keptLogging
+    _G["SanctuaryTab_protection"]:Click()
+    ns.refreshUI()
+end
+
 
 -- A.2 -- the home screen scrolls where it has to, and the grip keeps a vertical
 -- travel.
