@@ -1502,7 +1502,10 @@ local function buildProtectionTab(parent)
         L["FILTER_STRICT_GROUP_INVITE_SYSTEM"], L["TIP_STRICT_GROUP_INVITE_SYSTEM"],
         function() return filterStored("strictGroupInviteSystemMessages") == true end,
         function(value)
-            if value then return StaticPopup_Show("SANCTUARY_STRICT_CONFIRM") end
+            if value then
+                StaticPopup_Show("SANCTUARY_STRICT_CONFIRM")
+                return
+            end
             setFilter("strictGroupInviteSystemMessages", false)
         end)
 
@@ -3739,9 +3742,9 @@ StaticPopupDialogs["SANCTUARY_STRICT_CONFIRM"] = {
     button1 = L["STRICT_CONFIRM_OK"],
     button2 = L["STRICT_CONFIRM_CANCEL"],
     OnAccept = function()
-        if not SanctuaryDB then return end
-        SanctuaryDB.filters.strictGroupInviteSystemMessages = true
-        if ns.refreshInviteSoundMuteState then ns.refreshInviteSoundMuteState() end
+        -- Through `setFilter`, like the click that did not write: one writer for
+        -- the box, and the guards it posts are posted here too.
+        setFilter("strictGroupInviteSystemMessages", true)
         if ns.refreshUI then ns.refreshUI() end
     end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
