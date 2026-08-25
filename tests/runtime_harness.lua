@@ -3154,11 +3154,12 @@ ns.resetDebugLog()
 -- third tier depends on a setting. Everything below proves that phrase, on the
 -- paths that carry it.
 
--- An earlier section clears these globals to exercise the escaping of a nil
--- value, and the invite patterns were rebuilt without them. Put them back and
--- rebuild, or the simulated system line matches no pattern at all.
-ERR_INVITED_TO_GROUP_SS = "[%s] vous a invit\195\169 \195\160 rejoindre un groupe."
-ERR_INVITED_ALREADY_IN_GROUP_SS = "[%s] vous a invit\195\169 \195\160 rejoindre un groupe, mais vous ne pouviez pas accepter car vous \195\170tes d\195\169j\195\160 dans un groupe."
+-- A fresh load opens the section below.
+--
+-- The two invite globals used to be re-assigned here, because a section above
+-- cleared one of them and never put it back. It puts it back itself now, so
+-- these two lines assigned a value that was already there and the sentence that
+-- justified them had stopped being true.
 fire("ADDON_LOADED", "Sanctuary")
 
 local function resetModelState()
@@ -11016,11 +11017,10 @@ end
 -- The master switch: at OFF the verdict on the name is still computed, but
 -- nothing is applied. That whole line used to be compared by eye.
 --
--- An earlier section clears ERR_INVITED_TO_GROUP_SS to exercise the escaping of
--- a nil global, and a later one reloads the addon -- which rebuilt the invite
--- patterns without it. Put the global back and rebuild, or the simulated
--- message falls back to the unaccented literal and matches no pattern.
-ERR_INVITED_TO_GROUP_SS = "[%s] vous a invit\195\169 \195\160 rejoindre un groupe."
+-- The reload rebuilds the invite patterns on the state this section is about to
+-- read. The line that re-assigned ERR_INVITED_TO_GROUP_SS above it is gone with
+-- the leak that made it necessary: the section that borrows that global now
+-- hands it back.
 fire("ADDON_LOADED", "Sanctuary")
 SanctuaryCharDB.overrides.enabled = false
 -- Flipping the switch in game also refreshes the sound guard; the simulation
