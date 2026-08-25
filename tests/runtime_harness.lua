@@ -10886,6 +10886,13 @@ do
     equal(table.concat(drawnNames(), ","),
         "Epsilon-TestRealm,Delta-TestRealm,Alpha-TestRealm,Gamma-TestRealm,Beta-TestRealm",
         "Beta is still at it and still in its place")
+    -- Clicking the tab you are already on is not coming back into it: the
+    -- screen was never left, and the decision says no line moves while it is up.
+    _G["SanctuaryTab_journal"]:Click()
+    ns.refreshUI()
+    equal(table.concat(drawnNames(), ","),
+        "Epsilon-TestRealm,Delta-TestRealm,Alpha-TestRealm,Gamma-TestRealm,Beta-TestRealm",
+        "clicking the Journal tab from the Journal re-sorts nothing")
     _G["SanctuaryTab_protection"]:Click()
     _G["SanctuaryTab_journal"]:Click()
     ns.refreshUI()

@@ -4064,8 +4064,10 @@ local function selectTab(key)
     ns.ClosePanel()
     -- Opening the Journal is what decides its order (decision 166): while the
     -- tab is on screen no line changes place, and coming back into it is the
-    -- gesture that asks for a fresh one.
-    if key == "journal" then journal.order = nil end
+    -- gesture that asks for a fresh one. Clicking the tab you are already on is
+    -- not coming back into it -- nothing was ever left -- and re-sorting there
+    -- is exactly the movement under the reader that constat 165.2 reported.
+    if key == "journal" and activeTab ~= "journal" then journal.order = nil end
     activeTab = key
     -- The scroll frame is one frame for the five screens, so its offset belongs
     -- to none of them: a Journal read to the bottom left About showing its own
