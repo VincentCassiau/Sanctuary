@@ -33,8 +33,11 @@ local L = ns.L
 --      at about 6.9:1 on this panel. `C.dim` is what carries it and it is the
 --      colour every description, hint and note reads from.
 --   4. A greyed-out control shows it TWICE: the fill dims (opacity) and a
---      sentence says why. Question 3 covered by the channel filters is the
---      shape -- `ANTISPAM_COVERED` is that sentence.
+--      sentence says why. Two questions of the home screen can go grey and both
+--      carry their sentence: `Q2_COVERED` under question 2 in "everyone except
+--      the people I block", `ANTISPAM_COVERED` under question 3 when the
+--      channels are already all filtered. Small (12 px) and muted, never
+--      italic -- decision 153, and the game has no italic face to embed.
 --
 -- Transposed from the validated mock-ups (maquettes/cible2.py). One appearance,
 -- "Moderne": the dark palette the add-on already used.
@@ -1292,6 +1295,17 @@ local function buildProtectionTab(parent)
         L["Q2_CUSTOM_TITLE"], L["Q2_CUSTOM_DESC"], cardWidth,
         function() return ns.getPreset() == "custom" end,
         function() setFilter("preset", "custom") end)
+    -- Rule 4 of the section head, its other case: question 2 greyed out says so
+    -- in words as well as in grey. The file stated the rule and applied it to
+    -- question 3 alone -- somebody who cannot tell two greys apart read a screen
+    -- that had stopped answering and nothing that said why.
+    --
+    -- Decision 153 settles how the two state notes are written: small (12 px)
+    -- and muted, never italic. The game carries no italic face and embedding one
+    -- for two sentences is weight nobody asked for, so the sentence is set apart
+    -- by its size and its colour -- which is `C.dim`, rule 3's own grey, and not
+    -- the orange this one used to borrow from a refusal.
+    protection.q2Note = newLabel(parent, "", FONT_BODY, C.dim, nil, "SanctuaryQ2Note")
 
     -- The enhanced-instance box is a single widget with two homes: under the two
     -- cards in "Everything", indented under "Block group invitations" in "I
@@ -1352,7 +1366,8 @@ local function buildProtectionTab(parent)
     -- Only ever the "already covered" sentence now. Decision 142 struck the
     -- standing note ("Groupe, raid, amis Battle.net... comptees dans le
     -- Journal") off the home screen for saying twice what "un inconnu" already
-    -- says, and the key went with it, out of both locales.
+    -- says, and the key went with it, out of both locales. Written like the
+    -- note of question 2 above, and for the same reason: the two are one thing.
     protection.q3Note = newLabel(parent, "", FONT_BODY, C.dim, nil, "SanctuaryAntiSpamNote")
 
     -- The detailed boxes, folded away until "I choose" is picked.
@@ -1619,8 +1634,9 @@ applyTabWidth.protection = function()
         q4 = sizeCardRow({ protection.q4.silent, protection.q4.minimal,
             protection.q4.verbose }, (width - HOME.gutter * 2) / 3),
     }
-    -- The note under question 3 is a sentence, not a label: it wraps, so it is
-    -- the one thing on this screen that has to be told the width it wraps at.
+    -- The notes under questions 2 and 3 are sentences, not labels: they wrap, so
+    -- they have to be told the width they wrap at.
+    protection.q2Note:SetWidth(width)
     protection.q3Note:SetWidth(width)
     protection.tileAllowed:SetWidth(cardWidth)
     protection.tileBlocked:SetWidth(cardWidth)
@@ -1715,6 +1731,17 @@ refreshTab.protection = function()
     protection.q2Custom:Refresh()
     y = y - protection.rowHeight.q2 - 14
 
+    -- Rule 4: the greyed question says why, in words. It sits under the two
+    -- cards and above the boxes of "I choose", because what it explains is
+    -- everything that has just gone grey and not the cards alone. Nothing is
+    -- reserved for it -- it is on screen only in the mode that greys the
+    -- question, exactly like the sentence under question 3 below.
+    protection.q2Note:SetText(blockedOnly and L["Q2_COVERED"] or "")
+    place(protection.q2Note)
+    if blockedOnly then
+        y = y - math.max(NOTE_LINE, protection.q2Note:GetStringHeight() or NOTE_LINE) - 6
+    end
+
     if custom then
         protection.choose:Show()
         place(protection.choose)
@@ -1788,7 +1815,6 @@ refreshTab.protection = function()
     -- Nothing is reserved for it: it is on screen only while the answer is
     -- already decided elsewhere.
     protection.q3Note:SetText(covered and L["ANTISPAM_COVERED"] or "")
-    protection.q3Note:SetTextColor(unpack(C.orange))
     place(protection.q3Note)
     if covered then
         -- Measured rather than assumed: the sentence wraps over one line at

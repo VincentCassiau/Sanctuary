@@ -6766,7 +6766,7 @@ do
     ns.refreshUI()
     equal(_G.SanctuaryAntiSpamNote:GetText(), "",
         "question 3 says nothing while it has something to say")
-    -- Covered: the sentence appears, in the colour of a warning.
+    -- Covered: the sentence appears.
     SanctuaryDB.filters.channelMode = "all"
     ns.refreshUI()
     equal(_G.SanctuaryAntiSpamNote:GetText(), ns.L["ANTISPAM_COVERED"],
@@ -6786,6 +6786,50 @@ do
     equal(_G.SanctuaryChannel_all:GetAlpha(), 0.8, "a greyed dot dims as well")
     _G.SanctuaryChannel_all:SetEnabledState(true)
     SanctuaryDB.filters.channelMode = "none"
+    ns.refreshUI()
+end
+
+-- Rule 4 again, on the question it was NOT applied to. Question 2 goes grey in
+-- "everyone except the people I block" and used to say nothing about it: the
+-- file stated the rule and honoured it under question 3 alone, so somebody who
+-- cannot tell two greys apart read a question that had stopped answering and
+-- nothing that said why. Decision 153 settles the sentence, in both languages.
+do
+    SanctuaryDB.filters.scope = "strangers"
+    ns.refreshUI()
+    equal(_G.SanctuaryQ2Note:GetText(), "",
+        "question 2 says nothing while it still has something to ask")
+    SanctuaryDB.filters.scope = "blockedOnly"
+    ns.refreshUI()
+    equal(_G.SanctuaryQ2Note:GetText(), ns.L["Q2_COVERED"],
+        "and says why it is greyed once question 1 filters nobody but the blocked")
+    equal(_G.SanctuaryQ2_all.enabled, false, "with the cards greyed beside it")
+    equal(_G.SanctuaryQ2_all:GetAlpha(), 0.8, "and dimmed, not only greyed")
+    check((_G.SanctuaryQ2Note:GetWidth() or 0) > 0,
+        "and the sentence is given the width it folds into")
+    check((defaultLocale.Q2_COVERED or "") ~= "", "the key is in the default locale")
+    check((frenchLocale.Q2_COVERED or "") ~= "", "and in the French one")
+    -- The two state notes are written the same way (decision 153): the small
+    -- face, muted, and never italic -- the game has no italic face and a font
+    -- embedded for two sentences is weight nobody asked for.
+    for _, note in ipairs({ _G.SanctuaryQ2Note, _G.SanctuaryAntiSpamNote }) do
+        equal(note.__fontSize, 12, "a state note is set on the small face")
+        equal(note.__fontFlags, "", "and asks for no italic the game has not got")
+        check(sameColor({ note.__colorR, note.__colorG, note.__colorB, note.__colorA },
+            { 0.702, 0.702, 0.761, 1.0 }),
+            "and is muted, not the orange of a refusal")
+    end
+    -- The sentences themselves, to the letter: they are texts Vincent validated
+    -- and a rewrite is a decision, not a detail.
+    equal(frenchLocale.Q2_COVERED,
+        "Rien \195\160 choisir ici : Vous avez d\195\169cid\195\169 de ne filtrer que les personnes bloqu\195\169es.",
+        "the French sentence under question 2 is the validated one")
+    equal(frenchLocale.ANTISPAM_COVERED,
+        "D\195\169j\195\160 couvert : Vous filtrez tout sur les canaux publics, le spam des inconnus n'y appara\195\174t jamais.",
+        "and so is the one under question 3")
+    equal(frenchLocale.STRICT_EXPERIMENTAL, "\226\128\148 exp\195\169rimental",
+        "the experimental mention says the word and nothing more")
+    SanctuaryDB.filters.scope = "strangers"
     ns.refreshUI()
 end
 
