@@ -10666,6 +10666,7 @@ do
     local keptScope = SanctuaryDB.filters.scope
     local keptPreset = SanctuaryDB.filters.preset
     local keptGroupInvite = SanctuaryDB.filters.groupInvite
+    local keptStrict = SanctuaryDB.filters.strictGroupInviteSystemMessages
     SanctuaryDB.filters.scope = "strangers"
     SanctuaryDB.filters.preset = "custom"
     SanctuaryDB.filters.groupInvite = true
@@ -10704,12 +10705,15 @@ do
     ns.refreshUI()
     equal(strict.enabled, true,
         "and live in the open mode with the remembered parent unticked")
-    -- The three borrowed values go back where this section found them, read
-    -- rather than assumed: a literal that happens to match the state at rest
-    -- today fails somewhere else entirely the day that state changes.
+    -- Every shared setting this section writes goes back where it found it --
+    -- the four read above, read rather than assumed: a literal that happens to
+    -- match the state at rest today fails somewhere else entirely the day that
+    -- state changes. The child box counts: unticking its parent is not what
+    -- puts it back, the line below is.
     SanctuaryDB.filters.preset = keptPreset
     SanctuaryDB.filters.groupInvite = keptGroupInvite
     SanctuaryDB.filters.scope = keptScope
+    SanctuaryDB.filters.strictGroupInviteSystemMessages = keptStrict
     ns.refreshUI()
 end
 
