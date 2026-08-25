@@ -134,6 +134,10 @@ local MIN_HEIGHT, MAX_HEIGHT = 740, 900
 -- travel at all (decision 98: the horizontal adds itself to the vertical, it
 -- does not replace it).
 local GRIP_MIN_HEIGHT = 380
+-- The window's own border, `border: 2px solid` in the mock-up. Named because the
+-- title bar has to keep clear of it: a filled frame pinned to the very corner of
+-- the window paints over the outline instead of sitting inside it.
+local FRAME_EDGE = 2
 local HEADER_HEIGHT = 40
 -- The strip of tabs (decision 140): ONE bar, the full width of the window, held
 -- between the title bar and the content, on every screen. `padding:8px 17px`
@@ -143,7 +147,16 @@ local HEADER_HEIGHT = 40
 --
 -- The old strip hung below the frame, which is why so much of the sizing code
 -- below used to reserve room outside the window: nothing hangs out of it now.
-local TABBAR_HEIGHT, TAB_UNDERLINE = 30, 2
+--
+-- TAB_RULE is the hairline the strip carries along its top AND its bottom edge,
+-- the same one pixel on both (decision 162b). Two things have to leave it alone
+-- for the two lines to read as one pair: the title bar, which drew a hairline of
+-- its own along its bottom edge and made the top line two pixels thick where the
+-- bottom was one; and the tab buttons, which are children of the strip and so
+-- draw OVER it -- a button as tall as the strip paints its own fill across both
+-- rules and cuts them wherever a tab sits. So the buttons are inset by the rule
+-- at each end, and what is left between the two lines is the row.
+local TABBAR_HEIGHT, TAB_UNDERLINE, TAB_RULE = 30, 2, 1
 local PAD = 18
 local PANEL_WIDTH = 540
 -- The stacking order the modal panel needs, stated once. The content area nests
@@ -3523,23 +3536,30 @@ local function layoutTabs()
     -- the 500 px the window may be dragged down to, so the row is scaled to fit
     -- when it has to: a Diagnostics tab hanging off the right edge of the strip
     -- is a tab nobody can click, and there is nowhere for it to wrap to.
+    --
+    -- The strip is inset by the window's border, so what the row has to fit into
+    -- is the strip and not the window: measured against the window, the last tab
+    -- ran two pixels under the outline.
+    local stripWidth = frameWidth - FRAME_EDGE * 2
     local widths, total = {}, 0
     for index, def in ipairs(visible) do
         widths[index] = math.max(70, (#L[def.labelKey] * 8) + 34)
         total = total + widths[index]
     end
-    if total > frameWidth and total > 0 then
+    if total > stripWidth and total > 0 then
         for index = 1, #widths do
-            widths[index] = math.floor(widths[index] * frameWidth / total)
+            widths[index] = math.floor(widths[index] * stripWidth / total)
         end
     end
     local x = 0
     for index, def in ipairs(visible) do
         local btn = tabButtons[def.key]
         local current = (def.key == activeTab)
-        btn:SetSize(widths[index], TABBAR_HEIGHT)
+        btn:SetSize(widths[index], TABBAR_HEIGHT - TAB_RULE * 2)
         btn:ClearAllPoints()
-        btn:SetPoint("TOPLEFT", tabBar, "TOPLEFT", x, 0)
+        -- Under the strip's top rule and above its bottom one, so neither is
+        -- broken where a tab sits: the row is what lies BETWEEN the two lines.
+        btn:SetPoint("TOPLEFT", tabBar, "TOPLEFT", x, -TAB_RULE)
         x = x + widths[index]
         -- A fill and nothing else: `applyBackdrop` given no border colour asks
         -- for no edge at all, so the strip stays one continuous bar with the
@@ -3804,7 +3824,7 @@ local function createMainFrame()
     applyResizeBounds()
     mainFrame:SetClampedToScreen(true)
     mainFrame:Hide()
-    applyBackdrop(mainFrame, C.panel, C.border, 2)
+    applyBackdrop(mainFrame, C.panel, C.border, FRAME_EDGE)
 
     if SanctuaryDB and SanctuaryDB.uiPosition then
         local pos = SanctuaryDB.uiPosition
@@ -3825,11 +3845,20 @@ local function createMainFrame()
     tinsert(UISpecialFrames, "SanctuaryMainFrame")
 
     -- Header: a title, one control, a cross. Nothing else.
+    --
+    -- A fill and no edge (decision 162b). The bar used to carry a border on all
+    -- four of its sides, and the one along the BOTTOM landed against the strip
+    -- of tabs' own top rule: two hairlines end to end, so the line above the
+    -- tabs was twice the line below them. Dropping the edge takes the window's
+    -- outline off the top of the bar with it, so the bar is inset by the
+    -- window's own two-pixel border instead -- which is where the mock-up draws
+    -- it, inside the frame rather than over it. It still ends at
+    -- -HEADER_HEIGHT: the strip hangs from that number.
     local header = CreateFrame("Frame", "SanctuaryTitleBar", mainFrame, "BackdropTemplate")
-    header:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, 0)
-    header:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", 0, 0)
-    header:SetHeight(HEADER_HEIGHT)
-    applyBackdrop(header, C.header, C.border)
+    header:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", FRAME_EDGE, -FRAME_EDGE)
+    header:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -FRAME_EDGE, -FRAME_EDGE)
+    header:SetHeight(HEADER_HEIGHT - FRAME_EDGE)
+    applyBackdrop(header, C.header, nil)
 
     -- The title bar carries the two window gestures, decision 136 -- "comme ca
     -- on garde un seul comportement sur le drag n drop". Dragging it moves the
@@ -3938,10 +3967,23 @@ local function createMainFrame()
     -- the first `layoutTabs`, and given the strip's own fill so an inactive tab
     -- -- which draws nothing of its own -- reads as part of one bar.
     tabBar = CreateFrame("Frame", "SanctuaryTabBar", mainFrame, "BackdropTemplate")
-    tabBar:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -HEADER_HEIGHT)
-    tabBar:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", 0, -HEADER_HEIGHT)
+    tabBar:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", FRAME_EDGE, -HEADER_HEIGHT)
+    tabBar:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -FRAME_EDGE, -HEADER_HEIGHT)
     tabBar:SetHeight(TABBAR_HEIGHT)
-    applyBackdrop(tabBar, C.tabBar, C.border)
+    -- A fill and no edge. A backdrop border would draw the two rules below AND a
+    -- hairline down each side of the strip, just inside the window's own two
+    -- pixels -- a second outline where the mock-up has one. The two lines the
+    -- strip does carry are drawn as what they are, so both are the same pixel
+    -- and both run the whole strip whatever the tabs do.
+    applyBackdrop(tabBar, C.tabBar, nil)
+    for _, edge in ipairs({ "TOP", "BOTTOM" }) do
+        local rule = tabBar:CreateTexture(nil, "ARTWORK")
+        rule:SetHeight(TAB_RULE)
+        rule:SetPoint(edge .. "LEFT", tabBar, edge .. "LEFT", 0, 0)
+        rule:SetPoint(edge .. "RIGHT", tabBar, edge .. "RIGHT", 0, 0)
+        rule:SetColorTexture(unpack(C.border))
+        tabBar[edge == "TOP" and "topRule" or "bottomRule"] = rule
+    end
 
     contentScroll = newScroll(mainFrame, "SanctuaryContentScroll", frameWidth, MIN_HEIGHT)
     contentScroll:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, -CONTENT_TOP)
@@ -3992,7 +4034,7 @@ local function createMainFrame()
         tabFrames[def.key] = frame
 
         local btn = CreateFrame("Button", "SanctuaryTab_" .. def.key, tabBar, "BackdropTemplate")
-        btn:SetSize(80, TABBAR_HEIGHT)
+        btn:SetSize(80, TABBAR_HEIGHT - TAB_RULE * 2)
         btn.label = newLabel(btn, L[def.labelKey], FONT_DESC, C.dim, "CENTER")
         -- Centred on what is left once the underline has taken its two pixels,
         -- so the word does not sit visibly low in the current tab.

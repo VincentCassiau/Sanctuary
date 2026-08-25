@@ -7046,11 +7046,15 @@ local strip = _G.SanctuaryTabBar
 check(strip ~= nil, "the strip of tabs is a frame of its own")
 equal(strip:GetHeight(), 30, "as tall as the bar the mock-up draws")
 do
-    local point, relativeTo, relativePoint, _, offsetY = strip:GetPoint()
+    local point, relativeTo, relativePoint, offsetX, offsetY = strip:GetPoint()
     equal(point, "TOPLEFT", "hung from the window's top-left corner")
     equal(relativeTo, mainFrame, "on the window itself")
     equal(relativePoint, "TOPLEFT", "corner to corner")
     equal(offsetY, -40, "just under the title bar, not below the frame")
+    -- And inside the window's own two-pixel border rather than over it: a filled
+    -- frame pinned to the very edge paints the outline out for as long as it is
+    -- tall, which is the gap the title bar used to leave down each side.
+    equal(offsetX, 2, "inside the window's border, not across it")
 end
 local function tabState(key)
     local tab = _G["SanctuaryTab_" .. key]
@@ -7058,8 +7062,35 @@ local function tabState(key)
 end
 local currentHeight, currentUnderline, currentFill = tabState("protection")
 local otherHeight, otherUnderline, otherFill = tabState("journal")
-equal(currentHeight, 30, "every tab is the height of the strip")
-equal(otherHeight, 30, "the current one included -- nothing climbs out of it")
+equal(currentHeight, 28, "every tab is the strip less the rule at each end")
+equal(otherHeight, 28, "the current one included -- nothing climbs out of it")
+
+-- Decision 162b: "les traits haut et bas du bandeau d'onglets n'ont pas la meme
+-- epaisseur". The strip carries ONE hairline along each edge, and three things
+-- had to give way for the pair to read as a pair: the title bar's own bottom
+-- border, which sat end to end with the top one and doubled it; the strip's
+-- backdrop edge, which drew a second outline down each side inside the window's
+-- own; and the tabs, children of the strip and therefore drawn OVER it, which
+-- painted their fill across both rules wherever a tab happened to sit.
+do
+    local top, bottom = strip.topRule, strip.bottomRule
+    check(top ~= nil and bottom ~= nil, "the strip draws a rule along each edge")
+    equal(top:GetHeight(), bottom:GetHeight(),
+        "both the same thickness -- which is the whole of the constat")
+    equal(top:GetHeight(), 1, "one pixel, not two")
+    check(sameColor(top.__colorTexture, bottom.__colorTexture),
+        "and the same colour")
+    equal(_G.SanctuaryTitleBar.__backdropBorder, nil,
+        "the title bar draws no edge of its own to double the top one")
+    equal(strip.__backdropBorder, nil,
+        "and the strip's fill carries no edge either")
+    -- Uninterrupted: a tab starts under the top rule and ends above the bottom
+    -- one, so neither line is ever the tab's fill instead.
+    local _, _, _, _, tabY = _G.SanctuaryTab_protection:GetPoint()
+    equal(tabY, -1, "a tab starts under the top rule")
+    equal(currentHeight + 2, strip:GetHeight(),
+        "and ends above the bottom one, whichever tab it is")
+end
 equal(currentUnderline, true, "it carries the two-pixel underline")
 check(sameColor(currentFill, TAB_ON_FILL), "and the accent tint behind its name")
 equal(otherUnderline, false, "a tab that is not current has no underline")
@@ -10735,8 +10766,9 @@ do
         equal(tab:GetParent(), strip, "the " .. key .. " tab hangs from the strip")
         local _, tabRelative, _, _, tabY = tab:GetPoint()
         equal(tabRelative, strip, "and is placed against it, not against the window")
-        -- Inside the strip: it starts at the strip's top and is no taller than it.
-        equal(tabY, 0, "flush with the top of the strip")
+        -- Inside the strip: it starts under the strip's top rule and is no
+        -- taller than it.
+        equal(tabY, -1, "just under the top of the strip")
         check((tab:GetHeight() or 0) <= (strip:GetHeight() or 0),
             "and no taller than the strip that holds it")
     end
