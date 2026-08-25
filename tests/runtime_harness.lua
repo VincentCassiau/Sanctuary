@@ -6625,9 +6625,6 @@ local KNOWN_IDENTICAL = {
     -- The Journal's badge and its time range: a count, a dash and the word
     -- SPAM, which French borrows unchanged.
     LOGS_SPAM_BADGE = true, LOGS_TIME_RANGE = true,
-    -- The accept button of the enhanced-filtering warning: two letters French
-    -- writes exactly the same way.
-    STRICT_CONFIRM_OK = true,
 }
 local unexpected = {}
 for _, key in ipairs(untranslated) do
@@ -6682,8 +6679,8 @@ do
     local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
         definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
 
-    equal(#englishOrder, 233, "the default locale defines 233 keys")
-    equal(#frenchOrder, 233, "and the French block defines 233")
+    equal(#englishOrder, 230, "the default locale defines 230 keys")
+    equal(#frenchOrder, 230, "and the French block defines 230")
     equal(#englishDupes, 0,
         "no key is defined twice in the default locale ("
             .. table.concat(englishDupes, ", ") .. ")")
@@ -7433,6 +7430,11 @@ do
     equal(frenchLocale.STRICT_EXPERIMENTAL, nil,
         "the mention that used to sit beside it is gone")
     equal(defaultLocale.STRICT_EXPERIMENTAL, nil, "from both locales")
+    -- The warning of 167b left the locales with the dialog (decision 170c).
+    for _, key in ipairs({ "STRICT_CONFIRM", "STRICT_CONFIRM_OK", "STRICT_CONFIRM_CANCEL" }) do
+        equal(frenchLocale[key], nil, key .. " is gone from the French block")
+        equal(defaultLocale[key], nil, "and from the default locale")
+    end
     SanctuaryDB.filters.scope = keptScope
     ns.refreshUI()
 end
@@ -7605,20 +7607,15 @@ equal(SanctuaryDB.filters.preset, "all", "\"Everything\" writes the preset")
 equal(_G.SanctuaryChoose:IsShown(), false, "and folds the detailed boxes away")
 check(_G.SanctuaryStrictCheck:IsShown(), "the enhanced-instance box stays visible in \"Everything\"")
 
--- Decision 167b: ticking the enhanced box warns first, and the warning is what
--- writes the setting -- a click alone writes nothing, so Annuler and Escape both
--- leave the box where they found it. Asked in the two modes the box lives in,
--- and twice over in each, because "at EVERY ticking" is the half a shown-once
--- flag would quietly break.
+-- Decision 170c: ticking the enhanced box ticks it, like every other box on the
+-- screen. The warning of 167b is gone and the dialog with it, so the click is
+-- the writer again. Asked in the two modes the box lives in, because 167a is
+-- what put it in both.
 do
     local keptStrict = SanctuaryDB.filters.strictGroupInviteSystemMessages
     local keptScope = SanctuaryDB.filters.scope
-    local dialog = StaticPopupDialogs.SANCTUARY_STRICT_CONFIRM
-    check(type(dialog) == "table" and type(dialog.OnAccept) == "function",
-        "the enhanced box asks before it is ticked")
-    check((dialog.text or "") ~= "" and (dialog.button1 or "") ~= ""
-        and (dialog.button2 or "") ~= "",
-        "and the dialog says what is at stake and offers a way out")
+    equal(StaticPopupDialogs.SANCTUARY_STRICT_CONFIRM, nil,
+        "nothing stands between the click and the setting any more")
     for _, scope in ipairs({ "strangers", "blockedOnly" }) do
         local where = "in " .. scope .. ": "
         SanctuaryDB.filters.scope = scope
@@ -7627,28 +7624,15 @@ do
 
         _G.StaticPopup1.which = nil
         _G.SanctuaryStrictCheck:Click()
-        equal(_G.StaticPopup1.which, "SANCTUARY_STRICT_CONFIRM", where .. "ticking warns")
-        equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false,
-            where .. "and the click writes nothing on its own")
-        _G.StaticPopup1:Hide()
-        equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false,
-            where .. "so Annuler leaves it unticked")
-
-        _G.StaticPopup1.which = nil
-        _G.SanctuaryStrictCheck:Click()
-        equal(_G.StaticPopup1.which, "SANCTUARY_STRICT_CONFIRM",
-            where .. "the next ticking warns again")
-        dialog.OnAccept()
         equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, true,
-            where .. "OK is what ticks it")
+            where .. "one click ticks it")
+        equal(_G.StaticPopup1.which, nil, where .. "with nothing to confirm")
         equal(ns.isFilterOn("strictGroupInviteSystemMessages"), true,
             where .. "and the core applies it")
 
-        _G.StaticPopup1.which = nil
         _G.SanctuaryStrictCheck:Click()
         equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false,
-            where .. "unticking writes straight through")
-        equal(_G.StaticPopup1.which, nil, where .. "with nothing to confirm")
+            where .. "and the next click gives it back")
     end
     SanctuaryDB.filters.scope = keptScope
     SanctuaryDB.filters.strictGroupInviteSystemMessages = keptStrict

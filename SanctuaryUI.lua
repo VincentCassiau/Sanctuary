@@ -1550,22 +1550,13 @@ local function buildProtectionTab(parent)
     -- to the far edge of the window rather than to the box, and the row had to
     -- reserve room for it at every width.
     --
-    -- Ticking it warns first, decision 167b, and the warning comes up EVERY
-    -- time: the mode hides ordinary system messages along with the invitations,
-    -- and somebody who ticks it a second time three months later is owed the
-    -- same sentence as the first. Nothing is written here on the way in -- the
-    -- popup's OK is the only writer -- so Annuler leaves the box exactly where
-    -- it was. Unticking asks nothing: giving a warning back is not a risk.
+    -- Ticking it writes, like any other box (decision 170c): the warning of
+    -- 167b is gone. What it does is on hover, in the tooltip, where the rest of
+    -- the screen keeps its explanations.
     protection.strict = newCheck(parent, "SanctuaryStrictCheck",
         L["FILTER_STRICT_GROUP_INVITE_SYSTEM"], L["TIP_STRICT_GROUP_INVITE_SYSTEM"],
         function() return filterStored("strictGroupInviteSystemMessages") == true end,
-        function(value)
-            if value then
-                StaticPopup_Show("SANCTUARY_STRICT_CONFIRM")
-                return
-            end
-            setFilter("strictGroupInviteSystemMessages", false)
-        end)
+        function(value) setFilter("strictGroupInviteSystemMessages", value) end)
 
     -- Automatic trust used to live at the bottom of Advanced, three sections
     -- down, with its sentence spelt out underneath. It decides who is allowed --
@@ -3829,22 +3820,6 @@ StaticPopupDialogs["SANCTUARY_CLEAR_LOG"] = {
         -- leave entries nobody can reach still collecting occurrences.
         ns.clearJournal()
         ns.printSuccess(L["LOG_CLEARED"])
-        if ns.refreshUI then ns.refreshUI() end
-    end,
-    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
-}
-
--- The warning of decision 167b. Same mechanics as the two above: the setting is
--- written on accept and nowhere else, so a dialog dismissed any other way --
--- Annuler, Escape, a reload -- leaves the box unticked.
-StaticPopupDialogs["SANCTUARY_STRICT_CONFIRM"] = {
-    text = L["STRICT_CONFIRM"],
-    button1 = L["STRICT_CONFIRM_OK"],
-    button2 = L["STRICT_CONFIRM_CANCEL"],
-    OnAccept = function()
-        -- Through `setFilter`, like the click that did not write: one writer for
-        -- the box, and the guards it posts are posted here too.
-        setFilter("strictGroupInviteSystemMessages", true)
         if ns.refreshUI then ns.refreshUI() end
     end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
