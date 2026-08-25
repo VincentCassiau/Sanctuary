@@ -94,7 +94,7 @@ L["TIP_GUILD_INVITE"] = "Auto-declines guild invitations from people who are not
 L["TIP_CHANNEL_NONE"] = "Messages in channels (General, Trade...) are not filtered."
 L["TIP_CHANNEL_KEYWORDS"] = "Blocks messages in channels when the sender's name matches one of your patterns."
 L["TIP_CHANNEL_ALL"] = "Blocks EVERY message in channels from people who are not allowed.\nWarning: this makes public channels silent."
-L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Advanced mode: enable it only if unwanted group invitations still reach you in a dungeon, raid, or PvP match.\n\nWhen WoW locks the chat down (instance boss fights, Mythic+ keys, PvP matches), add-ons can no longer read system messages. With this mode on, while you are grouped or in an instance, Sanctuary then hides EVERY system message, not only invitations: the game does not let it tell them apart.\n\nNothing is shown in chat; debug mode keeps a trace."
+L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Experimental: enable it only if unwanted group invitations still reach you in a dungeon, raid, or PvP match.\n\nWhen WoW locks the chat down (instance boss fights, Mythic+ keys, PvP matches), add-ons can no longer read system messages. With this option on, while you are grouped or in an instance, Sanctuary hides EVERY system message, not only invitations: the game does not let it tell them apart."
 
 -- Question 3 -- the anti-spam of the public channels
 L["ANTISPAM_Q_TITLE"] = "Should Sanctuary deal with spam in the public channels?"
@@ -374,7 +374,7 @@ L["TIP_GUILD_INVITE"] = "Refuse automatiquement les invitations de guilde des jo
 L["TIP_CHANNEL_NONE"] = "Les messages dans les canaux (G\195\169n\195\169ral, Commerce...) ne sont pas filtr\195\169s."
 L["TIP_CHANNEL_KEYWORDS"] = "Bloque les messages dans les canaux si le pseudo de l'exp\195\169diteur correspond \195\160 un de vos patterns."
 L["TIP_CHANNEL_ALL"] = "Bloque TOUS les messages dans les canaux des joueurs non autoris\195\169s.\nAttention : cela rend les canaux publics silencieux."
-L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Mode avanc\195\169 : \195\160 activer seulement si des invitations de groupe ind\195\169sirables vous parviennent encore en donjon, en raid ou en match JcJ.\n\nQuand WoW verrouille le chat (combats de boss d'instance, cl\195\169s mythiques, matchs JcJ), les add-ons ne peuvent plus lire les messages syst\195\168me. Avec ce mode coch\195\169, tant que vous \195\170tes en groupe ou en instance, Sanctuary masque alors TOUS les messages syst\195\168me, pas seulement les invitations : le jeu ne permet pas de les distinguer.\n\nRien ne s'affiche dans le chat ; le mode debug en garde la trace."
+L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Exp\195\169rimental : \195\160 activer seulement si des invitations de groupe ind\195\169sirables vous parviennent encore en donjon, en raid ou en match JcJ.\n\nQuand WoW verrouille le chat (combats de boss d'instance, cl\195\169s mythiques, matchs JcJ), les add-ons ne peuvent plus lire les messages syst\195\168me. En activant cette option, tant que vous \195\170tes en groupe ou en instance, Sanctuary masque TOUS les messages syst\195\168me, pas seulement les invitations : le jeu ne permet pas de les distinguer."
 
 -- Question 3 -- the anti-spam of the public channels
 L["ANTISPAM_Q_TITLE"] = "Sanctuary doit-il s'occuper du spam des canaux publics ?"

@@ -7435,6 +7435,23 @@ do
         equal(frenchLocale[key], nil, key .. " is gone from the French block")
         equal(defaultLocale[key], nil, "and from the default locale")
     end
+    -- The tooltip Vincent validated at decision 170d, to the letter: it opens on
+    -- "Exp\195\169rimental", it says what turning the option on costs, and the
+    -- sentence about the chat and the debug trace is not in it any more.
+    local frenchTip = frenchLocale.TIP_STRICT_GROUP_INVITE_SYSTEM
+    equal(frenchTip,
+        "Exp\195\169rimental : \195\160 activer seulement si des invitations de groupe "
+        .. "ind\195\169sirables vous parviennent encore en donjon, en raid ou en match JcJ."
+        .. "\n\nQuand WoW verrouille le chat (combats de boss d'instance, cl\195\169s "
+        .. "mythiques, matchs JcJ), les add-ons ne peuvent plus lire les messages "
+        .. "syst\195\168me. En activant cette option, tant que vous \195\170tes en groupe "
+        .. "ou en instance, Sanctuary masque TOUS les messages syst\195\168me, pas seulement "
+        .. "les invitations : le jeu ne permet pas de les distinguer.",
+        "the French tooltip is the validated one")
+    equal(frenchTip:find("mode debug", 1, true), nil,
+        "the line about the chat and the debug trace is gone")
+    check((defaultLocale.TIP_STRICT_GROUP_INVITE_SYSTEM or ""):find("Experimental:", 1, true) == 1,
+        "and the default locale opens on the same word")
     SanctuaryDB.filters.scope = keptScope
     ns.refreshUI()
 end
