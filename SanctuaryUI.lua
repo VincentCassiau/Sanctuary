@@ -346,9 +346,14 @@ local function makeLabelClickable(control)
     return hit
 end
 
-local function setTooltip(frame, text)
+-- `isLive`, when given, is asked before anything is drawn: a control that has
+-- been greyed out answers nothing on hover either (decision 170a). A tooltip is
+-- the explanation of a live control; hung on a witness of a setting that no
+-- longer applies, it is a paragraph describing something that is not happening.
+local function setTooltip(frame, text, isLive)
     if not text or text == "" then return end
     frame:SetScript("OnEnter", function(self)
+        if isLive and not isLive() then return end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(text, 1, 1, 1, 1, true)
         GameTooltip:Show()
@@ -461,11 +466,14 @@ local function newCheck(parent, name, text, tooltip, get, set)
             or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
         if ns.refreshUI then ns.refreshUI() end
     end)
-    setTooltip(frame, tooltip)
+    -- Both halves of the control answer the same question, so both are gated on
+    -- the same state: greyed takes the click away and the hover with it.
+    local function live() return frame.enabled end
+    setTooltip(frame, tooltip, live)
     -- The label is the other half of the target, and it carries the same
     -- tooltip: a sentence a person reaches by hovering the box has to be
     -- reachable from the words that name it.
-    setTooltip(makeLabelClickable(frame), tooltip)
+    setTooltip(makeLabelClickable(frame), tooltip, live)
     return frame
 end
 
@@ -1468,8 +1476,10 @@ local function buildProtectionTab(parent)
         protection.rules[index] = rule
     end
 
-    -- The dotted rule of decision 163, option A: what sets automatic trust --
-    -- still live -- apart from the block that has just gone out above it.
+    -- The dotted rule of decision 163, option A: what sets enhanced instance
+    -- filtering -- the one box still live in the open mode -- apart from the
+    -- block that has just gone out above it, automatic trust included since
+    -- decision 170a.
     --
     -- A frame rather than a texture, because the client draws solid rectangles
     -- and nothing else: `border-top: 1px dashed` is drawn as dashes, a row of
@@ -1564,9 +1574,11 @@ local function buildProtectionTab(parent)
 
     -- Automatic trust used to live at the bottom of Advanced, three sections
     -- down, with its sentence spelt out underneath. It decides who is allowed --
-    -- the same question the whole screen is about -- so it belongs here, on the
-    -- row under the strict box, in the same shape as every other line: a box, a
-    -- label, and the sentence on hover rather than a paragraph on screen.
+    -- the same question the whole screen is about -- so it belongs here, in the
+    -- same shape as every other line: a box, a label, and the sentence on hover
+    -- rather than a paragraph on screen. Which row it lands on is the refresh's
+    -- business: it answers question 1, and question 1 has a mode where it has
+    -- nothing left to do (decision 170a).
     protection.trust = newCheck(parent, "SanctuaryAutoTrust",
         L["FILTER_AUTO_TRUST"], L["ADV_TRUST_DESC"],
         function() return filterStored("autoTrust") == true end,
@@ -2000,6 +2012,16 @@ refreshTab.protection = function()
     -- in a locked-down instance is the one residue nothing else reaches.
     local strictParentOn = blockedOnly or (not custom) or filterStored("groupInvite") == true
     protection.strict:SetEnabledState(strictParentOn)
+    -- Automatic trust goes the other way (decision 170a). It writes into
+    -- "Always allowed", and an allowance buys nothing back in a mode that
+    -- filters nobody for being a stranger -- so in the open mode the box is a
+    -- witness like the two cards above it: greyed, no click, no hover, still
+    -- showing what is remembered. `isFilterOn` says the same thing on the core
+    -- side, and the two cannot disagree: neither reads the other's answer, but
+    -- both are the one decision written twice on purpose -- the screen has to
+    -- draw it before anything happens, the core has to apply it whether the
+    -- screen was ever opened or not.
+    protection.trust:SetEnabledState(not blockedOnly)
     -- The widths first, and through the one function that knows them: a screen
     -- laid out against a width it no longer has is the whole of this defect.
     applyTabWidth.protection()
@@ -2078,16 +2100,29 @@ refreshTab.protection = function()
     protection.q2Custom:Refresh()
     y = y - protection.rowHeight.q2 - 14
 
+    -- This row hangs at the screen's own left margin in every mode, because it
+    -- answers question 1 and not question 2. WHERE it falls in the stack is the
+    -- one thing that moves: above the dotted rule with the block that went out,
+    -- or under the strict box with what is still live.
+    local function placeTrust()
+        place(protection.trust)
+        protection.trust:Refresh()
+        y = y - protection.rowHeight.trust
+    end
+
     if blockedOnly then
         -- Every detail of question 2 is off screen: the two columns and the
         -- block of channels have nothing to filter here.
         protection.choose:Hide()
-        -- What is NOT part of what died: the two boxes that answer question 1.
-        -- Automatic trust decides who is allowed, enhanced instance filtering is
-        -- the only answer to a blocked person's invitation line in a locked-down
-        -- instance (decision 167). Both are set apart under a dotted rule for
-        -- that reason -- left against the extinguished block they read as greyed
-        -- out too, which is constat 162g -- and both are drawn in plain white.
+        -- Automatic trust is the LAST line of what went out (decision 170a): it
+        -- feeds "Always allowed", and this mode allows everyone already. Greyed
+        -- with the cards, above the rule, and still showing what is remembered.
+        placeTrust()
+        -- What is NOT part of what died: enhanced instance filtering, the only
+        -- answer to a blocked person's invitation line in a locked-down
+        -- instance (decision 167). It is set apart under a dotted rule for that
+        -- reason -- left against the extinguished block it read as greyed out
+        -- too, which is constat 162g -- and it is drawn in plain white.
         protection.dottedRule:Show()
         place(protection.dottedRule)
         -- `padding-top: 8px` under the line: the boxes below are set apart from
@@ -2126,12 +2161,10 @@ refreshTab.protection = function()
     end
     protection.strict:Refresh()
 
-    -- Under the strict box in all three modes: this line stays at the screen's
-    -- own left margin whatever happens above it, because it answers question 1
-    -- and not question 2.
-    place(protection.trust)
-    protection.trust:Refresh()
-    y = y - protection.rowHeight.trust
+    -- Under the strict box in the two modes where it is still worth ticking. In
+    -- the open mode it has already been drawn, greyed, inside the block above
+    -- the dotted rule.
+    if not blockedOnly then placeTrust() end
     separator()
 
     -- Question 3 -- the anti-spam of the public channels.

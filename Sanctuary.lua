@@ -790,7 +790,14 @@ local PRESET_ALL_OFF = { say = true, yell = true, emote = true }
 
 isFilterOn = function(key)
     if key == "autoTrust" then
-        -- Advanced setting, outside question 2 and outside the scope switch.
+        -- Outside question 2, but NOT outside question 1 (decision 170a).
+        -- "Everyone except the people I block" filters nobody for being a
+        -- stranger, so there is nothing for an allowance to buy back: writing a
+        -- group mate into "Always allowed" there changes not one decision and
+        -- leaves the person a list entry they never asked for. The stored box
+        -- is left exactly as it is, so the setting comes back untouched the
+        -- moment question 1 goes back to filtering strangers.
+        if getScope() == "blockedOnly" then return false end
         return getEffective("filters.autoTrust") == true
     end
 

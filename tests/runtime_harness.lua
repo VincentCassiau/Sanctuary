@@ -3845,10 +3845,14 @@ end
 
 -- Automatic trust goes through the same door, so it engraves the realm too --
 -- and what it writes is the group member, not whoever shares his pseudo at home.
+-- Asked in the two modes of question 1, because decision 170a gave it one: in
+-- "Everyone except the people I block" the same five minutes write nothing.
 resetModelState()
 do
     local kept = SanctuaryDB.filters.autoTrust
+    local keptScope = SanctuaryDB.filters.scope
     SanctuaryDB.filters.autoTrust = true
+    SanctuaryDB.filters.scope = "strangers"
     wipe(SanctuaryCharDB.groupTracker)
     inGroup = true
     groupMembers = { "Trustaj-Hyjal" }
@@ -3864,12 +3868,33 @@ do
     ns.invalidateWhitelist()
     check(ns.classifyName("Trustaj-TestRealm").verdict ~= "always_allowed",
         "and his namesake on the player's realm gets nothing out of it")
+    ns.removeAllowed("trustaj-hyjal")
+    ns.invalidateWhitelist()
+
+    -- The open mode filters nobody for being a stranger, so an allowance buys
+    -- nothing back there: the ticker stops writing, and the tracker that feeds
+    -- it is emptied rather than left to fire five minutes into the next mode.
+    -- The stored box is not touched by any of it.
+    SanctuaryDB.filters.scope = "blockedOnly"
+    fire("GROUP_ROSTER_UPDATE")
+    equal(next(SanctuaryCharDB.groupTracker), nil,
+        "the open mode counts nobody's five minutes")
+    SanctuaryCharDB.groupTracker["Trustaj-Hyjal"] = now - 1000
+    runTickers()
+    equal(SanctuaryDB.manualWhitelist["trustaj-hyjal"], nil,
+        "and writes nobody into the allowed list, however long they stayed")
+    equal(SanctuaryDB.filters.autoTrust, true,
+        "while the box the person ticked is left exactly as they ticked it")
+
     inGroup = false
     groupMembers = {}
     wipe(SanctuaryCharDB.groupTracker)
-    ns.removeAllowed("trustaj-hyjal")
-    ns.invalidateWhitelist()
+    SanctuaryDB.filters.scope = keptScope
     SanctuaryDB.filters.autoTrust = kept
+    -- Last, and after the group is put back: the whitelist is a cache over all
+    -- of it, and one left standing over a group that has gone answers the next
+    -- section about a state nobody is in any more.
+    ns.invalidateWhitelist()
 end
 
 -- What the panels and the tester put on screen. The realm is in the key, so it
@@ -7374,31 +7399,49 @@ do
                 "remembering " .. preset .. ": the sentence comes above the two witnesses")
             equal(_G.SanctuaryChoose:IsShown(), false,
                 "remembering " .. preset .. ": no detail is left of the question")
-            -- The two boxes that are still live stay live, and are set apart
-            -- from the block that went out rather than reading as part of it
-            -- (constat 162g). Enhanced instance filtering joined automatic trust
-            -- there with decision 167: it answers question 1 too, being the only
-            -- answer to a blocked person's invitation line in an instance.
+            -- ONE box is still live here, and the dotted rule is what sets it
+            -- apart from the block that went out rather than letting it read as
+            -- part of it (constat 162g): enhanced instance filtering, which
+            -- answers question 1 too -- the only answer to a blocked person's
+            -- invitation line in an instance (decision 167).
             local separator = _G.SanctuaryTrustSeparator
-            equal(separator:IsShown(), true, "under a dotted rule that sets them apart")
+            equal(separator:IsShown(), true, "under a dotted rule that sets it apart")
             local _, _, _, _, dashY = separator:GetPoint()
-            for _, name in ipairs({ "SanctuaryStrictCheck", "SanctuaryAutoTrust" }) do
-                local box = _G[name]
-                equal(box:IsShown(), true,
-                    "remembering " .. preset .. ": " .. name .. " stays on screen")
-                equal(box.enabled, true, name .. " stays clickable")
-                equal(box:GetAlpha(), 1, name .. " in plain white, not greyed with them")
-                local _, _, _, _, boxY = box:GetPoint()
-                check(boxY < dashY, name .. " is drawn under the rule")
-            end
+            local strict, trust = _G.SanctuaryStrictCheck, _G.SanctuaryAutoTrust
+            equal(strict:IsShown(), true,
+                "remembering " .. preset .. ": the enhanced box stays on screen")
+            equal(strict.enabled, true, "it stays clickable")
+            equal(strict:GetAlpha(), 1, "in plain white, not greyed with them")
+            local _, _, _, strictX, strictY = strict:GetPoint()
+            check(strictY < dashY, "and it is drawn under the rule")
+            -- Automatic trust is on the other side of that rule now, decision
+            -- 170a: it writes into "Always allowed", and an allowance buys
+            -- nothing back in a mode that filters nobody for being a stranger.
+            -- So it is a witness like the two cards -- still on screen, still
+            -- showing what is remembered, and not to be clicked.
+            equal(trust:IsShown(), true,
+                "remembering " .. preset .. ": automatic trust stays on screen")
+            equal(trust.enabled, false, "greyed with the block it belongs to")
+            equal(trust:GetAlpha(), 0.8, "and dimmed with it, not left in plain white")
+            equal(trust:GetChecked(), SanctuaryDB.filters.autoTrust == true,
+                "still showing the answer that is remembered underneath")
+            local _, _, _, trustX, trustY = trust:GetPoint()
+            check(trustY < cardY - _G.SanctuaryQ2_all:GetHeight(),
+                "under the two cards it went out with")
+            check(dashY < trustY, "and above the rule, on the extinguished side of it")
             check(dashY < cardY - _G.SanctuaryQ2_all:GetHeight(),
-                "which is drawn between the extinguished block and them")
-            -- In that order, and at the screen's own margin: the box that was
+                "which is drawn between the extinguished block and what is left")
+            -- At the screen's own margin, both of them: the box that was
             -- indented under a parent in "I choose" has no parent here.
-            local _, _, _, strictX, strictY = _G.SanctuaryStrictCheck:GetPoint()
-            local _, _, _, trustX, trustY = _G.SanctuaryAutoTrust:GetPoint()
-            equal(strictX, trustX, "the two live boxes share one left margin")
-            check(trustY < strictY, "with enhanced filtering above automatic trust")
+            equal(strictX, trustX, "the two boxes share one left margin")
+            -- Nothing on hover either: a paragraph explaining a setting that no
+            -- longer applies is the half of "greyed" a colour alone forgets.
+            rawset(GameTooltip, "__lastText", nil)
+            trust:GetScript("OnEnter")(trust)
+            equal(rawget(GameTooltip, "__lastText"), nil,
+                "a witness answers nothing under the pointer")
+            trust.labelHit:GetScript("OnEnter")(trust.labelHit)
+            equal(rawget(GameTooltip, "__lastText"), nil, "nor do the words beside it")
         end
         SanctuaryDB.filters.preset = keptPreset
         ns.refreshUI()
