@@ -6390,6 +6390,78 @@ equal(#unexpected, 0,
     "every used key is translated in frFR (" .. table.concat(unexpected, ", ") .. ")")
 
 -- ---------------------------------------------------------------------------
+-- The two locale blocks define exactly the same keys
+-- ---------------------------------------------------------------------------
+
+-- The check above it asks "is every key the code writes as L[\"NAME\"] translated",
+-- which is 147 keys of 230: the other 83 are reached by a computed name
+-- (L[row.labelKey]) and were never submitted to it. And French is an OVERRIDE
+-- block -- a key missing from it renders in English, readably, so nobody reports
+-- it and it drifts.
+--
+-- So this reads the file itself, both blocks, and holds them to the same set. It
+-- is not a check on what the code uses: a key defined once is a key that has to
+-- exist twice, whatever reaches it.
+do
+    local handle = assert(io.open(repoRoot .. "/Locales.lua", "r"))
+    local source = handle:read("a")
+    handle:close()
+    local frenchAt = source:find('if GetLocale() == "frFR" then', 1, true)
+    local frenchEnd = source:find("\nend -- frFR", 1, true)
+    check(frenchAt ~= nil and frenchEnd ~= nil and frenchEnd > frenchAt,
+        "the French overrides are a block of their own, opened and closed")
+
+    -- One assignment a line, which is how the file is written; a value is read as
+    -- everything between the first and the last quote of the line, so escaped
+    -- quotes inside it cost nothing.
+    local function definitions(block)
+        local keys, order, duplicates, empty = {}, {}, {}, {}
+        for line in block:gmatch("[^\n]+") do
+            local key, rest = line:match('^L%["([%w_]+)"%]%s*=%s*(.+)$')
+            if key then
+                if keys[key] then duplicates[#duplicates + 1] = key end
+                local value = rest:match('^"(.*)"$')
+                if value == nil or value == "" then empty[#empty + 1] = key end
+                if not keys[key] then order[#order + 1] = key end
+                keys[key] = value or ""
+            end
+        end
+        return keys, order, duplicates, empty
+    end
+
+    local englishKeys, englishOrder, englishDupes, englishEmpty =
+        definitions(source:sub(1, (frenchAt or 1) - 1))
+    local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
+        definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
+
+    equal(#englishOrder, 230, "the default locale defines 230 keys")
+    equal(#frenchOrder, 230, "and the French block defines 230")
+    equal(#englishDupes, 0,
+        "no key is defined twice in the default locale ("
+            .. table.concat(englishDupes, ", ") .. ")")
+    equal(#frenchDupes, 0,
+        "nor in the French block (" .. table.concat(frenchDupes, ", ") .. ")")
+    equal(#englishEmpty, 0,
+        "no default value is empty (" .. table.concat(englishEmpty, ", ") .. ")")
+    equal(#frenchEmpty, 0,
+        "no French value is empty (" .. table.concat(frenchEmpty, ", ") .. ")")
+
+    local missingFrench, extraFrench = {}, {}
+    for _, key in ipairs(englishOrder) do
+        if frenchKeys[key] == nil then missingFrench[#missingFrench + 1] = key end
+    end
+    for _, key in ipairs(frenchOrder) do
+        if englishKeys[key] == nil then extraFrench[#extraFrench + 1] = key end
+    end
+    equal(#missingFrench, 0,
+        "every key of the default locale is written in French ("
+            .. table.concat(missingFrench, ", ") .. ")")
+    equal(#extraFrench, 0,
+        "and the French block invents none of its own ("
+            .. table.concat(extraFrench, ", ") .. ")")
+end
+
+-- ---------------------------------------------------------------------------
 -- No locale key is dead
 -- ---------------------------------------------------------------------------
 
