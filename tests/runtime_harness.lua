@@ -7457,8 +7457,13 @@ do
     local _, _, _, _, firstCard = _G.SanctuaryQ1_strangers:GetPoint()
     local bottom = firstCard - _G.SanctuaryQ1_strangers:GetHeight()
     local _, _, _, _, secondCard = _G.SanctuaryQ2_all:GetPoint()
-    equal(bottom - secondCard, 24 + 22,
-        "24 px of air between two questions, then the title row of the next")
+    -- Decision 162c: the air is 24 px on EACH side of the rule, not 24 split in
+    -- two. The mock-up stacks its blocks in a `gap:24px` column with the rule as
+    -- one more item of the stack, so the gap falls once above the line and once
+    -- below it; half of it on each side is what made the screen read tighter
+    -- than the mock-up it came from.
+    equal(bottom - secondCard, 24 + 24 + 22,
+        "24 px of air on each side of the rule, then the title row of the next")
     SanctuaryDB.uiSize = kept
     ns.refreshUI()
 end
@@ -9592,7 +9597,7 @@ local aboutHeight = mainFrame:GetHeight()
 _G["SanctuaryTab_protection"]:Click()
 local protectionHeight = mainFrame:GetHeight()
 check(protectionHeight >= aboutHeight, "the tallest screen is at least as tall as the shortest")
-check(protectionHeight <= 900 + 40 + 30 + 30, "and the fitted height stays within its bounds")
+check(protectionHeight <= 900 + 40 + 30 + 16, "and the fitted height stays within its bounds")
 
 -- "I choose" unfolds two columns of boxes into the middle of the screen: the
 -- window grows for them, and where it cannot -- a size the person dragged it to
@@ -9653,7 +9658,7 @@ local gripUp = grip:GetScript("OnMouseUp")
 -- used to call ns.refreshUI() by hand right after gripUp and hid it.
 local viewportOf = function() return _G.SanctuaryContentScroll:GetHeight() end
 local widthOf = function() return _G.SanctuaryContentScroll:GetWidth() end
-local expectedViewport = function() return mainFrame:GetHeight() - 40 - 30 - 30 end
+local expectedViewport = function() return mainFrame:GetHeight() - 40 - 30 - 16 end
 
 now = now + 5
 gripDown(grip)
@@ -10125,7 +10130,7 @@ end
 -- And the fitted mode is really back: the height follows the screen again, and
 -- the width goes back to the one the window is designed at.
 _G["SanctuaryTab_about"]:Click()
-equal(mainFrame:GetHeight(), 740 + 40 + 30 + 30, "the shortest screen is back to its fitted height")
+equal(mainFrame:GetHeight(), 776 + 40 + 30 + 16, "the shortest screen is back to its fitted height")
 equal(mainFrame:GetWidth(), 780, "and to the design width")
 local shortestFitted = mainFrame:GetHeight()
 -- Every screen opens in the same window: the height the window asks for is the
@@ -10136,6 +10141,18 @@ local shortestFitted = mainFrame:GetHeight()
 _G["SanctuaryTab_protection"]:Click()
 equal(mainFrame:GetHeight(), shortestFitted,
     "the home screen fits that same window, folded boxes aside")
+-- Decision 162d: "la hauteur par defaut descend trop sous Tester un pseudo".
+-- The window opens cut just under the field -- 16 px, then the edge and the
+-- grip, and nothing hanging below it. Measured from the field's own bottom edge
+-- to the frame's, through the whole chrome: 40 of title bar, 30 of strip, the
+-- content column's top padding, and the screen down to the field.
+do
+    local input = _G.SanctuaryTestInput
+    local _, _, _, _, fieldTop = input:GetPoint()
+    local fieldBottom = 40 + 30 + 18 + (-fieldTop) + input:GetHeight()
+    equal(mainFrame:GetHeight() - fieldBottom, 16,
+        "the window is cut 16 px under the tester, which is the last thing on it")
+end
 SanctuaryDB.filters.preset = "custom"
 ns.refreshUI()
 check(mainFrame:GetHeight() > shortestFitted,
@@ -10666,7 +10683,7 @@ do
     _G["SanctuaryTab_protection"]:Click()
     ns.refreshUI()
     local asked = mainFrame:GetHeight()
-    check(asked >= 740 + 40 + 30 + 30,
+    check(asked >= 776 + 40 + 30 + 16,
         "with no screen to fit, the window is as tall as the home screen asked ("
             .. tostring(asked) .. ")")
     for _, answer in ipairs({ "nil", 0, -100, "tall" }) do

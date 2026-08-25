@@ -114,10 +114,18 @@ local MIN_FRAME_WIDTH, MAX_FRAME_WIDTH = 500, 900
 -- that pair is applied instead of this one. Every screen opens in that same
 -- window rather than the window jumping size from tab to tab.
 --
--- Recalculated on the "Compact doux v2" home screen (decisions 141-143): thinner
--- cards, thinner tiles, a title row two pixels shorter, one note fewer, against
--- 24 px of air between questions instead of 20. The screen that asked for 820
--- asks for 740.
+-- Recalculated after the visual pass of 25/08 (decisions 162-163), and this time
+-- it is the number the screen actually MEASURES rather than one with room to
+-- spare in it: 24 px of air on each side of the four rules puts 96 px on, the
+-- margin the screen used to keep for itself takes 18 off, and the tester row
+-- stops at the bottom edge of its field for another 8. The screen that asked for
+-- 740 asks for 776, and a floor above what the screen needs is exactly the empty
+-- band under "Tester un pseudo" that constat 162d is about.
+--
+-- Only the OTHER screens are floored at it: the home screen is measured at every
+-- refresh and opens at whatever it comes to on the client it is running on, so
+-- what this number decides is that About and the Journal open in the same window
+-- rather than shrinking around themselves.
 --
 -- What the window GETS is the screen's to decide, never this number: a Retail
 -- client at the default UI scale measures 768 units, which leaves 748 px of
@@ -125,7 +133,7 @@ local MIN_FRAME_WIDTH, MAX_FRAME_WIDTH = 500, 900
 -- so (decision 134 -- "on a jamais parle de rendre la page d'accueil non
 -- scrollable"). The other screens are shorter than the window they are given and
 -- do not scroll.
-local MIN_HEIGHT, MAX_HEIGHT = 740, 900
+local MIN_HEIGHT, MAX_HEIGHT = 776, 900
 -- The smallest window the grip may drag to, which is NOT the height above. The
 -- content scrolls (decision 3), so a person may make the window smaller than
 -- what is in it; and a floor set at the height the window OPENS at is a floor
@@ -167,10 +175,18 @@ local PANEL_WIDTH = 540
 -- and the undo strip, whose only four callers are the panels themselves. Burying
 -- either under the veil would take away a control the panel needs.
 local LEVEL_VEIL, LEVEL_PANEL, LEVEL_OVER_PANEL = 180, 200, 220
--- Room kept under the content for the undo line, which is anchored to the bottom
--- of the frame: UNDO_HEIGHT + UNDO_MARGIN and a couple of pixels of edge. The
--- tabs used to be down here too; they are a strip at the top now (decision 140).
-local CONTENT_BOTTOM = 30
+-- The margin under the content, and the last thing between it and the bottom
+-- edge of the window: `padding: 20px 18px 16px` on the mock-up's content column,
+-- of which this is the 16.
+--
+-- It used to be 30 -- room booked so the undo strip, which is pinned to the
+-- frame's bottom edge, could never sit over a line of content -- and the screens
+-- kept a margin of their own on top of it. That is 48 px of nothing under
+-- "Tester un pseudo" on a window that opens fitted, which is constat 162d. The
+-- strip is an OVERLAY and it is up for six seconds at a time, after a gesture
+-- made in a drawer that covers this screen anyway; a margin that is empty
+-- always is the worse of the two.
+local CONTENT_BOTTOM = 16
 -- The undo strip, stated once because two layouts have to keep clear of it: it
 -- is an overlay pinned this far above the bottom edge of the frame, and it sits
 -- OVER the panels rather than inside them.
@@ -1292,23 +1308,32 @@ local protection = {}
 -- screen is measured in a dozen numbers.
 --
 -- The shape decisions 141-142 asked for is dense inside a block, airy between
--- blocks: `titleRow` and the card metrics thinned by a step or two, `blockGap`
--- opened from 20 to 24 -- twice `ruleGap`, so the hairline of decision 139 sits
--- exactly halfway between two questions.
+-- blocks: `titleRow` and the card metrics thinned by a step or two, and the
+-- questions held apart by the air the mock-up leaves around its hairline.
+--
+-- `ruleGap` is that air, and it is 24 on EACH side of the rule (decision 162c --
+-- "l'air entre separateur et sections n'est pas celui de la maquette"). The
+-- validated screen stacks its blocks in a `gap:24px` column with the rule as one
+-- more item of the stack, so the gap falls once above the line and once below
+-- it; half of it on each side is what made the screen read as a "pate de
+-- formulaire" next to the mock-up it came from.
 --
 --   titleRow   one row for a "N Question" at FONT_TITLE
 --   gutter     `.cards { gap:10px }`, between two cards of the same row
---   blockGap   the air between two questions, the rule in the middle of it
---   ruleGap    half of it, which is where the rule goes
+--   blockGap   the gutter between the two columns of "I choose"
+--   ruleGap    the air on each side of a rule between two questions
 --   rowHeight  one row of a check or a radio
 --   checkSize  a check is 18 px square, so a row leaves 6 between two of them
 --   subIndent  `.cbr.sub { padding-left:26px }`, a box that belongs to a box
 --   tile       a list tile: 20 px count, a title and its detail, thin
 --   tileGap    what the tile row keeps under it before the tester
---   testRow    the 24 px field, hung 4 px above the line its label sits on
-local HOME = { titleRow = 22, gutter = 10, blockGap = 24, ruleGap = 12,
+--   testField  the 24 px field, hung 4 px above the line its label sits on: the
+--              bottom edge of the tester row, and of the screen with it
+--   testGap    what that row keeps under itself before the answer, when there
+--              is one -- the window is cut at the field otherwise
+local HOME = { titleRow = 22, gutter = 10, blockGap = 24, ruleGap = 24,
     rowHeight = 24, checkSize = 18, subIndent = 26,
-    tile = 46, tileGap = 16, testRow = 28 }
+    tile = 46, tileGap = 16, testField = 20, testGap = 8 }
 
 -- The build MAKES the screen; `refreshTab.protection` PLACES it, all of it, from
 -- the top down. Questions 1 and 2 used to be positioned here and never touched
@@ -2030,7 +2055,12 @@ refreshTab.protection = function()
     if protection.testInput and ns.RefreshTestAnswer then
         ns.RefreshTestAnswer(protection.testInput:GetText())
     end
-    y = y - HOME.testRow
+    -- The field hangs 4 px above the line its label sits on and is 24 tall, so
+    -- what the row really ends at is `testField` under `y` -- and that edge is
+    -- the last thing on the screen while nobody has typed a name. The window is
+    -- cut CONTENT_BOTTOM under it (decision 162d), so the eight pixels the row
+    -- keeps for the answer are only spent when there IS an answer.
+    y = y - HOME.testField
 
     -- The answer under the field, over the whole width, and MEASURED.
     --
@@ -2044,12 +2074,19 @@ refreshTab.protection = function()
     -- question 3, and nothing is reserved while the field is empty -- the answer
     -- only exists during a test, and A.2 asks the minimum height to hold the home
     -- screen, not a sentence that is not on it.
-    place(protection.testAnswer)
+    place(protection.testAnswer, -HOME.testGap)
     if (protection.testAnswer:GetText() or "") ~= "" then
-        y = y - math.max(NOTE_LINE, protection.testAnswer:GetStringHeight() or NOTE_LINE)
+        y = y - HOME.testGap
+            - math.max(NOTE_LINE, protection.testAnswer:GetStringHeight() or NOTE_LINE)
     end
 
-    return -y + PAD
+    -- The height of what was DRAWN, and nothing more. The screen used to add a
+    -- margin of its own on top of the one the window already keeps under the
+    -- content, so the window opened on 48 px of nothing under the tester and a
+    -- floor that had drifted above the screen's real need put another 34 on top
+    -- of that (constat 162d). One margin, kept in one place, and it is the
+    -- mock-up's.
+    return -y
 end
 
 -- ============================================================================
