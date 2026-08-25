@@ -9247,9 +9247,9 @@ mainFrame:SetSize(700, 940)
 gripUp(grip)
 equal(SanctuaryDB.uiSize[1], 700, "a drag is still recorded")
 now = now + 5
-titleDown(titleBar)
+titleDown(titleBar, "LeftButton")
 now = now + 0.2
-titleDown(titleBar)
+titleDown(titleBar, "LeftButton")
 equal(SanctuaryDB.uiSize, nil,
     "a double-click on the title bar forgets the remembered size for good")
 -- A single click on the title bar is not half a gesture: it does nothing.
@@ -9258,14 +9258,39 @@ gripDown(grip)
 mainFrame:SetSize(700, 940)
 gripUp(grip)
 now = now + 5
-titleDown(titleBar)
+titleDown(titleBar, "LeftButton")
 now = now + 2
 equal(SanctuaryDB.uiSize[1], 700, "one click on the title bar changes nothing")
 now = now + 5
-titleDown(titleBar)
+titleDown(titleBar, "LeftButton")
 now = now + 0.2
-titleDown(titleBar)
+titleDown(titleBar, "LeftButton")
 equal(SanctuaryDB.uiSize, nil, "and the pair still counts once the pause is over")
+
+-- The pair is a LEFT one, and a drag is not half of it. Decision 136 gives this
+-- bar one gesture; two right clicks are a menu somewhere else in the game, and a
+-- flick of the window followed by a click inside the same 0.4 s was a window
+-- somebody had just placed going back to its opening size on its own.
+now = now + 5
+gripDown(grip)
+mainFrame:SetSize(700, 940)
+gripUp(grip)
+equal(SanctuaryDB.uiSize[1], 700, "a drag is recorded once more")
+now = now + 5
+titleDown(titleBar, "RightButton")
+now = now + 0.2
+titleDown(titleBar, "RightButton")
+equal(SanctuaryDB.uiSize[1], 700, "two right clicks on the title bar change nothing")
+now = now + 5
+titleDown(titleBar, "LeftButton")
+titleBar:GetScript("OnDragStart")(titleBar)
+titleBar:GetScript("OnDragStop")(titleBar)
+now = now + 0.2
+titleDown(titleBar, "LeftButton")
+equal(SanctuaryDB.uiSize[1], 700,
+    "and a click, a drag and a click are three gestures rather than a double-click")
+SanctuaryDB.uiSize = nil
+ns.refreshUI()
 
 -- Dragging the title bar moves the window and never resizes it: the two
 -- gestures live in two zones and neither does the other's work.

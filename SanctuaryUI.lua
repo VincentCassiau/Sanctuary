@@ -3748,14 +3748,25 @@ local function createMainFrame()
     -- click of a double-click starts a move.
     header:EnableMouse(true)
     header:RegisterForDrag("LeftButton")
-    header:SetScript("OnDragStart", function() mainFrame:StartMoving() end)
+    header:SetScript("OnDragStart", function(self)
+        -- A drag is not half of a double-click. Without this, a flick of the
+        -- window followed by a click inside the same 0.4 s counted as two, and
+        -- the window one had just placed went back to its opening size.
+        self.lastClick = 0
+        mainFrame:StartMoving()
+    end)
     header:SetScript("OnDragStop", function()
         mainFrame:StopMovingOrSizing()
         local point, _, _, x, y = mainFrame:GetPoint()
         if SanctuaryDB then SanctuaryDB.uiPosition = { point = point, x = x, y = y } end
     end)
     header.lastClick = 0
-    header:SetScript("OnMouseDown", function(self)
+    header:SetScript("OnMouseDown", function(self, button)
+        -- The left button and nothing else: decision 136 gives this bar one
+        -- gesture, and a right double-click is a menu somewhere else in the
+        -- game, not a request to resize anything. The client always says which
+        -- button it was, so an unnamed press is nobody's press.
+        if button ~= "LeftButton" then return end
         local now = GetTime()
         if now - (self.lastClick or 0) < 0.4 then
             self.lastClick = 0
