@@ -633,8 +633,21 @@ fire("PLAYER_ENTERING_WORLD")
 -- repository, because the section it leaned on lives inside a block conditioned
 -- on tooling a clone does not have.
 --
--- This is the state as the suite finds it. The block at the very end of the file
--- takes it again and names whichever path came back different.
+-- This is the state as the suite finds it, and it is taken again AT EVERY
+-- SECTION BOUNDARY: `assertModelAtRest` sits on the line before each banner and
+-- stops the run on the section that did not give something back, naming the
+-- path and the boundary. The migrations get two boundaries of their own -- they
+-- replace the saved tables rather than settling them, and a replacement throws
+-- a leak away instead of naming it. The block at the very end of the file is
+-- the net check behind all of them, and the only one counted in assertions.
+--
+-- What none of this names: a value of the fixture family -- the ones
+-- `resetModelState` puts back -- flipped and put back again BETWEEN two resets
+-- of the same section. It cannot be consumed, since every case of the decision
+-- zone opens on the fixture; and the same value still live at a boundary is
+-- named there. What is in scope at all is the persisted state, plus the clock
+-- and the locale: the simulated environment -- guild, group, stubs -- is the
+-- business of `resetModelState` and of each section's own gesture.
 --
 -- What it compares is DERIVED from the two saved files, leaf by leaf, and not
 -- written out here by hand. A list kept by hand forgot `minimap.angle`, then
@@ -11877,10 +11890,12 @@ end)()
 -- a failure here needs -- searching the file for the two lines that write it
 -- finds the section in seconds.
 --
--- What it catches is a leak that SURVIVES to the end. A section that leaves a
--- flag on and a later one that happens to turn it off cancel out here and pass:
--- the rule stated at the top of the file is the invariant, and this is its net
--- check, not its proof. Reading a per-section drift needs an instrumented copy.
+-- The boundaries above are what prove the invariant, section by section, and
+-- they stop the run where the leak was born. This is the net behind them: it
+-- covers what happens between two boundaries and outside every section -- the
+-- last section, which no banner follows, included. It is also the only one of
+-- the two counted in assertions, which is why the number a run prints is the
+-- number of things the suite proves.
 --
 -- Over the union of the two readings, sorted: a key that appeared during the run
 -- and a key that disappeared are both leaks, and a failure has to read the same
