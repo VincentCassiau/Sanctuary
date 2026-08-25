@@ -6442,6 +6442,38 @@ do
 end
 
 -- ---------------------------------------------------------------------------
+-- No visible sentence is held together by an em dash
+-- ---------------------------------------------------------------------------
+
+-- Decision 153: two clauses joined by a long dash is the shape Vincent reads as
+-- machine-written ("ca fait tres IA"), and a comma, a colon or a full stop says
+-- the same thing without changing the sense. So the rule is about the MIDDLE of
+-- a value, not about the character: the one dash left opens a string instead of
+-- sitting inside one -- the "experimental" mention beside the enhanced-filtering
+-- box, which Vincent wrote that way himself.
+--
+-- Both spellings are looked for: the em dash itself, and the double hyphen the
+-- English block writes it with. The en dash of a time range ("14:00 - 16:00")
+-- is not one of them -- it joins two numbers, not two clauses.
+do
+    local dashed = {}
+    for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) do
+        for key, value in pairs(entry[2]) do
+            if type(value) == "string" then
+                local body = value:gsub("^\226\128\148 ?", "")
+                if body:find("\226\128\148", 1, true) or body:find("%-%-") then
+                    dashed[#dashed + 1] = entry[1] .. "." .. key
+                end
+            end
+        end
+    end
+    table.sort(dashed)
+    equal(#dashed, 0,
+        "no visible sentence is held together by an em dash ("
+        .. table.concat(dashed, ", ") .. ")")
+end
+
+-- ---------------------------------------------------------------------------
 -- The four tabs open, and the fifth only in debug mode
 -- ---------------------------------------------------------------------------
 

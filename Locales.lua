@@ -9,6 +9,12 @@ ns.L = L
 -- nobody reports it, and it drifts. The harness checks the parity.
 --
 -- French is written as escaped UTF-8 bytes so this file stays 7-bit clean.
+--
+-- One rule of writing, decision 153: NO em dash inside a sentence. Two clauses
+-- joined by a long dash is the shape Vincent reads as machine-written ("ca fait
+-- tres IA"), and a comma, a colon or a full stop says the same thing. The only
+-- one left opens a string rather than sitting inside one -- the "- experimental"
+-- mention he validated himself. The harness holds both locales to it.
 -- ============================================================================
 
 -- ============================================================================
@@ -22,7 +28,7 @@ L["SANCTUARY_ENABLED"] = "Protection enabled."
 L["SANCTUARY_DISABLED"] = "Protection disabled."
 L["LOG_CLEARED"] = "Journal cleared."
 L["DATE_TIME_FORMAT"] = "%Y-%m-%d %H:%M:%S"
-L["SOUND_UNMUTE_FAILED"] = "Sanctuary could not restore the game's panel sounds. Restart the game client to get them back -- a reload or a relog will not clear this."
+L["SOUND_UNMUTE_FAILED"] = "Sanctuary could not restore the game's panel sounds. Restart the game client to get them back. A reload or a relog will not clear this."
 
 -- Chat notifications
 L["BLOCKED_VERBOSE"] = "Blocked: %s from %s"
@@ -126,10 +132,10 @@ L["TILE_BLOCKED_DETAIL"] = "%s names \194\183 %s patterns"
 L["TEST_LABEL"] = "Test a name"
 
 -- Name tester
-L["TEST_ALWAYS_ALLOWED"] = "%s -- always allowed: %s"
-L["TEST_ALWAYS_BLOCKED"] = "%s -- always blocked: %s"
-L["TEST_UNKNOWN_BLOCKED"] = "%s -- unknown: blocked, following your answers 1 and 2"
-L["TEST_UNKNOWN_ALLOWED"] = "%s -- unknown: allowed, you only block your blocked names"
+L["TEST_ALWAYS_ALLOWED"] = "%s, always allowed: %s"
+L["TEST_ALWAYS_BLOCKED"] = "%s, always blocked: %s"
+L["TEST_UNKNOWN_BLOCKED"] = "%s, unknown: blocked, following your answers 1 and 2"
+L["TEST_UNKNOWN_ALLOWED"] = "%s, unknown: allowed, you only block your blocked names"
 L["LIST_MANUAL"] = "added by you"
 L["LIST_TRUST"] = "automatic trust"
 L["LIST_GUILD"] = "in your guild"
@@ -180,7 +186,7 @@ L["MENU_BLOCK"] = "Sanctuary: always block"
 L["MENU_UNBLOCK"] = "Sanctuary: stop blocking"
 
 -- Minimap button
-L["MINIMAP_TIP_TITLE"] = "Sanctuary -- %s"
+L["MINIMAP_TIP_TITLE"] = "Sanctuary: %s"
 L["MINIMAP_TIP_LEFT"] = "Click: open."
 L["MINIMAP_TIP_RIGHT"] = "Right click: turn on / off."
 
@@ -188,7 +194,7 @@ L["MINIMAP_TIP_RIGHT"] = "Right click: turn on / off."
 L["LOGS_HEADER"] = "Blocked interaction journal"
 L["LOGS_COUNT_FULL"] = "%s entries / %s max"
 L["LOGS_ENABLE"] = "Record blocked interactions"
-L["TIP_LOGS_ENABLE"] = "Keeps a trace of every blocked interaction: who, when, what. Unticked, nothing is recorded -- Sanctuary still blocks."
+L["TIP_LOGS_ENABLE"] = "Keeps a trace of every blocked interaction: who, when, what. Unticked, nothing is recorded. Sanctuary still blocks."
 L["LOGS_SHOW_MSG"] = "Show the text of blocked messages"
 L["LOGS_EMPTY"] = "No blocked interaction yet."
 L["LOGS_CLEAR_BTN"] = "Clear the journal"
@@ -230,7 +236,7 @@ L["FILTER_AUTO_TRUST"] = "Trust people who stay at least 5 minutes in my group o
 L["ADV_TRUST_DESC"] = "After 5 minutes in your group or your raid, a player is added automatically to your \"Always allowed\": they will always be able to contact you again, even after the dungeon. You can take them off the list at any time."
 L["ADV_DIAG_TITLE"] = "Diagnostics"
 L["DEBUG_ENABLE"] = "Enable debug mode"
-L["ADV_DEBUG_DESC"] = "Records technical data about filtered interactions -- and about system messages hidden in instances -- to help understand a problem. Nothing is sent: you copy and paste."
+L["ADV_DEBUG_DESC"] = "Records technical data about filtered interactions, and about system messages hidden in instances, to help understand a problem. Nothing is sent: you copy and paste."
 L["DEBUG_EXPORT_BTN"] = "Export the report"
 L["DEBUG_CLEAR_BTN"] = "Clear the debug log"
 L["DEBUG_CLEAR_CONFIRM"] = "Erase the debug log (%s entries)?\nThis cannot be undone."
@@ -255,7 +261,7 @@ L["ABOUT_AUTHOR"] = "Author: %s"
 L["ABOUT_GITHUB"] = "GitHub: %s"
 
 -- Diagnostics tab (debug mode only)
-L["DIAG_PANEL_HEADER"] = "Diagnostics -- debug mode"
+L["DIAG_PANEL_HEADER"] = "Diagnostics: debug mode"
 L["DIAG_RUN_ALL"] = "Run them all (except the manual ones)"
 L["DIAG_CLEAR"] = "Clear"
 L["DIAG_RESULT_EMPTY"] = "No diagnostic run yet."
@@ -403,10 +409,10 @@ L["TILE_BLOCKED_DETAIL"] = "%s pseudos \194\183 %s patterns"
 L["TEST_LABEL"] = "Tester un pseudo"
 
 -- Name tester
-L["TEST_ALWAYS_ALLOWED"] = "%s \226\128\148 toujours autoris\195\169 : %s"
-L["TEST_ALWAYS_BLOCKED"] = "%s \226\128\148 toujours bloqu\195\169 : %s"
-L["TEST_UNKNOWN_BLOCKED"] = "%s \226\128\148 inconnu : bloqu\195\169, selon vos r\195\169ponses 1 et 2"
-L["TEST_UNKNOWN_ALLOWED"] = "%s \226\128\148 inconnu : autoris\195\169, vous ne bloquez que vos bloqu\195\169s"
+L["TEST_ALWAYS_ALLOWED"] = "%s, toujours autoris\195\169 : %s"
+L["TEST_ALWAYS_BLOCKED"] = "%s, toujours bloqu\195\169 : %s"
+L["TEST_UNKNOWN_BLOCKED"] = "%s, inconnu : bloqu\195\169, selon vos r\195\169ponses 1 et 2"
+L["TEST_UNKNOWN_ALLOWED"] = "%s, inconnu : autoris\195\169, vous ne bloquez que vos bloqu\195\169s"
 L["LIST_MANUAL"] = "ajout\195\169 par vous"
 L["LIST_TRUST"] = "trust automatique"
 L["LIST_GUILD"] = "membre de votre guilde"
@@ -454,7 +460,7 @@ L["MENU_BLOCK"] = "Sanctuary : toujours bloquer"
 L["MENU_UNBLOCK"] = "Sanctuary : ne plus bloquer"
 
 -- Minimap button
-L["MINIMAP_TIP_TITLE"] = "Sanctuary \226\128\148 %s"
+L["MINIMAP_TIP_TITLE"] = "Sanctuary : %s"
 L["MINIMAP_TIP_LEFT"] = "Clic : ouvrir."
 L["MINIMAP_TIP_RIGHT"] = "Clic droit : activer / d\195\169sactiver."
 
@@ -462,7 +468,7 @@ L["MINIMAP_TIP_RIGHT"] = "Clic droit : activer / d\195\169sactiver."
 L["LOGS_HEADER"] = "Journal des interactions bloqu\195\169es"
 L["LOGS_COUNT_FULL"] = "%s entr\195\169es / %s max"
 L["LOGS_ENABLE"] = "Enregistrer les interactions bloqu\195\169es"
-L["TIP_LOGS_ENABLE"] = "Garde une trace de chaque interaction bloqu\195\169e : qui, quand, quoi. D\195\169coch\195\169, rien n'est enregistr\195\169 \226\128\148 Sanctuary bloque toujours."
+L["TIP_LOGS_ENABLE"] = "Garde une trace de chaque interaction bloqu\195\169e : qui, quand, quoi. D\195\169coch\195\169, rien n'est enregistr\195\169. Sanctuary bloque toujours."
 L["LOGS_SHOW_MSG"] = "Afficher le texte des messages bloqu\195\169s"
 L["LOGS_EMPTY"] = "Aucune interaction bloqu\195\169e pour l'instant."
 L["LOGS_CLEAR_BTN"] = "Vider le journal"
@@ -504,7 +510,7 @@ L["FILTER_AUTO_TRUST"] = "Faire confiance aux joueurs qui restent au moins 5 min
 L["ADV_TRUST_DESC"] = "Apr\195\168s 5 minutes pass\195\169es dans votre groupe ou votre raid, un joueur est ajout\195\169 automatiquement \195\160 vos \194\171 Toujours autoris\195\169s \194\187 : il pourra toujours vous recontacter, m\195\170me apr\195\168s le donjon. Vous pouvez le retirer de la liste \195\160 tout moment."
 L["ADV_DIAG_TITLE"] = "Diagnostics"
 L["DEBUG_ENABLE"] = "Activer le mode debug"
-L["ADV_DEBUG_DESC"] = "Enregistre des donn\195\169es techniques sur les interactions filtr\195\169es \226\128\148 et les messages syst\195\168me masqu\195\169s en instance \226\128\148 pour aider \195\160 comprendre un probl\195\168me. Rien n'est envoy\195\169 : vous copiez-collez."
+L["ADV_DEBUG_DESC"] = "Enregistre des donn\195\169es techniques sur les interactions filtr\195\169es, et les messages syst\195\168me masqu\195\169s en instance, pour aider \195\160 comprendre un probl\195\168me. Rien n'est envoy\195\169 : vous copiez-collez."
 L["DEBUG_EXPORT_BTN"] = "Exporter le rapport"
 L["DEBUG_CLEAR_BTN"] = "Vider le debug"
 L["DEBUG_CLEAR_CONFIRM"] = "Effacer le log debug (%s entr\195\169es) ?\nCette action est irr\195\169versible."
@@ -529,7 +535,7 @@ L["ABOUT_AUTHOR"] = "Auteur : %s"
 L["ABOUT_GITHUB"] = "GitHub : %s"
 
 -- Diagnostics tab (debug mode only)
-L["DIAG_PANEL_HEADER"] = "Diagnostics \226\128\148 mode debug"
+L["DIAG_PANEL_HEADER"] = "Diagnostics : mode debug"
 L["DIAG_RUN_ALL"] = "Tout lancer (sauf ceux \195\160 lancer \195\160 la main)"
 L["DIAG_CLEAR"] = "Effacer"
 L["DIAG_RESULT_EMPTY"] = "Aucun diagnostic lanc\195\169 pour l'instant."
