@@ -541,8 +541,14 @@ assert(loadfile(repoRoot .. "/Sanctuary.lua"))("Sanctuary", ns)
 
 local function fire(event, ...)
     local frame = eventFrames[event]
-    check(frame ~= nil, "event registered: " .. event)
-    if not frame then return end
+    -- A fixture precondition, not a case. WHICH events the add-on registers is
+    -- proved once and by name, just after it loads; this line used to answer the
+    -- same question again on every call, 565 times, which is one answer counted
+    -- 565 times. A fixture that breaks stops the run where it broke, with the
+    -- event named, which is louder than an assertion in a list of five thousand.
+    if not frame then
+        error("broken fixture: no handler is registered for " .. tostring(event), 2)
+    end
     frame.scripts.OnEvent(frame, event, ...)
 end
 
@@ -676,6 +682,31 @@ local stateAtRest = canonicalState()
 -- the section's own, because two sections that park the same flag must not
 -- share a parking space.
 local asFound = {}
+
+-- The registry, proved once and by name. Written out rather than read from the
+-- add-on's own table: a test that asks its subject what it registered agrees
+-- with it whatever it answers. This is what `fire` used to recount on every
+-- call.
+for _, event in ipairs({
+    -- Load, world, and the character's own state.
+    "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "PLAYER_LOGOUT",
+    "PLAYER_DEAD", "PLAYER_ALIVE", "PLAYER_UNGHOST",
+    -- The four interactions the add-on can refuse.
+    "PARTY_INVITE_REQUEST", "GUILD_INVITE_REQUEST", "DUEL_REQUESTED", "TRADE_SHOW",
+    -- Who is allowed: guild, group, friends, Battle.net friends.
+    "GROUP_ROSTER_UPDATE", "GUILD_ROSTER_UPDATE", "PLAYER_GUILD_UPDATE",
+    "FRIENDLIST_UPDATE", "BN_FRIEND_INFO_CHANGED", "BN_FRIEND_LIST_SIZE_CHANGED",
+    -- Every chat event that carries a message, one line per event so that
+    -- dropping one is a line removed rather than a table quietly shrinking.
+    "CHAT_MSG_WHISPER", "CHAT_MSG_SAY", "CHAT_MSG_YELL", "CHAT_MSG_EMOTE",
+    "CHAT_MSG_TEXT_EMOTE", "CHAT_MSG_CHANNEL", "CHAT_MSG_SYSTEM",
+    "CHAT_MSG_BN_WHISPER",
+    "CHAT_MSG_PARTY", "CHAT_MSG_PARTY_LEADER",
+    "CHAT_MSG_RAID", "CHAT_MSG_RAID_LEADER", "CHAT_MSG_RAID_WARNING",
+    "CHAT_MSG_INSTANCE_CHAT", "CHAT_MSG_INSTANCE_CHAT_LEADER",
+}) do
+    check(eventFrames[event] ~= nil, "the add-on registers " .. event)
+end
 
 equal(ns.VERSION, "1.0.0", "version exported")
 equal(#muted, 0, "no global sound files muted at rest")
@@ -4827,13 +4858,35 @@ end
 
 -- Answers "was this copy hidden", and fails loudly if the chat windows were not
 -- all told the same thing.
+-- Proved once, and in each of the three orders: every chat window is asked, and
+-- every one is told the same thing. This is the case; what follows it is a
+-- helper, and a helper that re-asserted this on every scenario was one answer
+-- counted 237 times.
+for _, order in ipairs(ORDERS) do
+    armAntiSpam(300)
+    local verdicts = deliverChatMessage(order, 3, "CHAT_MSG_CHANNEL",
+        channelPayload(freshMessage(), SPAMMER, nextLine()))
+    equal(#verdicts, 3, "three chat windows are asked in the " .. order .. " order")
+    equal(verdicts[2], verdicts[1],
+        "the second window is told what the first was (" .. order .. ")")
+    equal(verdicts[3], verdicts[1], "and the third too (" .. order .. ")")
+end
+
 local function deliverCopy(order, message, sender, lineID, label)
     local verdicts = deliverChatMessage(order, 3, "CHAT_MSG_CHANNEL",
         channelPayload(message, sender, lineID))
-    equal(#verdicts, 3, "three chat windows asked about " .. label)
+    -- Fixture preconditions, not cases: the answer is the one above. A fixture
+    -- that breaks stops the run where it broke, naming the scenario.
+    if #verdicts ~= 3 then
+        error("broken fixture: " .. #verdicts ..
+            " chat windows asked about " .. label, 2)
+    end
     for index = 2, #verdicts do
-        equal(verdicts[index], verdicts[1],
-            "and window " .. index .. " was told the same as the first for " .. label)
+        if verdicts[index] ~= verdicts[1] then
+            error("broken fixture: window " .. index .. " was told " ..
+                tostring(verdicts[index]) .. " and the first " ..
+                tostring(verdicts[1]) .. " for " .. label, 2)
+        end
     end
     return verdicts[1]
 end
