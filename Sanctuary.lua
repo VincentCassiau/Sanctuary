@@ -1,6 +1,7 @@
 -- ============================================================================
--- Sanctuary — WoW Anti-Harassment Addon (Whitelist-based protection)
--- Version: 1.0.0 | Interface: 120007 (Midnight)
+-- Sanctuary — WoW Anti-Harassment Addon
+-- Two modes: only the people you know, or everyone except the ones you block.
+-- Version: 1.0.0 | Interface: 120100, 120007 (Midnight)
 -- ============================================================================
 
 -- ============================================================================
