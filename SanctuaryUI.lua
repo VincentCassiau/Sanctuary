@@ -4408,11 +4408,14 @@ end
 -- The ring is NOT centred in that 53 px square -- its circle is painted up and
 -- to the left of it, which is exactly why the texture is anchored TOPLEFT
 -- instead of CENTER. So the hole the icon has to fill is not in the middle of
--- the button either: it is 15.5 across and 14.5 down from the button's top-left
--- corner, one pixel above the button's own centre, and about 20 px wide. Those
--- are the numbers Blizzard's minimap buttons are drawn on, and constat 162a is
--- what putting the icon in the middle of the button looks like instead.
-local MINIMAP = { size = 31, ring = 53, hole = 20, holeX = 15.5, holeY = -14.5 }
+-- the button either: it is 16.5 across and 15.5 down from the button's top-left
+-- corner, a pixel to the right of the button's own centre, and about 20 px wide.
+-- Constat 162a is what putting the icon in the middle of the button looks like;
+-- constat 164 is the pixel that was left after it -- "presque centre mais pas
+-- encore tout a fait", the shield reading high and left inside the ring. Measure
+-- on a capture before touching these two numbers again: they are the position of
+-- the drawing inside the ring and nothing else derives from them.
+local MINIMAP = { size = 31, ring = 53, hole = 20, holeX = 16.5, holeY = -15.5 }
 
 -- A failure here stays local to the button: /sanc must open the window on a
 -- client where the minimap is not what we expect.

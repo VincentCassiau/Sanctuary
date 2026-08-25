@@ -9117,10 +9117,15 @@ do
     equal(point, "CENTER", "the icon is placed by its middle")
     equal(relativeTo, minimapButton, "on the button")
     equal(relativePoint, "TOPLEFT", "measured from its corner, not from its centre")
-    equal(offsetX, 15.5, "15.5 across")
-    equal(offsetY, -14.5, "and 14.5 down -- the centre of the ring's hole")
-    check(offsetY ~= -(minimapButton:GetHeight() / 2),
-        "which is NOT the centre of the button, and that is the whole of the constat")
+    equal(offsetX, 16.5, "16.5 across")
+    equal(offsetY, -15.5, "and 15.5 down -- the centre of the ring's hole")
+    -- Constat 164 is the pixel 162a left behind: from where it was the shield
+    -- still read high and to the left inside the ring, so the hole moved right
+    -- and down. What must never come back is an icon placed by the BUTTON's
+    -- middle, which is where it sat in session.
+    local middle = minimapButton:GetWidth() / 2
+    check(offsetX > middle and offsetY <= -middle,
+        "right of the button's centre and no higher than it, which the button's own middle is not")
     local ringPoint, _, ringRelative = minimapButton.border:GetPoint()
     equal(ringPoint .. "/" .. ringRelative, "TOPLEFT/TOPLEFT",
         "the ring is hung from the same corner the hole is measured from")
