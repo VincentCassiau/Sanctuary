@@ -10829,7 +10829,13 @@ end
 -- had just been clicked away from under the cursor. Counts and times go on
 -- living in place; only opening the tab again asks for a fresh order.
 do
-    local keptLog, keptLogging = SanctuaryDB.log, SanctuaryDB.logging.enabled
+    local keptLogging = SanctuaryDB.logging.enabled
+    -- ns.clearJournal wipes the journal IN PLACE, so holding the table holds
+    -- nothing: what has to be borrowed and put back is the entries, and they
+    -- have to come back into that very table -- the rest of the harness, and
+    -- the journal's own index, point at it by reference.
+    local keptEntries = {}
+    for index, entry in ipairs(SanctuaryDB.log) do keptEntries[index] = entry end
     SanctuaryDB.logging.enabled = true
     ns.clearJournal()
 
@@ -10951,7 +10957,7 @@ do
         "emptying the journal opens a fresh order for whoever comes next")
 
     ns.clearJournal()
-    SanctuaryDB.log = keptLog
+    for index, entry in ipairs(keptEntries) do SanctuaryDB.log[index] = entry end
     SanctuaryDB.logging.enabled = keptLogging
     _G["SanctuaryTab_protection"]:Click()
     ns.refreshUI()
