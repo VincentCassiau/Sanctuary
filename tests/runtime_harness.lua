@@ -6884,6 +6884,23 @@ do
     equal(_G.SanctuaryQ2_all:GetAlpha(), 0.8, "and dimmed, not only greyed")
     check((_G.SanctuaryQ2Note:GetWidth() or 0) > 0,
         "and the sentence is given the width it folds into")
+    -- And it has the screen to itself: the sentence is inserted into the layout
+    -- rather than dropped on top of it, so what follows question 2 is under it
+    -- and not written through it.
+    do
+        local keptPreset = SanctuaryDB.filters.preset
+        SanctuaryDB.filters.preset = "all"
+        ns.refreshUI()
+        local _, _, _, _, cardY = _G.SanctuaryQ2_all:GetPoint()
+        local _, _, _, _, noteY = _G.SanctuaryQ2Note:GetPoint()
+        local _, _, _, _, strictY = _G.SanctuaryStrictCheck:GetPoint()
+        check(noteY < cardY - _G.SanctuaryQ2_all:GetHeight(),
+            "the sentence is under the two cards it explains")
+        check(strictY < noteY - _G.SanctuaryQ2Note:GetStringHeight(),
+            "and the row under it is under the sentence")
+        SanctuaryDB.filters.preset = keptPreset
+        ns.refreshUI()
+    end
     check((defaultLocale.Q2_COVERED or "") ~= "", "the key is in the default locale")
     check((frenchLocale.Q2_COVERED or "") ~= "", "and in the French one")
     -- The two state notes are written the same way (decision 153): the small
