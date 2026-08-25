@@ -3386,10 +3386,11 @@ local function refreshAllowedPanel(force)
     panel.addedSection.count:SetText("(" .. #manual .. ")")
 
     -- The field first, its labels under it: the same order as the two fields of
-    -- the blocked panel, and the same distance (`LIST_LABELS_GAP`). The room for
-    -- the refusal sentence is kept whether one is showing or not, the same
-    -- choice the undo strip made -- a line that appears must not push the list
-    -- down under the fingers of somebody about to click a cross.
+    -- the blocked panel, and the same distance (`LIST_LABELS_GAP`). One line of
+    -- room is kept under the field whether a sentence is showing or not, so the
+    -- ordinary answers move nothing; a sentence that folds over more than that
+    -- line takes the room it actually draws and gives it back when it clears.
+    -- The reserve is a floor, not a promise that every answer fits it.
     local y = -40
     panel.addInput:ClearAllPoints()
     panel.addInput:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
