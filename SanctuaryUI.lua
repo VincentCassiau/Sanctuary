@@ -36,8 +36,11 @@ local L = ns.L
 --      sentence says why. Two questions of the home screen can go grey and both
 --      carry their sentence: `Q2_COVERED` under question 2 in "everyone except
 --      the people I block", `ANTISPAM_COVERED` under question 3 when the
---      channels are already all filtered. Small (12 px) and muted, never
---      italic -- decision 153, and the game has no italic face to embed.
+--      channels are already all filtered. Small (12 px) and never italic --
+--      decision 153, and the game has no italic face to embed -- and in the
+--      orange of decision 162f, which is the one thing on a dead section that is
+--      not grey: the sentence is what a section that has stopped answering is
+--      read through, so it cannot be as quiet as what it explains.
 --   5. Bound every FontString that can be longer than its column. One with no
 --      width draws on one line as far as it needs, over whatever is beside it:
 --      a card title folds, a tile's line is cut. French is the language that
@@ -52,6 +55,10 @@ local C = {
     veil       = { 0.000, 0.000, 0.000, 0.45 },
     header     = { 0.078, 0.078, 0.149, 1.00 },
     border     = { 0.302, 0.302, 0.400, 0.85 },
+    -- `border-top: 1px dashed rgba(77,77,102,0.5)` -- the same edge, fainter,
+    -- and it is drawn in ONE place: between the block that has gone out and the
+    -- one box of question 2 that is still live (decision 163).
+    dash       = { 0.302, 0.302, 0.400, 0.50 },
     ink        = { 1.000, 1.000, 1.000, 1.00 },
     -- Rule 3: the mock-up's #9A9AAA, one notch lighter. #B3B3C2 reads at about
     -- 9.3:1 on the panel where #9A9AAA read at 6.9 -- the same grey to look at,
@@ -92,6 +99,13 @@ local C = {
 -- what they cannot click -- and not so close to 1 that the state is the colour
 -- of the text and nothing else.
 local DISABLED_ALPHA = 0.8
+
+-- What a card of a DEAD question is drawn at (decision 163, option A). Lower
+-- than DISABLED_ALPHA, and deliberately so: those two cards are no longer a
+-- control somebody is being asked to read, they are the memory of an answer, and
+-- what the section means is carried by the orange sentence over them. The
+-- mock-up Vincent picked draws them at .55.
+local WITNESS_ALPHA = 0.55
 
 -- 15 / 14 / 13 / 12, the hierarchy Vincent asked for, thinned by one step at the
 -- top: decision 141 asked the modal to gain room without losing its air, and a
@@ -552,15 +566,25 @@ local function newCard(parent, name, titleText, descText, width, isOn, select)
             if on then self.mark:Show() else self.mark:Hide() end
         end
         if not self.enabled then
+            -- A card is only ever disabled on a question that has gone dead as a
+            -- whole, and decision 163 (option A) says what it becomes there: a
+            -- witness, not a control. It still shows which answer was given --
+            -- the ring keeps its dot -- and everything else goes out: the fill
+            -- loses its accent, the ring's dot with it, and the whole card drops
+            -- to WITNESS_ALPHA. What carries the meaning is the orange sentence
+            -- above the pair, so rule 1 is answered in words rather than by a
+            -- card somebody has to be able to read at a glance.
             applyBackdrop(self, C.tile, C.border)
             self.rim:SetColorTexture(unpack(C.disabled))
-            self.title:SetTextColor(unpack(C.disabled))
+            self.mark:SetColorTexture(unpack(C.disabled))
+            self.title:SetTextColor(unpack(C.dim))
             self.desc:SetTextColor(unpack(C.disabled))
-            -- Rule 4: the fill dims as well as greying.
-            self:SetAlpha(DISABLED_ALPHA)
+            self:SetAlpha(WITNESS_ALPHA)
             return
         end
         self:SetAlpha(1)
+        -- Back from the witness state, which took the two of them out.
+        self.mark:SetColorTexture(unpack(C.checkOn))
         applyBackdrop(self, on and C.accentBg or C.tile, on and C.accent or C.border)
         -- `.rd.on { border-color: accent }`: the rim answers too.
         self.rim:SetColorTexture(unpack(on and C.accent or C.border))
@@ -1331,9 +1355,14 @@ local protection = {}
 --              bottom edge of the tester row, and of the screen with it
 --   testGap    what that row keeps under itself before the answer, when there
 --              is one -- the window is cut at the field otherwise
+--   dash       one dash of the dotted rule, and `dashGap` the space after it.
+--              Four and four reads as a dotted line at the one pixel the rule is
+--              tall; a finer dash would be twice the textures for no more
+--              meaning, and eight pixels of pitch is 108 of them across the
+--              widest column the window has
 local HOME = { titleRow = 22, gutter = 10, blockGap = 24, ruleGap = 24,
     rowHeight = 24, checkSize = 18, subIndent = 26,
-    tile = 46, tileGap = 16, testField = 20, testGap = 8 }
+    tile = 46, tileGap = 16, testField = 20, testGap = 8, dash = 4, dashGap = 4 }
 
 -- The build MAKES the screen; `refreshTab.protection` PLACES it, all of it, from
 -- the top down. Questions 1 and 2 used to be positioned here and never touched
@@ -1368,6 +1397,44 @@ local function buildProtectionTab(parent)
         protection.rules[index] = rule
     end
 
+    -- The dotted rule of decision 163, option A: what sets automatic trust --
+    -- still live -- apart from the block that has just gone out above it.
+    --
+    -- A frame rather than a texture, because the client draws solid rectangles
+    -- and nothing else: `border-top: 1px dashed` is drawn as dashes, a row of
+    -- `dash`-wide segments every `dash + dashGap` pixels. They are made on demand
+    -- and re-laid at every width, so the row is as long as the column is wide
+    -- and no longer -- one texture per dash, kept and reused rather than made
+    -- again on each pass.
+    protection.dottedRule = CreateFrame("Frame", "SanctuaryTrustSeparator", parent)
+    protection.dottedRule:SetHeight(1)
+    protection.dottedRule.dashes = {}
+    function protection.dottedRule:Layout(columnWidth)
+        self:SetWidth(columnWidth)
+        local pitch = HOME.dash + HOME.dashGap
+        local wanted = math.max(1, math.floor((columnWidth + HOME.dashGap) / pitch))
+        for index = 1, wanted do
+            local dash = self.dashes[index]
+            if not dash then
+                dash = self:CreateTexture(nil, "ARTWORK")
+                dash:SetHeight(1)
+                dash:SetColorTexture(unpack(C.dash))
+                self.dashes[index] = dash
+            end
+            -- The last one is cut to what is left rather than hanging over the
+            -- edge of the column: a dash is a rectangle, and a rectangle drawn
+            -- past the margin is a rectangle over whatever is beside it.
+            local x = (index - 1) * pitch
+            dash:SetWidth(math.min(HOME.dash, columnWidth - x))
+            dash:ClearAllPoints()
+            dash:SetPoint("LEFT", self, "LEFT", x, 0)
+            dash:Show()
+        end
+        for index = wanted + 1, #self.dashes do self.dashes[index]:Hide() end
+    end
+    protection.dottedRule:Layout(width)
+    protection.dottedRule:Hide()
+
     -- Question 1 ------------------------------------------------------------
     protection.q1Title, protection.q1Number = stepTitle(L["Q1_TITLE"], "1")
     local cardWidth = (width - HOME.gutter) / 2
@@ -1396,11 +1463,12 @@ local function buildProtectionTab(parent)
     -- that had stopped answering and nothing that said why.
     --
     -- Decision 153 settles how the two state notes are written: small (12 px)
-    -- and muted, never italic. The game carries no italic face and embedding one
-    -- for two sentences is weight nobody asked for, so the sentence is set apart
-    -- by its size and its colour -- which is `C.dim`, rule 3's own grey, and not
-    -- the orange this one used to borrow from a refusal.
-    protection.q2Note = newLabel(parent, "", FONT_BODY, C.dim, nil, "SanctuaryQ2Note")
+    -- and never italic -- the game carries no italic face and embedding one for
+    -- two sentences is weight nobody asked for. Decision 162f settles the
+    -- colour: the same orange the patterns wear, not `C.dim`. Muted grey was
+    -- "trop discret" set among a whole section of muted grey, and it is the ONE
+    -- line on the screen that has to be read before the rest makes sense.
+    protection.q2Note = newLabel(parent, "", FONT_BODY, C.orange, nil, "SanctuaryQ2Note")
 
     -- The enhanced-instance box is a single widget with two homes: under the two
     -- cards in "Everything", indented under "Block group invitations" in "I
@@ -1441,7 +1509,10 @@ local function buildProtectionTab(parent)
         function() return not ns.isAntiSpamEnabled() end,
         function() ns.setAntiSpamEnabled(false) end)
 
-    protection.q3IntervalLabel = newLabel(parent, L["ANTISPAM_INTERVAL_LABEL"], FONT_BODY, C.soft)
+    -- Named: it leaves the screen with the field it labels when the question
+    -- goes dead, and a label left behind alone is the defect worth proving.
+    protection.q3IntervalLabel = newLabel(parent, L["ANTISPAM_INTERVAL_LABEL"], FONT_BODY, C.soft,
+        nil, "SanctuaryAntiSpamIntervalLabel")
     -- Written out rather than built from the number of seconds: a key that only
     -- exists as a concatenation cannot be found by searching for it, and an
     -- unreachable translation is one nobody will ever notice is missing.
@@ -1467,7 +1538,9 @@ local function buildProtectionTab(parent)
     -- Journal") off the home screen for saying twice what "un inconnu" already
     -- says, and the key went with it, out of both locales. Written like the
     -- note of question 2 above, and for the same reason: the two are one thing.
-    protection.q3Note = newLabel(parent, "", FONT_BODY, C.dim, nil, "SanctuaryAntiSpamNote")
+    -- Decision 162f, as above: the two state notes are one pair and wear one
+    -- colour.
+    protection.q3Note = newLabel(parent, "", FONT_BODY, C.orange, nil, "SanctuaryAntiSpamNote")
 
     -- The detailed boxes, folded away until "I choose" is picked.
     local choose = CreateFrame("Frame", "SanctuaryChoose", parent)
@@ -1812,8 +1885,11 @@ applyTabWidth.protection = function()
     end
     protection.rowHeight.strict = math.max(HOME.rowHeight,
         protection.strict:FitLabel(strictRoom) + (HOME.rowHeight - HOME.checkSize))
-    -- The rules between the questions run the whole column, decision 139.
+    -- The rules between the questions run the whole column, decision 139, and so
+    -- does the dotted one -- which has to be re-dashed rather than stretched:
+    -- its length is a number of dashes, not a width.
     for _, rule in ipairs(protection.rules) do rule:SetWidth(width) end
+    protection.dottedRule:Layout(width)
     -- The tester's answer is a sentence under the field, not a label beside it:
     -- it runs the whole width, it wraps, and the height the screen is measured
     -- from comes out of this number.
@@ -1892,6 +1968,24 @@ refreshTab.protection = function()
 
     -- Question 2 ------------------------------------------------------------
     stepRow(protection.q2Number)
+
+    -- Decision 163, option A. A section nobody can act on any more shows the
+    -- SAME thing whatever is remembered underneath it: the sentence that says
+    -- why, the two cards left as witnesses of the answer that was given, and no
+    -- detail at all -- not the two columns of boxes, not the sub-box, not the
+    -- block of channels, even when the remembered mode is "I choose". The screen
+    -- used to show one thing in "Everything" and another in "I choose" while
+    -- both were equally dead, which is constat 162h.
+    --
+    -- The sentence comes FIRST, between the title and the witnesses: it is what
+    -- the reader needs before the cards mean anything, and it is where the
+    -- validated mock-up puts it.
+    protection.q2Note:SetText(blockedOnly and L["Q2_COVERED"] or "")
+    if blockedOnly then
+        place(protection.q2Note)
+        y = y - math.max(NOTE_LINE, protection.q2Note:GetStringHeight() or NOTE_LINE) - 8
+    end
+
     place(protection.q2All)
     protection.q2Custom:ClearAllPoints()
     protection.q2Custom:SetPoint("TOPLEFT", protection.q2All, "TOPRIGHT", HOME.gutter, 0)
@@ -1899,18 +1993,24 @@ refreshTab.protection = function()
     protection.q2Custom:Refresh()
     y = y - protection.rowHeight.q2 - 14
 
-    -- Rule 4: the greyed question says why, in words. It sits under the two
-    -- cards and above the boxes of "I choose", because what it explains is
-    -- everything that has just gone grey and not the cards alone. Nothing is
-    -- reserved for it -- it is on screen only in the mode that greys the
-    -- question, exactly like the sentence under question 3 below.
-    protection.q2Note:SetText(blockedOnly and L["Q2_COVERED"] or "")
-    place(protection.q2Note)
     if blockedOnly then
-        y = y - math.max(NOTE_LINE, protection.q2Note:GetStringHeight() or NOTE_LINE) - 6
-    end
-
-    if custom then
+        -- Everything the question can be acted on with is off screen, the strict
+        -- box included: it is a detail of "Everything", and there is nothing to
+        -- filter in strangers here.
+        protection.choose:Hide()
+        protection.strict:Hide()
+        -- Automatic trust is NOT part of what died: it answers question 1 and it
+        -- is still live. It is set apart under a dotted rule for exactly that
+        -- reason -- left against the extinguished block it read as greyed out
+        -- too, which is constat 162g.
+        protection.dottedRule:Show()
+        place(protection.dottedRule)
+        -- `padding-top: 8px` under the line: the box below is set apart from the
+        -- block above, not pushed away from it.
+        y = y - protection.dottedRule:GetHeight() - 8
+    elseif custom then
+        protection.strict:Show()
+        protection.dottedRule:Hide()
         protection.choose:Show()
         place(protection.choose)
         protection.strict:ClearAllPoints()
@@ -1930,15 +2030,17 @@ refreshTab.protection = function()
             -((protection.groupInviteRow or HOME.rowHeight) - HOME.checkSize))
         y = y - protection.chooseHeight - 4
     else
+        protection.strict:Show()
+        protection.dottedRule:Hide()
         protection.choose:Hide()
         place(protection.strict)
         y = y - protection.rowHeight.strict
     end
     protection.strict:Refresh()
 
-    -- Under the strict box in both modes: in "I choose" the strict box has gone
-    -- into the left column, and this line stays at the screen's own left margin
-    -- because it answers question 1, not question 2.
+    -- Under the strict box in both live modes, under the dotted rule in the dead
+    -- one: this line stays at the screen's own left margin whatever happens
+    -- above it, because it answers question 1 and not question 2.
     place(protection.trust)
     protection.trust:Refresh()
     y = y - protection.rowHeight.trust
@@ -1964,33 +2066,44 @@ refreshTab.protection = function()
     protection.q3Number:SetTextColor(unpack(covered and C.disabled or C.accent))
 
     stepRow(protection.q3Number)
+
+    -- Option A again, and the same order: the sentence that says why, then the
+    -- two cards as witnesses, then nothing. What disappears here is the delay --
+    -- "un meme message ne reapparait qu'apres" is a detail of an answer that
+    -- cannot be given while the channels are all filtered already.
+    --
+    -- Nothing is reserved for the sentence: it is on screen only while the
+    -- answer is decided elsewhere, exactly like question 2's.
+    protection.q3Note:SetText(covered and L["ANTISPAM_COVERED"] or "")
+    if covered then
+        place(protection.q3Note)
+        -- Measured rather than assumed: the sentence wraps over one line at
+        -- 900 px and over two at 500, and everything below it hangs from this.
+        y = y - math.max(NOTE_LINE, protection.q3Note:GetStringHeight() or NOTE_LINE) - 8
+    end
+
     place(protection.q3Yes)
     protection.q3No:ClearAllPoints()
     protection.q3No:SetPoint("TOPLEFT", protection.q3Yes, "TOPRIGHT", HOME.gutter, 0)
     protection.q3Yes:Refresh()
     protection.q3No:Refresh()
-    y = y - protection.rowHeight.q3 - 8
+    y = y - protection.rowHeight.q3
 
-    -- The field rides on the right of its own label rather than at a fixed
-    -- offset: the sentence is not the same length in the two locales, and a
-    -- number picked for one of them cuts the other.
-    place(protection.q3IntervalLabel, -6)
-    protection.q3Interval:ClearAllPoints()
-    protection.q3Interval:SetPoint("LEFT", protection.q3IntervalLabel, "RIGHT", 10, 0)
-    protection.q3Interval:Refresh()
-    y = y - HOME.rowHeight - 4
-
-    -- Rule 4 of the section head: a greyed-out question says so in words as well
-    -- as in grey. This is the sentence, and it is the only thing left under
-    -- question 3 -- decision 142 struck the standing note off the screen.
-    -- Nothing is reserved for it: it is on screen only while the answer is
-    -- already decided elsewhere.
-    protection.q3Note:SetText(covered and L["ANTISPAM_COVERED"] or "")
-    place(protection.q3Note)
     if covered then
-        -- Measured rather than assumed: the sentence wraps over one line at
-        -- 900 px and over two at 500, and everything below it hangs from this.
-        y = y - math.max(NOTE_LINE, protection.q3Note:GetStringHeight() or NOTE_LINE) - 4
+        protection.q3IntervalLabel:Hide()
+        protection.q3Interval:Hide()
+    else
+        protection.q3IntervalLabel:Show()
+        protection.q3Interval:Show()
+        y = y - 8
+        -- The field rides on the right of its own label rather than at a fixed
+        -- offset: the sentence is not the same length in the two locales, and a
+        -- number picked for one of them cuts the other.
+        place(protection.q3IntervalLabel, -6)
+        protection.q3Interval:ClearAllPoints()
+        protection.q3Interval:SetPoint("LEFT", protection.q3IntervalLabel, "RIGHT", 10, 0)
+        protection.q3Interval:Refresh()
+        y = y - HOME.rowHeight - 4
     end
     separator()
 

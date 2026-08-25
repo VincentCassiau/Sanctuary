@@ -7286,8 +7286,16 @@ do
     equal(_G.SanctuaryAntiSpamNote:GetText(), ns.L["ANTISPAM_COVERED"],
         "and says why it is greyed once the channels are all filtered")
     equal(_G.SanctuaryQ3_yes.enabled, false, "with the cards greyed beside it")
-    equal(_G.SanctuaryQ3_yes:GetAlpha(), 0.8, "and dimmed, not only greyed")
-    equal(_G.SanctuaryAntiSpamInterval:GetAlpha(), 0.8, "the field beside them too")
+    -- Decision 163, option A: the two cards stay as WITNESSES of the answer that
+    -- was given -- dimmer than a greyed control, because they are no longer a
+    -- control -- and the delay under them goes off screen entirely. It is a
+    -- detail of an answer nobody can give while every channel is filtered, and
+    -- leaving it there is what made a dead section look half alive.
+    equal(_G.SanctuaryQ3_yes:GetAlpha(), 0.55, "and drawn as a witness, not as a control")
+    check(_G.SanctuaryQ3_yes.mark:IsShown() ~= _G.SanctuaryQ3_no.mark:IsShown(),
+        "which still shows which of the two answers was given")
+    equal(_G.SanctuaryAntiSpamInterval:IsShown(), false, "the delay under them is off screen")
+    equal(_G.SanctuaryAntiSpamIntervalLabel:IsShown(), false, "its label with it")
     -- Every kind of control answers rule 4 the same way, label included: a box
     -- whose square fades while the words beside it stay bright is half a state.
     _G.SanctuaryFilter_duel:SetEnabledState(false)
@@ -7319,37 +7327,59 @@ do
     equal(_G.SanctuaryQ2Note:GetText(), ns.L["Q2_COVERED"],
         "and says why it is greyed once question 1 filters nobody but the blocked")
     equal(_G.SanctuaryQ2_all.enabled, false, "with the cards greyed beside it")
-    equal(_G.SanctuaryQ2_all:GetAlpha(), 0.8, "and dimmed, not only greyed")
+    equal(_G.SanctuaryQ2_all:GetAlpha(), 0.55, "and drawn as a witness, not as a control")
     check((_G.SanctuaryQ2Note:GetWidth() or 0) > 0,
         "and the sentence is given the width it folds into")
-    -- And it has the screen to itself: the sentence is inserted into the layout
-    -- rather than dropped on top of it, so what follows question 2 is under it
-    -- and not written through it.
+    -- Decision 163, option A. A dead section shows the SAME thing whatever is
+    -- remembered under it, and in this order: the sentence FIRST -- it is what
+    -- the reader needs before two extinguished cards mean anything -- then the
+    -- two witnesses, then no detail at all. Constat 162h is the other half of
+    -- it: what was on screen depended on whether "Everything" or "I choose" had
+    -- been picked before, while both were equally dead.
     do
         local keptPreset = SanctuaryDB.filters.preset
-        SanctuaryDB.filters.preset = "all"
-        ns.refreshUI()
-        local _, _, _, _, cardY = _G.SanctuaryQ2_all:GetPoint()
-        local _, _, _, _, noteY = _G.SanctuaryQ2Note:GetPoint()
-        local _, _, _, _, strictY = _G.SanctuaryStrictCheck:GetPoint()
-        check(noteY < cardY - _G.SanctuaryQ2_all:GetHeight(),
-            "the sentence is under the two cards it explains")
-        check(strictY < noteY - _G.SanctuaryQ2Note:GetStringHeight(),
-            "and the row under it is under the sentence")
+        for _, preset in ipairs({ "all", "custom" }) do
+            SanctuaryDB.filters.preset = preset
+            ns.refreshUI()
+            local _, _, _, _, noteY = _G.SanctuaryQ2Note:GetPoint()
+            local _, _, _, _, cardY = _G.SanctuaryQ2_all:GetPoint()
+            check(cardY < noteY - _G.SanctuaryQ2Note:GetStringHeight(),
+                "remembering " .. preset .. ": the sentence comes above the two witnesses")
+            equal(_G.SanctuaryChoose:IsShown(), false,
+                "remembering " .. preset .. ": no detail is left of the question")
+            equal(_G.SanctuaryStrictCheck:IsShown(), false,
+                "remembering " .. preset .. ": the sub-box is gone with it")
+            -- The one box that is still live stays live, and is set apart from
+            -- the block that went out rather than reading as part of it
+            -- (constat 162g).
+            equal(_G.SanctuaryAutoTrust:IsShown(), true,
+                "remembering " .. preset .. ": automatic trust stays on screen")
+            equal(_G.SanctuaryAutoTrust.enabled, true, "and stays clickable")
+            equal(_G.SanctuaryAutoTrust:GetAlpha(), 1, "in plain white, not greyed with them")
+            local separator = _G.SanctuaryTrustSeparator
+            equal(separator:IsShown(), true, "under a dotted rule that sets it apart")
+            local _, _, _, _, dashY = separator:GetPoint()
+            local _, _, _, _, trustY = _G.SanctuaryAutoTrust:GetPoint()
+            check(dashY < cardY - _G.SanctuaryQ2_all:GetHeight() and trustY < dashY,
+                "which is drawn between the extinguished block and it")
+        end
         SanctuaryDB.filters.preset = keptPreset
         ns.refreshUI()
     end
     check((defaultLocale.Q2_COVERED or "") ~= "", "the key is in the default locale")
     check((frenchLocale.Q2_COVERED or "") ~= "", "and in the French one")
     -- The two state notes are written the same way (decision 153): the small
-    -- face, muted, and never italic -- the game has no italic face and a font
-    -- embedded for two sentences is weight nobody asked for.
+    -- face and never italic -- the game has no italic face and a font embedded
+    -- for two sentences is weight nobody asked for. The colour is decision
+    -- 162f's: the orange the patterns already wear. Muted grey set among a
+    -- section of muted grey was "trop discret", and this is the one line a dead
+    -- section has to be read through.
     for _, note in ipairs({ _G.SanctuaryQ2Note, _G.SanctuaryAntiSpamNote }) do
         equal(note.__fontSize, 12, "a state note is set on the small face")
         equal(note.__fontFlags, "", "and asks for no italic the game has not got")
         check(sameColor({ note.__colorR, note.__colorG, note.__colorB, note.__colorA },
-            { 0.702, 0.702, 0.761, 1.0 }),
-            "and is muted, not the orange of a refusal")
+            { 1.0, 0.6, 0.2, 1.0 }),
+            "and carries the orange, not the grey of what it explains")
     end
     -- The sentences themselves, to the letter: they are texts Vincent validated
     -- and a rewrite is a decision, not a detail.
