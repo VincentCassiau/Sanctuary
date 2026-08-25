@@ -274,9 +274,12 @@ end
 -- Every interface a person has used works that way, and an 18 px square is a
 -- small target.
 --
--- The hit area is anchored on the FontString itself at both corners, so it
--- covers the text and NOTHING past it -- a button given the row's width would
--- turn the empty half of the line into a switch nobody meant to touch. It is a
+-- The hit area is anchored on the FontString itself at both corners, so it is
+-- exactly the label's own box and nothing past it: the text while the label
+-- sizes itself, the bound while a column bounds it (`FitLabel` below), and the
+-- folded block when it folds. Never the width of the row -- a button given the
+-- row's width would turn the empty half of the line into a switch nobody meant
+-- to touch, and the row is the whole screen wide. It is a
 -- child of the control rather than of the screen, so hiding the control hides
 -- its second target with it; and it calls the OnClick handler rather than
 -- `Click()`, which on a CheckButton would also flip the drawn state behind the
@@ -351,6 +354,31 @@ local function newCheck(parent, name, text, tooltip, get, set)
     frame.label = newLabel(parent, text, FONT_BODY, C.soft)
     frame.label:SetPoint("LEFT", frame, "RIGHT", 8, 0)
 
+    -- Bounded to what its column leaves it, a label FOLDS instead of running
+    -- over whatever sits beside it -- which on the home screen is the other
+    -- column. Folding rather than truncating, because the block it is in
+    -- measures its own height and the screen may scroll (decision 134): the
+    -- second line has somewhere to go, which is the test the tile in the same
+    -- file fails and this one passes.
+    --
+    -- It grows DOWNWARD. Anchored by its middle, as it is until this is called,
+    -- a second line climbs as far above the box as it drops below it, and no row
+    -- height can give that back to the row above. The first line stays centred on
+    -- the box, so a label that fits is drawn exactly where it was.
+    --
+    -- Answers the height the control now takes, box included, so the caller can
+    -- advance its row by what the fold actually measured.
+    function frame:FitLabel(width)
+        local label, box = self.label, self:GetHeight() or 0
+        label:SetWordWrap(true)
+        label:SetWidth(9999)
+        local drop = math.max(0, (box - (label:GetStringHeight() or 0)) / 2)
+        label:SetWidth(math.max(1, width))
+        label:ClearAllPoints()
+        label:SetPoint("TOPLEFT", self, "TOPRIGHT", 8, -drop)
+        return math.max(box, drop + (label:GetStringHeight() or 0))
+    end
+
     frame.get, frame.set = get, set
     frame.enabled = true
 
@@ -405,6 +433,19 @@ local function newRadio(parent, name, text, tooltip, isOn, select)
     frame.label = newLabel(parent, text, FONT_BODY, C.soft)
     frame.label:SetPoint("LEFT", frame, "RIGHT", 8, 0)
     frame.enabled = true
+
+    -- The same contract as the check's, on the same 18 px box: see `newCheck`
+    -- for why it folds downward rather than truncating.
+    function frame:FitLabel(width)
+        local label, box = self.label, self:GetHeight() or 0
+        label:SetWordWrap(true)
+        label:SetWidth(9999)
+        local drop = math.max(0, (box - (label:GetStringHeight() or 0)) / 2)
+        label:SetWidth(math.max(1, width))
+        label:ClearAllPoints()
+        label:SetPoint("TOPLEFT", self, "TOPRIGHT", 8, -drop)
+        return math.max(box, drop + (label:GetStringHeight() or 0))
+    end
 
     function frame:Refresh()
         local on = isOn() and true or false
@@ -1330,7 +1371,10 @@ local function buildProtectionTab(parent)
         L["FILTER_STRICT_GROUP_INVITE_SYSTEM"], L["TIP_STRICT_GROUP_INVITE_SYSTEM"],
         function() return filterStored("strictGroupInviteSystemMessages") == true end,
         function(value) setFilter("strictGroupInviteSystemMessages", value) end)
-    protection.strictNote = newLabel(parent, L["STRICT_EXPERIMENTAL"], FONT_BODY, C.dim)
+    -- Named: it is the one mention that shares a line with a label, so what the
+    -- bound leaves it is a measurement a check has to be able to take.
+    protection.strictNote = newLabel(parent, L["STRICT_EXPERIMENTAL"], FONT_BODY, C.dim,
+        nil, "SanctuaryStrictNote")
 
     -- Automatic trust used to live at the bottom of Advanced, three sections
     -- down, with its sentence spelt out underneath. It decides who is allowed --
@@ -1416,7 +1460,11 @@ local function buildProtectionTab(parent)
         protection.checks[row.key] = check
     end
 
-    protection.channelsLabel = newLabel(choose, L["CHANNELS_LABEL"], FONT_BODY, C.soft)
+    -- Named, because it is the row directly under the guild line -- the one the
+    -- longest label of the screen folds into -- and a check that cannot reach it
+    -- cannot prove the fold is paid for in height.
+    protection.channelsLabel = newLabel(choose, L["CHANNELS_LABEL"], FONT_BODY, C.soft,
+        nil, "SanctuaryChannelsLabel")
     protection.channelRadios = {}
     -- Written out rather than built from the mode name: a key that only exists
     -- as a concatenation cannot be found by searching for it, and an unreachable
@@ -1443,13 +1491,28 @@ local function buildProtectionTab(parent)
         local colWidth = (innerWidth - HOME.blockGap) / 2
         local colX = { 0, colWidth + HOME.blockGap }
         local colY = { 0, 0 }
+        -- The width a label gets is known HERE and nowhere else: a box does not
+        -- learn which column it is in until it is laid out. Both columns are
+        -- bounded by the same line -- the loop reads `colX[row.col]` against one
+        -- `colWidth`, so telling the two apart would take a condition, and the
+        -- left column overflowing runs over the boxes of the right one, which is
+        -- worse than running out of the window.
+        protection.checkLabelWidth = colWidth - (HOME.checkSize + 8)
         for _, row in ipairs(CHECK_ROWS) do
             local col = row.col
             local check = protection.checks[row.key]
             check:ClearAllPoints()
             check:SetPoint("TOPLEFT", choose, "TOPLEFT", colX[col], colY[col])
-            colY[col] = colY[col] - HOME.rowHeight
+            -- The row is as tall as the label turned out to be, never shorter
+            -- than the row height the mock-up asks for.
+            local rowHeight = math.max(HOME.rowHeight,
+                check:FitLabel(protection.checkLabelWidth) + (HOME.rowHeight - HOME.checkSize))
+            colY[col] = colY[col] - rowHeight
             if row.key == "groupInvite" then
+                -- What the row of the parent box came to, for the child box that
+                -- hangs under it: the child is placed by the refresh, against
+                -- this number, so a folded parent label cannot end up under it.
+                protection.groupInviteRow = rowHeight
                 -- The row the strict box takes under its parent, kept clear
                 -- whether the box is there or not. The box itself hangs from the
                 -- parent check, not from this number: only the room is booked
@@ -1465,7 +1528,10 @@ local function buildProtectionTab(parent)
             local radio = protection.channelRadios[row.mode]
             radio:ClearAllPoints()
             radio:SetPoint("TOPLEFT", choose, "TOPLEFT", colX[2] + 16, colY[2])
-            colY[2] = colY[2] - 22
+            -- A channel row is indented by 16, so it has 16 px less to write in
+            -- than a box of the same column.
+            colY[2] = colY[2] - math.max(22,
+                radio:FitLabel(protection.checkLabelWidth - 16) + (22 - HOME.checkSize))
         end
 
         protection.chooseHeight = -math.min(colY[1], colY[2])
@@ -1686,6 +1752,28 @@ applyTabWidth.protection = function()
     -- between them, and it answers the height the fold needs, which the refresh
     -- below reads.
     protection.layoutChoose(width)
+    -- The two boxes that sit at the screen's own margin instead of in a column.
+    -- Automatic trust is the longest label of the home screen -- 86 characters in
+    -- French against the 438 px the inner width leaves it at the narrowest
+    -- window -- and it has never been in a column, so `layoutChoose` never saw
+    -- it. Each is bounded here and each answers the row it needs.
+    protection.rowHeight.trust = math.max(HOME.rowHeight,
+        protection.trust:FitLabel(width - (HOME.checkSize + 8))
+            + (HOME.rowHeight - HOME.checkSize))
+    -- The strict box has two homes and therefore two widths: indented under its
+    -- parent in the left column of "I choose", at the screen's own margin in
+    -- "Everything", where it carries the experimental mention on the right of
+    -- its label and has to leave it its place. The mode is asked here rather
+    -- than in the refresh below, because a resize runs this pass AFTER the
+    -- refresh has drawn -- a width posted in the refresh is a width the next
+    -- drag overwrites.
+    local strictRoom = width - (HOME.checkSize + 8)
+        - ((protection.strictNote:GetStringWidth() or 0) + 8)
+    if ns.getPreset() == "custom" then
+        strictRoom = protection.checkLabelWidth - HOME.subIndent
+    end
+    protection.rowHeight.strict = math.max(HOME.rowHeight,
+        protection.strict:FitLabel(strictRoom) + (HOME.rowHeight - HOME.checkSize))
     -- The rules between the questions run the whole column, decision 139.
     for _, rule in ipairs(protection.rules) do rule:SetWidth(width) end
     -- The tester's answer is a sentence under the field, not a label beside it:
@@ -1793,8 +1881,15 @@ refreshTab.protection = function()
         -- away from its parent the day the columns move, and a child that no
         -- longer sits under its parent reads as a row of its own -- which is
         -- exactly how it was read in session.
+        --
+        -- What it drops by is the height the PARENT'S ROW came to, not the box's:
+        -- the box is 18 px whatever its label does, and a parent label folded
+        -- over two lines reaches further down than that. Its own x is the
+        -- sub-row indent, which is where the parent's label starts, so a folded
+        -- label and this box would otherwise share the same column of pixels.
         protection.strict:SetPoint("TOPLEFT", protection.checks.groupInvite,
-            "BOTTOMLEFT", HOME.subIndent, -(HOME.rowHeight - HOME.checkSize))
+            "BOTTOMLEFT", HOME.subIndent,
+            -((protection.groupInviteRow or HOME.rowHeight) - HOME.checkSize))
         protection.strictNote:Hide()
         y = y - protection.chooseHeight - 4
     else
@@ -1803,7 +1898,7 @@ refreshTab.protection = function()
         protection.strictNote:ClearAllPoints()
         protection.strictNote:SetPoint("LEFT", protection.strict.label, "RIGHT", 8, 0)
         protection.strictNote:Show()
-        y = y - HOME.rowHeight
+        y = y - protection.rowHeight.strict
     end
     protection.strict:Refresh()
 
@@ -1812,7 +1907,7 @@ refreshTab.protection = function()
     -- because it answers question 1, not question 2.
     place(protection.trust)
     protection.trust:Refresh()
-    y = y - HOME.rowHeight
+    y = y - protection.rowHeight.trust
     separator()
 
     -- Question 3 -- the anti-spam of the public channels.
