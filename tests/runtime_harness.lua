@@ -8754,6 +8754,43 @@ for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) 
         .. localeName .. ")")
 end
 
+-- ... and the one that does not fit takes the room it needs. Decision 167c
+-- reserves ONE line under each field; the Battle.net refusal folds over two at
+-- the narrowest window, and a reserve is a floor, not a promise. Reserving the
+-- single line for it did not push the labels down, it wrote the sentence across
+-- them: the room has to follow the sentence actually drawn, and give itself back
+-- when it goes.
+do
+    local keptSize = SanctuaryDB.uiSize
+    SanctuaryDB.uiSize = { 500, 600 }
+    ns.refreshUI()
+    ns.OpenPanel("blocked")
+    ns.addBlocked("Roomprobe")
+    ns.refreshUI()
+    nameBox:SetText("Real Friend#1234")
+    panel.nameBtn:Click()
+    local chip = findRow(panel, "Roomprobe")
+    check(chip ~= nil, "a name is on the blocked list while the refusal is showing")
+    local _, _, _, _, fieldY = nameBox:GetPoint()
+    local _, _, _, _, chipY = chip:GetPoint()
+    -- The sentence hangs NOTE_GAP under the field, so its top is here; this
+    -- harness measures a line of FONT_BODY at 12 px and the screen reserves
+    -- NOTE_LINE = 15 for one, so what carries between the two is the count of
+    -- lines, and the check is written in lines.
+    local noteTop = fieldY - nameBox:GetHeight() - 4
+    local lines = math.floor(((nameBox.note:GetStringHeight() or 0) / 12) + 0.5)
+    check(lines >= 2, "the Battle.net refusal really does fold at the narrow window")
+    check(chipY <= noteTop - lines * 15,
+        "and the first label sits under its last line, measured at NOTE_LINE")
+    runTimers(3)
+    chip = findRow(panel, "Roomprobe")
+    equal(fieldY - select(5, chip:GetPoint()), 34 + 4 + 15,
+        "the sentence gone, the labels are back at the one line kept for them")
+    ns.removeBlocked(ns.normalizeCharacterKey("Roomprobe"))
+    SanctuaryDB.uiSize = keptSize
+    ns.refreshUI()
+end
+
 ns.removeBlocked(ns.normalizeCharacterKey("Acceptedname"))
 ns.ClosePanel()
 runTimers(3)

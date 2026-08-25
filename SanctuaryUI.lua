@@ -246,10 +246,11 @@ local NOTE_LINE = 15
 -- Room kept under an add field for its sentence, showing or not, so nothing on
 -- screen moves when one appears. ONE line, decision 167c: the labels start just
 -- under the field they belong to, which is what two lines of reserved emptiness
--- were pushing them away from (constat 164.3). The one sentence that takes two
--- lines is the Battle.net refusal on the blocked names field; it pushes the
--- labels down for its six seconds and they come back, which is the trade
--- decision 167c makes. The harness measures the sentences against this value.
+-- were pushing them away from (constat 164.3). A sentence that folds over more
+-- than that line -- the Battle.net refusal on the blocked names field is the
+-- only one -- takes the room it actually draws, through `box:LabelsGap`, and
+-- gives it back when it goes: the reserve is a floor, not a promise that every
+-- answer fits it. The harness measures the sentences against this value.
 local NOTE_ROOM_ONE_LINE = NOTE_GAP + NOTE_LINE
 -- The one rule the three add fields share, and the whole of constat D.4: a field
 -- row, then the room its refusal sentence needs, then the labels it feeds --
@@ -697,6 +698,19 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
     function box:RefreshNoteWidth() self.note:SetWidth(noteWidth()) end
     box:RefreshNoteWidth()
 
+    -- The room the three panels leave under this field before the labels it
+    -- feeds. One line is reserved whether a sentence is showing or not, so the
+    -- ordinary answers move nothing; a sentence that folds over more than that
+    -- line takes what it actually draws -- `GetStringHeight` is the height the
+    -- client rendered, not a count of anything -- and gives it back when it
+    -- clears. Reserving one line for a two-line sentence did not push the labels
+    -- down, it wrote the sentence over them.
+    function box:LabelsGap()
+        if not self.note:IsShown() then return LIST_LABELS_GAP end
+        local drawn = self.note:GetStringHeight() or 0
+        return LIST_LABELS_GAP + math.max(0, drawn - NOTE_LINE)
+    end
+
     function box:RefreshHint()
         local text = self:GetText()
         local empty = (text == nil or text == "")
@@ -709,9 +723,13 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
     end
 
     function box:ClearNote()
+        local wasShown = self.note:IsShown()
         self.noteToken = nil
         self.note:SetText("")
         self.note:Hide()
+        -- A sentence taller than the reserved line had pushed the labels down:
+        -- they come back up here, on the same redraw that took the sentence off.
+        if wasShown and ns.redrawOpenPanel then ns.redrawOpenPanel() end
     end
 
     -- The generation token the undo strip uses, and for the same reason: two
@@ -728,6 +746,10 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
         self.note:SetTextColor(unpack(color))
         self.note:SetText(text)
         self.note:Show()
+        -- The panel is laid out again with the sentence on it: a two-line
+        -- refusal needs more room than the line kept for it, and what is under
+        -- the field moves down for as long as it is showing.
+        if ns.redrawOpenPanel then ns.redrawOpenPanel() end
         C_Timer.After(UNDO_SECONDS, function()
             if self.noteToken == mine then self:ClearNote() end
         end)
@@ -3314,7 +3336,7 @@ local function refreshAllowedPanel(force)
     panel.addInput:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
     panel.addBtn:ClearAllPoints()
     panel.addBtn:SetPoint("LEFT", panel.addInput, "RIGHT", 8, 0)
-    y = y - LIST_LABELS_GAP
+    y = y - panel.addInput:LabelsGap()
 
     y = layoutChips(child, manual, y, function(item)
         local ok, key, data = ns.removeAllowed(item.key)
@@ -3516,12 +3538,11 @@ local function refreshBlockedPanel(force)
     panel.nameInput:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
     panel.nameBtn:ClearAllPoints()
     panel.nameBtn:SetPoint("LEFT", panel.nameInput, "RIGHT", 8, 0)
-    -- Two lines of room: this is the one field that can answer with the
-    -- Battle.net sentence, which is longer than a line at the note width in both
-    -- languages, and what sits below is the first row of labels, which a second
-    -- line would lie over. The other two fields keep the same room so the three
-    -- read alike.
-    y = y - LIST_LABELS_GAP
+    -- One line of room, and more while a sentence needs more: this is the one
+    -- field that can answer with the Battle.net refusal, which is longer than a
+    -- line at the note width in both languages, and what sits below is the first
+    -- row of labels, which a second line would otherwise lie over.
+    y = y - panel.nameInput:LabelsGap()
 
     local names = {}
     for key, data in pairs(SanctuaryDB.blockedNames or {}) do
@@ -3554,7 +3575,7 @@ local function refreshBlockedPanel(force)
     panel.patternInput:SetPoint("TOPLEFT", child, "TOPLEFT", 0, y)
     panel.patternBtn:ClearAllPoints()
     panel.patternBtn:SetPoint("LEFT", panel.patternInput, "RIGHT", 8, 0)
-    y = y - LIST_LABELS_GAP
+    y = y - panel.patternInput:LabelsGap()
 
     local patterns = {}
     for _, value in ipairs(SanctuaryDB.keywords or {}) do
@@ -3578,6 +3599,15 @@ local function refreshOpenPanel(force)
     elseif openPanel == "blocked" then
         refreshBlockedPanel(force)
     end
+end
+
+-- What an add field calls when its sentence appears or goes: the room under the
+-- field follows the sentence, so the panel has to be laid out again. It goes
+-- through the namespace rather than a forward local because the fields are built
+-- two sections above this one and this chunk is at Lua's ceiling of 200
+-- registers.
+function ns.redrawOpenPanel()
+    refreshOpenPanel(true)
 end
 
 function ns.OpenPanel(which)
