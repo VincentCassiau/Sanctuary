@@ -4367,13 +4367,25 @@ function ns.RefreshMinimapButton()
     end
 end
 
+-- The geometry of a minimap button, which is Blizzard's and not ours: a 31 px
+-- button wearing `MiniMap-TrackingBorder` at 53 px, corner to corner.
+--
+-- The ring is NOT centred in that 53 px square -- its circle is painted up and
+-- to the left of it, which is exactly why the texture is anchored TOPLEFT
+-- instead of CENTER. So the hole the icon has to fill is not in the middle of
+-- the button either: it is 15.5 across and 14.5 down from the button's top-left
+-- corner, one pixel above the button's own centre, and about 20 px wide. Those
+-- are the numbers Blizzard's minimap buttons are drawn on, and constat 162a is
+-- what putting the icon in the middle of the button looks like instead.
+local MINIMAP = { size = 31, ring = 53, hole = 20, holeX = 15.5, holeY = -14.5 }
+
 -- A failure here stays local to the button: /sanc must open the window on a
 -- client where the minimap is not what we expect.
 local function createMinimapButton()
     if minimapButton or type(Minimap) ~= "table" then return end
     local ok = pcall(function()
         local btn = CreateFrame("Button", "SanctuaryMinimapButton", Minimap)
-        btn:SetSize(31, 31)
+        btn:SetSize(MINIMAP.size, MINIMAP.size)
         btn:SetFrameStrata("MEDIUM")
         btn:SetFrameLevel(8)
 
@@ -4389,8 +4401,14 @@ local function createMinimapButton()
         -- spelt out is a path that has to be edited the day the file is
         -- compiled.
         btn.icon = btn:CreateTexture(nil, "BACKGROUND")
-        btn.icon:SetSize(20, 20)
-        btn.icon:SetPoint("CENTER", btn, "CENTER", 0, 0)
+        btn.icon:SetSize(MINIMAP.hole, MINIMAP.hole)
+        -- On the centre of the RING'S HOLE, which is not the centre of the
+        -- button. `MiniMap-TrackingBorder` paints its circle in the top-left of
+        -- a square half as wide again as the button -- that is why the texture
+        -- is anchored corner to corner instead of centred -- so an icon put in
+        -- the middle of the button sits low in the hole it is meant to fill.
+        -- The point below is where Blizzard's own minimap buttons put theirs.
+        btn.icon:SetPoint("CENTER", btn, "TOPLEFT", MINIMAP.holeX, MINIMAP.holeY)
         btn.icon:SetTexture("Interface\\AddOns\\Sanctuary\\media\\logo")
         -- No TexCoord crop. The 8 % that used to come off each side was there to
         -- cut the border a Blizzard icon is painted with; this artwork has its
@@ -4398,7 +4416,7 @@ local function createMinimapButton()
         -- magnify it into the tracking ring.
 
         btn.border = btn:CreateTexture(nil, "OVERLAY")
-        btn.border:SetSize(53, 53)
+        btn.border:SetSize(MINIMAP.ring, MINIMAP.ring)
         btn.border:SetPoint("TOPLEFT", btn, "TOPLEFT", 0, 0)
         btn.border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
 

@@ -9029,6 +9029,24 @@ do
     check(drawn:find("%.%a+$") == nil,
         "with no extension spelt out in the path")
 
+    -- Constat 162a, "mal centre dans le rond". `MiniMap-TrackingBorder` paints
+    -- its circle in the top-left of the square it is drawn in, which is why the
+    -- ring is anchored corner to corner rather than centred -- so the hole is
+    -- not in the middle of the button and an icon that is sits low in it. The
+    -- icon hangs from the button's own top-left corner, on the point Blizzard's
+    -- minimap buttons put theirs.
+    local point, relativeTo, relativePoint, offsetX, offsetY = icon:GetPoint()
+    equal(point, "CENTER", "the icon is placed by its middle")
+    equal(relativeTo, minimapButton, "on the button")
+    equal(relativePoint, "TOPLEFT", "measured from its corner, not from its centre")
+    equal(offsetX, 15.5, "15.5 across")
+    equal(offsetY, -14.5, "and 14.5 down -- the centre of the ring's hole")
+    check(offsetY ~= -(minimapButton:GetHeight() / 2),
+        "which is NOT the centre of the button, and that is the whole of the constat")
+    local ringPoint, _, ringRelative = minimapButton.border:GetPoint()
+    equal(ringPoint .. "/" .. ringRelative, "TOPLEFT/TOPLEFT",
+        "the ring is hung from the same corner the hole is measured from")
+
     -- Surface one: the manifest. Read from the .toc rather than repeated here,
     -- so the assertion cannot agree with a copy of the wrong answer.
     local manifest = io.open(repoRoot .. "/Sanctuary.toc", "r")
@@ -9069,46 +9087,48 @@ do
         -- Bit 5 of the descriptor is the origin. Zero is bottom-left, which is
         -- what the client reads; the other way round is an upside-down icon.
         equal(math.floor(header:byte(18) / 32) % 2, 0, "written bottom-up")
-        -- Really transparent, and really drawn: a file that is all background is
-        -- an empty button, and one that is all artwork is the white square.
+        -- Really drawn, and really a DISC. Decision 163 recomposed the artwork:
+        -- the night background fills the whole square as a disc and the shield
+        -- sits on it at 74 %, because the shield alone -- detoured, on nothing --
+        -- came out of the tracking ring as a gold pastille with the drawing lost
+        -- in it (constat 162a). So what the file has to be is no longer "mostly
+        -- see-through": it is opaque from edge to edge through the middle, and
+        -- clear at the four corners, which is the difference between a disc that
+        -- fills the ring's hole and a square whose corners the ring cuts off.
         local body = handle:read("a")
         handle:close()
         equal(#body, width * height * 4, "the pixels are all there")
+        local function alphaAt(col, row) return body:byte((row * width + col) * 4 + 4) end
         local clear, opaque = 0, 0
-        -- The bounding box of what is drawn, which is what "centred in the ring"
-        -- means when nobody has the client open. Rows are stored bottom-up, so
-        -- the first and last rows are the bottom and top of the picture -- which
-        -- changes nothing to a comparison of the two margins.
-        local firstCol, lastCol, firstRow, lastRow = width, -1, height, -1
         for row = 0, height - 1 do
             for col = 0, width - 1 do
-                local alpha = body:byte((row * width + col) * 4 + 4)
+                local alpha = alphaAt(col, row)
                 if alpha == 0 then clear = clear + 1
                 elseif alpha > 200 then opaque = opaque + 1 end
-                if alpha > 8 then
-                    if col < firstCol then firstCol = col end
-                    if col > lastCol then lastCol = col end
-                    if row < firstRow then firstRow = row end
-                    if row > lastRow then lastRow = row end
-                end
             end
         end
-        check(clear > width * height / 4,
-            "most of the square is see-through (" .. clear .. " px)")
-        check(opaque > 200, "and there is a drawing in it (" .. opaque .. " px)")
-        -- Centred, and big enough to read at the size of a minimap button. Two
-        -- pixels of tolerance: the drawing is not symmetric and does not have to
-        -- be, but an icon sitting to one side of its own square reads as a
-        -- misplaced icon beside the ones next to it.
-        check(math.abs(firstCol - (width - 1 - lastCol)) <= 2,
-            "the drawing is centred sideways (" .. firstCol .. " / "
-                .. (width - 1 - lastCol) .. " px of margin)")
-        check(math.abs(firstRow - (height - 1 - lastRow)) <= 2,
-            "and up and down (" .. firstRow .. " / "
-                .. (height - 1 - lastRow) .. " px of margin)")
-        check(math.max(lastCol - firstCol + 1, lastRow - firstRow + 1) >= 48,
-            "and it fills its square (" ..
-                math.max(lastCol - firstCol + 1, lastRow - firstRow + 1) .. " px)")
+        check(opaque > 200, "there is a drawing in it (" .. opaque .. " px)")
+        for _, corner in ipairs({ { 0, 0 }, { width - 1, 0 }, { 0, height - 1 },
+            { width - 1, height - 1 } }) do
+            equal(alphaAt(corner[1], corner[2]), 0,
+                "the corner at " .. corner[1] .. "," .. corner[2] .. " is cut away")
+        end
+        -- A disc inscribed in this square leaves its four corners and nothing
+        -- else, which is the square less pi/4 of it -- 879 px at 64x64. A band
+        -- around that number catches both mistakes at once: a square (nothing
+        -- clear at all) and artwork floating in a transparent field (far more).
+        check(clear > 700 and clear < 1100,
+            "and the corners are all that is cut (" .. clear .. " px)")
+        -- Edge to edge through the middle, both ways: the disc fills the hole
+        -- rather than sitting inside it with a margin the ring cannot hide. The
+        -- very last pixel of a row is the antialiased rim of the circle and is
+        -- half covered by it, never opaque -- half is what "reaches the edge"
+        -- looks like on a disc inscribed in its own square.
+        local middle = height / 2
+        check(alphaAt(0, middle) > 100 and alphaAt(width - 1, middle) > 100,
+            "the disc reaches both sides of the square")
+        check(alphaAt(width / 2, 0) > 100 and alphaAt(width / 2, height - 1) > 100,
+            "and its top and bottom")
     end
 end
 
