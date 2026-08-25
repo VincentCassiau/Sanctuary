@@ -1572,6 +1572,7 @@ ns.invalidateWhitelist()
 fire("CHAT_MSG_SYSTEM", "invitation group text that does not match localized patterns")
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.result, "NO_MATCH", "unmatched invite-like system message diagnosed")
 
+asFound.minimalMode = SanctuaryDB.notifications.mode
 SanctuaryDB.notifications.mode = "minimal"
 asFound.minimalInterval = SanctuaryDB.notifications.minimalIntervalMinutes
 SanctuaryDB.notifications.minimalIntervalMinutes = 1
@@ -1582,7 +1583,7 @@ equal(#chatMessages, beforeMinimalMessages + 1, "minimal notification printed on
 runTickers()
 equal(#chatMessages, beforeMinimalMessages + 1, "minimal notification throttled")
 SanctuaryDB.notifications.minimalIntervalMinutes = asFound.minimalInterval
-SanctuaryDB.notifications.mode = "silent"
+SanctuaryDB.notifications.mode = asFound.minimalMode
 
 SanctuaryDB.debugLog = {}
 asFound.debugRotationLimit = SanctuaryDB.logging.maxEntries
@@ -4106,6 +4107,7 @@ SanctuaryCharDB.overrides.enabled = asFound.groupChatOverride
 -- blocked interaction.
 SanctuaryDB.log = {}
 SanctuaryCharDB.sessionStats = { blockedCount = 0, blockedByType = {} }
+asFound.groupChatMode = SanctuaryDB.notifications.mode
 SanctuaryDB.notifications.mode = "verbose"
 chatMessages = {}
 now = now + 5
@@ -4114,7 +4116,7 @@ equal(#SanctuaryDB.log, 1, "a hidden group message is journalled")
 equal(SanctuaryDB.log[1].type, "group", "under its own type")
 equal(SanctuaryCharDB.sessionStats.blockedCount, 1, "and counted in the session")
 equal(#chatMessages, 1, "and announced once in verbose mode")
-SanctuaryDB.notifications.mode = "silent"
+SanctuaryDB.notifications.mode = asFound.groupChatMode
 
 do
 
@@ -4582,6 +4584,7 @@ runTimers(3)
 
 -- C14 -- the summary only speaks when something new was blocked.
 resetModelState()
+asFound.summaryMode = SanctuaryDB.notifications.mode
 SanctuaryDB.notifications.mode = "minimal"
 SanctuaryCharDB.sessionStats = { blockedCount = 3, blockedByType = {} }
 Sanctuary = nil
@@ -4598,7 +4601,7 @@ chatMessages = {}
 now = now + 1000
 runTickers()
 equal(#chatMessages, 1, "and one more block produces one again")
-SanctuaryDB.notifications.mode = "silent"
+SanctuaryDB.notifications.mode = asFound.summaryMode
 
 -- C15 -- the schema reset.
 asFound.schemaResetScope = SanctuaryDB.filters.scope
@@ -5505,6 +5508,7 @@ do
     clean()
     SanctuaryDB.antiSpam.enabled = true
     SanctuaryDB.antiSpam.intervalSeconds = 300
+    asFound.hiddenRepeatMode = SanctuaryDB.notifications.mode
     SanctuaryDB.notifications.mode = "verbose"
     SanctuaryCharDB.sessionStats.blockedCount = 0
     local message = "buy my gold, honestly"
@@ -5534,7 +5538,7 @@ do
     now = now + 1000
     runTickers()
     equal(#chatMessages, 0, "and the five-minute summary has nothing to say")
-    SanctuaryDB.notifications.mode = "silent"
+    SanctuaryDB.notifications.mode = asFound.hiddenRepeatMode
 
     -- With the Journal switched off nothing is written -- and the anti-spam
     -- goes on hiding, because hiding is not journalling.
@@ -6021,6 +6025,7 @@ equal(shown, 1, "a per-character override works the same way")
 SanctuaryCharDB.overrides.filters.strictGroupInviteSystemMessages = nil
 
 -- H9 -- complete silence: no chat line, no counter, no summary.
+asFound.secretSilenceMode = SanctuaryDB.notifications.mode
 SanctuaryDB.notifications.mode = "verbose"
 SanctuaryCharDB.sessionStats = { blockedCount = 0, blockedByType = {} }
 chatMessages = {}
@@ -6033,7 +6038,7 @@ now = now + 1000
 chatMessages = {}
 runTickers()
 equal(#chatMessages, 0, "and produces no summary either")
-SanctuaryDB.notifications.mode = "silent"
+SanctuaryDB.notifications.mode = asFound.secretSilenceMode
 
 -- H11 -- the other contexts.
 local CONTEXTS = {
