@@ -3999,8 +3999,10 @@ equal(openReason, "open_scope", "and the reason names the mode")
 local mateBlocked, mateReason = ns.getCharacterDecision("Mate-TestRealm")
 equal(mateBlocked, false, "a guild member is still allowed")
 equal(mateReason, "whitelist", "and still for being allowed, not for the mode")
+-- Enhanced instance filtering is not in the list: it is the one setting the open
+-- mode leaves alone (decision 167), and C5 below is where it is asked.
 for _, key in ipairs({ "groupInvite", "whisper", "duel", "trade", "guildInvite",
-    "say", "yell", "emote", "strictGroupInviteSystemMessages" }) do
+    "say", "yell", "emote" }) do
     equal(ns.isFilterOn(key), false, "the open mode turns " .. key .. " off")
 end
 equal(ns.isFilterOn("channelMode"), "none", "and public channels with them")
@@ -4022,15 +4024,22 @@ equal(ns.isFilterOn("channelMode"), "all", "including the channel mode")
 -- round trip lossless.
 equal(SanctuaryDB.filters.whisper, false, "the stored value survives a trip through the preset")
 
--- C5 -- enhanced instance filtering, in the three situations.
+-- C5 -- enhanced instance filtering, in the four situations. Decision 167: it
+-- is the one setting the open mode does not switch off, because a person blocked
+-- by a pattern goes on making the system line of their invitation appear in a
+-- locked-down instance and nothing else reaches it.
 resetModelState()
 SanctuaryDB.filters.strictGroupInviteSystemMessages = true
 SanctuaryDB.filters.preset = "all"
 equal(ns.isFilterOn("strictGroupInviteSystemMessages"), true,
     "the enhanced box applies under the recommended preset")
 SanctuaryDB.filters.scope = "blockedOnly"
+equal(ns.isFilterOn("strictGroupInviteSystemMessages"), true,
+    "and in the open mode too, where the ticked box is the whole of the decision")
+SanctuaryDB.filters.strictGroupInviteSystemMessages = false
 equal(ns.isFilterOn("strictGroupInviteSystemMessages"), false,
-    "and never in the open mode")
+    "unticked there, it applies no more than anywhere else")
+SanctuaryDB.filters.strictGroupInviteSystemMessages = true
 SanctuaryDB.filters.scope = "strangers"
 SanctuaryDB.filters.preset = "custom"
 SanctuaryDB.filters.groupInvite = false
@@ -6207,15 +6216,24 @@ equal(instanceMarkers.secretSystemSuppressed, 1, "one masked line is counted")
 equal(instanceMarkers.secretSystemVisible, 0, "and no system line got through")
 equal(instanceMarkers.strictModeOn, true, "the snapshot says the enhanced box was ticked")
 
--- H19 -- the two switches reach the predicate.
+-- H19 -- the two switches reach the predicate. Decision 167 changed one of the
+-- seven refusals and only that one: the open mode has no group-invite filter to
+-- be off, so there the box decides alone -- and unticking it still stops the
+-- suppression, on `strict_off`, which is the opt-in staying an opt-in.
 armStrictInInstance()
 SanctuaryDB.filters.scope = "blockedOnly"
 ns.resetDebugLog()
 now = now + 5
 ok, shown = sendSecretLine(ChatTypeInfo.SYSTEM.id)
-equal(shown, 1, "the open mode never masks a system line")
-equal(lastDebug("CHAT_OUTPUT").data.reason, "filter_off", "and says the filter is off")
-SanctuaryDB.filters.scope = "strangers"
+equal(shown, 0, "the open mode masks on the ticked box alone")
+SanctuaryDB.filters.strictGroupInviteSystemMessages = false
+ns.resetDebugLog()
+now = now + 5
+ok, shown = sendSecretLine(ChatTypeInfo.SYSTEM.id)
+equal(shown, 1, "and unticking it there shows the very next line")
+equal(lastDebug("CHAT_OUTPUT").data.reason, "strict_off",
+    "refused for the box, not for a filter that mode has not got")
+armStrictInInstance()
 SanctuaryDB.filters.preset = "all"
 SanctuaryDB.filters.groupInvite = false
 ns.resetDebugLog()
@@ -6607,6 +6625,9 @@ local KNOWN_IDENTICAL = {
     -- The Journal's badge and its time range: a count, a dash and the word
     -- SPAM, which French borrows unchanged.
     LOGS_SPAM_BADGE = true, LOGS_TIME_RANGE = true,
+    -- The accept button of the enhanced-filtering warning: two letters French
+    -- writes exactly the same way.
+    STRICT_CONFIRM_OK = true,
 }
 local unexpected = {}
 for _, key in ipairs(untranslated) do
@@ -6661,8 +6682,8 @@ do
     local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
         definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
 
-    equal(#englishOrder, 229, "the default locale defines 229 keys")
-    equal(#frenchOrder, 229, "and the French block defines 229")
+    equal(#englishOrder, 232, "the default locale defines 232 keys")
+    equal(#frenchOrder, 232, "and the French block defines 232")
     equal(#englishDupes, 0,
         "no key is defined twice in the default locale ("
             .. table.concat(englishDupes, ", ") .. ")")
@@ -7347,21 +7368,31 @@ do
                 "remembering " .. preset .. ": the sentence comes above the two witnesses")
             equal(_G.SanctuaryChoose:IsShown(), false,
                 "remembering " .. preset .. ": no detail is left of the question")
-            equal(_G.SanctuaryStrictCheck:IsShown(), false,
-                "remembering " .. preset .. ": the sub-box is gone with it")
-            -- The one box that is still live stays live, and is set apart from
-            -- the block that went out rather than reading as part of it
-            -- (constat 162g).
-            equal(_G.SanctuaryAutoTrust:IsShown(), true,
-                "remembering " .. preset .. ": automatic trust stays on screen")
-            equal(_G.SanctuaryAutoTrust.enabled, true, "and stays clickable")
-            equal(_G.SanctuaryAutoTrust:GetAlpha(), 1, "in plain white, not greyed with them")
+            -- The two boxes that are still live stay live, and are set apart
+            -- from the block that went out rather than reading as part of it
+            -- (constat 162g). Enhanced instance filtering joined automatic trust
+            -- there with decision 167: it answers question 1 too, being the only
+            -- answer to a blocked person's invitation line in an instance.
             local separator = _G.SanctuaryTrustSeparator
-            equal(separator:IsShown(), true, "under a dotted rule that sets it apart")
+            equal(separator:IsShown(), true, "under a dotted rule that sets them apart")
             local _, _, _, _, dashY = separator:GetPoint()
-            local _, _, _, _, trustY = _G.SanctuaryAutoTrust:GetPoint()
-            check(dashY < cardY - _G.SanctuaryQ2_all:GetHeight() and trustY < dashY,
-                "which is drawn between the extinguished block and it")
+            for _, name in ipairs({ "SanctuaryStrictCheck", "SanctuaryAutoTrust" }) do
+                local box = _G[name]
+                equal(box:IsShown(), true,
+                    "remembering " .. preset .. ": " .. name .. " stays on screen")
+                equal(box.enabled, true, name .. " stays clickable")
+                equal(box:GetAlpha(), 1, name .. " in plain white, not greyed with them")
+                local _, _, _, _, boxY = box:GetPoint()
+                check(boxY < dashY, name .. " is drawn under the rule")
+            end
+            check(dashY < cardY - _G.SanctuaryQ2_all:GetHeight(),
+                "which is drawn between the extinguished block and them")
+            -- In that order, and at the screen's own margin: the box that was
+            -- indented under a parent in "I choose" has no parent here.
+            local _, _, _, strictX, strictY = _G.SanctuaryStrictCheck:GetPoint()
+            local _, _, _, trustX, trustY = _G.SanctuaryAutoTrust:GetPoint()
+            equal(strictX, trustX, "the two live boxes share one left margin")
+            check(trustY < strictY, "with enhanced filtering above automatic trust")
         end
         SanctuaryDB.filters.preset = keptPreset
         ns.refreshUI()
@@ -7538,13 +7569,16 @@ _G.SanctuaryQ1_blockedOnly:Click()
 equal(SanctuaryDB.filters.scope, "blockedOnly", "clicking the second card writes the scope")
 equal(_G.SanctuaryQ2_all.enabled, false, "question 2 is greyed out with it")
 equal(_G.SanctuaryQ2_custom.enabled, false, "both of its cards")
-equal(_G.SanctuaryStrictCheck.enabled, false, "and so is the enhanced-instance box")
+-- The enhanced-instance box is NOT greyed with them, decision 167: it is the
+-- only answer to the invitation line of somebody blocked by a pattern, and that
+-- is exactly what this mode blocks on.
+equal(_G.SanctuaryStrictCheck.enabled, true, "the enhanced-instance box stays live")
 -- Greyed out, not removed: the answers are still there and come back untouched.
 check(_G.SanctuaryQ2_all:IsShown(), "question 2 is greyed out, never removed")
 _G.SanctuaryQ1_strangers:Click()
 equal(SanctuaryDB.filters.scope, "strangers", "and the first card writes it back")
 equal(_G.SanctuaryQ2_all.enabled, true, "question 2 comes back")
-equal(_G.SanctuaryStrictCheck.enabled, true, "and so does the enhanced-instance box")
+equal(_G.SanctuaryStrictCheck.enabled, true, "and the enhanced-instance box never left")
 
 assertModelAtRest()
 -- ---------------------------------------------------------------------------
@@ -7570,12 +7604,56 @@ _G.SanctuaryQ2_all:Click()
 equal(SanctuaryDB.filters.preset, "all", "\"Everything\" writes the preset")
 equal(_G.SanctuaryChoose:IsShown(), false, "and folds the detailed boxes away")
 check(_G.SanctuaryStrictCheck:IsShown(), "the enhanced-instance box stays visible in \"Everything\"")
-_G.SanctuaryStrictCheck:Click()
-equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, true,
-    "it is tickable in the recommended preset too")
-equal(ns.isFilterOn("strictGroupInviteSystemMessages"), true, "and the core applies it")
-_G.SanctuaryStrictCheck:Click()
-equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false, "and untickable again")
+
+-- Decision 167b: ticking the enhanced box warns first, and the warning is what
+-- writes the setting -- a click alone writes nothing, so Annuler and Escape both
+-- leave the box where they found it. Asked in the two modes the box lives in,
+-- and twice over in each, because "at EVERY ticking" is the half a shown-once
+-- flag would quietly break.
+do
+    local keptStrict = SanctuaryDB.filters.strictGroupInviteSystemMessages
+    local keptScope = SanctuaryDB.filters.scope
+    local dialog = StaticPopupDialogs.SANCTUARY_STRICT_CONFIRM
+    check(type(dialog) == "table" and type(dialog.OnAccept) == "function",
+        "the enhanced box asks before it is ticked")
+    check((dialog.text or "") ~= "" and (dialog.button1 or "") ~= ""
+        and (dialog.button2 or "") ~= "",
+        "and the dialog says what is at stake and offers a way out")
+    for _, scope in ipairs({ "strangers", "blockedOnly" }) do
+        local where = "in " .. scope .. ": "
+        SanctuaryDB.filters.scope = scope
+        SanctuaryDB.filters.strictGroupInviteSystemMessages = false
+        ns.refreshUI()
+
+        _G.StaticPopup1.which = nil
+        _G.SanctuaryStrictCheck:Click()
+        equal(_G.StaticPopup1.which, "SANCTUARY_STRICT_CONFIRM", where .. "ticking warns")
+        equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false,
+            where .. "and the click writes nothing on its own")
+        _G.StaticPopup1:Hide()
+        equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false,
+            where .. "so Annuler leaves it unticked")
+
+        _G.StaticPopup1.which = nil
+        _G.SanctuaryStrictCheck:Click()
+        equal(_G.StaticPopup1.which, "SANCTUARY_STRICT_CONFIRM",
+            where .. "the next ticking warns again")
+        dialog.OnAccept()
+        equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, true,
+            where .. "OK is what ticks it")
+        equal(ns.isFilterOn("strictGroupInviteSystemMessages"), true,
+            where .. "and the core applies it")
+
+        _G.StaticPopup1.which = nil
+        _G.SanctuaryStrictCheck:Click()
+        equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false,
+            where .. "unticking writes straight through")
+        equal(_G.StaticPopup1.which, nil, where .. "with nothing to confirm")
+    end
+    SanctuaryDB.filters.scope = keptScope
+    SanctuaryDB.filters.strictGroupInviteSystemMessages = keptStrict
+    ns.refreshUI()
+end
 SanctuaryDB.filters.preset = asFound.questionTwoPreset
 
 assertModelAtRest()
@@ -10498,9 +10576,18 @@ do
     SanctuaryDB.filters.preset = "all"
     ns.refreshUI()
     equal(strict.enabled, true, "in Everything the box is live whatever groupInvite holds")
+    -- Nor in the open mode, decision 167: there is no group-invite box there for
+    -- it to answer to, and it is the one thing left that reaches the invitation
+    -- line of somebody blocked by a pattern.
+    SanctuaryDB.filters.preset = "custom"
+    SanctuaryDB.filters.groupInvite = false
     SanctuaryDB.filters.scope = "blockedOnly"
     ns.refreshUI()
-    equal(strict.enabled, false, "and greyed with the rest when nothing is filtered")
+    equal(strict.enabled, true,
+        "and live in the open mode with the remembered parent unticked")
+    -- Both borrowed values go back where this section found them.
+    SanctuaryDB.filters.preset = "all"
+    SanctuaryDB.filters.groupInvite = true
     SanctuaryDB.filters.scope = keptScope
     ns.refreshUI()
 end

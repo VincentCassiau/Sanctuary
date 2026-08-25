@@ -1478,10 +1478,20 @@ local function buildProtectionTab(parent)
     -- (decision 162e): set on the right of the row it read as a word belonging
     -- to the far edge of the window rather than to the box, and the row had to
     -- reserve room for it at every width.
+    --
+    -- Ticking it warns first, decision 167b, and the warning comes up EVERY
+    -- time: the mode hides ordinary system messages along with the invitations,
+    -- and somebody who ticks it a second time three months later is owed the
+    -- same sentence as the first. Nothing is written here on the way in -- the
+    -- popup's OK is the only writer -- so Annuler leaves the box exactly where
+    -- it was. Unticking asks nothing: giving a warning back is not a risk.
     protection.strict = newCheck(parent, "SanctuaryStrictCheck",
         L["FILTER_STRICT_GROUP_INVITE_SYSTEM"], L["TIP_STRICT_GROUP_INVITE_SYSTEM"],
         function() return filterStored("strictGroupInviteSystemMessages") == true end,
-        function(value) setFilter("strictGroupInviteSystemMessages", value) end)
+        function(value)
+            if value then return StaticPopup_Show("SANCTUARY_STRICT_CONFIRM") end
+            setFilter("strictGroupInviteSystemMessages", false)
+        end)
 
     -- Automatic trust used to live at the bottom of Advanced, three sections
     -- down, with its sentence spelt out underneath. It decides who is allowed --
@@ -1879,8 +1889,11 @@ applyTabWidth.protection = function()
     -- in the refresh below, because a resize runs this pass AFTER the refresh
     -- has drawn -- a width posted in the refresh is a width the next drag
     -- overwrites.
+    -- Indented only where the column it indents into is on screen: in the open
+    -- mode the two columns are gone and the box sits at the margin whatever
+    -- preset is remembered underneath, so the column's width is not its bound.
     local strictRoom = width - (HOME.checkSize + 8)
-    if ns.getPreset() == "custom" then
+    if ns.getScope() ~= "blockedOnly" and ns.getPreset() == "custom" then
         strictRoom = protection.checkLabelWidth - HOME.subIndent
     end
     protection.rowHeight.strict = math.max(HOME.rowHeight,
@@ -1912,9 +1925,12 @@ refreshTab.protection = function()
     -- choose", where that box is on screen, it answers to it -- unticking the
     -- parent greys the child and takes the click away from it, which is the
     -- whole of constat D.1. In "Everything" there is no parent to answer to and
-    -- the preset blocks group invitations by definition.
-    local strictParentOn = (not custom) or filterStored("groupInvite") == true
-    protection.strict:SetEnabledState(not blockedOnly and strictParentOn)
+    -- the preset blocks group invitations by definition. In the open mode there
+    -- is no parent either, and the box is live all the same (decision 167): a
+    -- person blocked by a pattern still spams the invite, and its system line
+    -- in a locked-down instance is the one residue nothing else reaches.
+    local strictParentOn = blockedOnly or (not custom) or filterStored("groupInvite") == true
+    protection.strict:SetEnabledState(strictParentOn)
     -- The widths first, and through the one function that knows them: a screen
     -- laid out against a width it no longer has is the whole of this defect.
     applyTabWidth.protection()
@@ -1994,20 +2010,23 @@ refreshTab.protection = function()
     y = y - protection.rowHeight.q2 - 14
 
     if blockedOnly then
-        -- Everything the question can be acted on with is off screen, the strict
-        -- box included: it is a detail of "Everything", and there is nothing to
-        -- filter in strangers here.
+        -- Every detail of question 2 is off screen: the two columns and the
+        -- block of channels have nothing to filter here.
         protection.choose:Hide()
-        protection.strict:Hide()
-        -- Automatic trust is NOT part of what died: it answers question 1 and it
-        -- is still live. It is set apart under a dotted rule for exactly that
-        -- reason -- left against the extinguished block it read as greyed out
-        -- too, which is constat 162g.
+        -- What is NOT part of what died: the two boxes that answer question 1.
+        -- Automatic trust decides who is allowed, enhanced instance filtering is
+        -- the only answer to a blocked person's invitation line in a locked-down
+        -- instance (decision 167). Both are set apart under a dotted rule for
+        -- that reason -- left against the extinguished block they read as greyed
+        -- out too, which is constat 162g -- and both are drawn in plain white.
         protection.dottedRule:Show()
         place(protection.dottedRule)
-        -- `padding-top: 8px` under the line: the box below is set apart from the
-        -- block above, not pushed away from it.
+        -- `padding-top: 8px` under the line: the boxes below are set apart from
+        -- the block above, not pushed away from it.
         y = y - protection.dottedRule:GetHeight() - 8
+        protection.strict:Show()
+        place(protection.strict)
+        y = y - protection.rowHeight.strict
     elseif custom then
         protection.strict:Show()
         protection.dottedRule:Hide()
@@ -2038,9 +2057,9 @@ refreshTab.protection = function()
     end
     protection.strict:Refresh()
 
-    -- Under the strict box in both live modes, under the dotted rule in the dead
-    -- one: this line stays at the screen's own left margin whatever happens
-    -- above it, because it answers question 1 and not question 2.
+    -- Under the strict box in all three modes: this line stays at the screen's
+    -- own left margin whatever happens above it, because it answers question 1
+    -- and not question 2.
     place(protection.trust)
     protection.trust:Refresh()
     y = y - protection.rowHeight.trust
@@ -3598,6 +3617,22 @@ StaticPopupDialogs["SANCTUARY_CLEAR_LOG"] = {
         -- leave entries nobody can reach still collecting occurrences.
         ns.clearJournal()
         ns.printSuccess(L["LOG_CLEARED"])
+        if ns.refreshUI then ns.refreshUI() end
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- The warning of decision 167b. Same mechanics as the two above: the setting is
+-- written on accept and nowhere else, so a dialog dismissed any other way --
+-- Annuler, Escape, a reload -- leaves the box unticked.
+StaticPopupDialogs["SANCTUARY_STRICT_CONFIRM"] = {
+    text = L["STRICT_CONFIRM"],
+    button1 = L["STRICT_CONFIRM_OK"],
+    button2 = L["STRICT_CONFIRM_CANCEL"],
+    OnAccept = function()
+        if not SanctuaryDB then return end
+        SanctuaryDB.filters.strictGroupInviteSystemMessages = true
+        if ns.refreshInviteSoundMuteState then ns.refreshInviteSoundMuteState() end
         if ns.refreshUI then ns.refreshUI() end
     end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,

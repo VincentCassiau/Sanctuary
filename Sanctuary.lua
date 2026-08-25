@@ -802,15 +802,23 @@ isFilterOn = function(key)
         return mode
     end
 
-    -- "Everyone except the people I block": nothing about strangers is filtered,
-    -- enhanced instance filtering included. Hiding the whole system category for
-    -- someone who asked to filter almost nothing would be a regression.
-    if getScope() == "blockedOnly" then return false end
-
+    -- Enhanced instance filtering is asked BEFORE the mode, because it is the
+    -- one setting that survives "Everyone except the people I block" (decision
+    -- 167): somebody blocked by a pattern can still make the system line of
+    -- their invitation appear while the chat is locked down, and this is the
+    -- only answer there is to it. Where the group-invite box is on screen the
+    -- child still answers to it; in the open mode that box does not exist, so
+    -- the ticked box carries the whole of the decision.
     if key == "strictGroupInviteSystemMessages" then
-        return getEffective("filters.strictGroupInviteSystemMessages") == true
-            and isFilterOn("groupInvite") == true
+        if getEffective("filters.strictGroupInviteSystemMessages") ~= true then return false end
+        if getScope() == "blockedOnly" then return true end
+        return isFilterOn("groupInvite") == true
     end
+
+    -- "Everyone except the people I block": nothing about strangers is filtered.
+    -- Hiding a whole category for someone who asked to filter almost nothing
+    -- would be a regression.
+    if getScope() == "blockedOnly" then return false end
 
     if getPreset() == "all" then
         if PRESET_ALL_ON[key] then return true end
@@ -4026,7 +4034,14 @@ end
 -- without a /reload.
 local function evaluateStrictSecretSuppression()
     if not isEnabled() then return false, "addon_disabled" end
-    if isFilterOn("groupInvite") ~= true then return false, "filter_off" end
+    -- The one guard the open mode changes, decision 167: there is no
+    -- group-invite filter to be off in "Everyone except the people I block", so
+    -- asking for it there would refuse every line and leave the mode with
+    -- nothing to do. Every other refusal below is untouched, and so is the
+    -- opt-in: an unticked box still stops at `strict_off` one line down.
+    if getScope() ~= "blockedOnly" and isFilterOn("groupInvite") ~= true then
+        return false, "filter_off"
+    end
     if isFilterOn("strictGroupInviteSystemMessages") ~= true then return false, "strict_off" end
 
     local context = getRuntimeContext()
