@@ -7192,6 +7192,154 @@ equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false, "and untickabl
 SanctuaryDB.filters.preset = asFound.questionTwoPreset
 
 -- ---------------------------------------------------------------------------
+-- No label of the home screen writes outside the column it was given
+-- ---------------------------------------------------------------------------
+
+-- Measured at 500 px, the narrowest the grip may drag to, and in French, which
+-- is the longer of the two locales on every line of this screen. The numbers
+-- below are the mock-up's own and are checked here rather than assumed: 464 px
+-- of inner width, two columns of 220 with the 24 px gutter between them, so a
+-- box has 194 px of label (18 of box, 8 of gap) and a channel dot 178 (16 more
+-- of indent).
+--
+-- What used to happen: nothing bounded these labels at all, so the left column
+-- wrote over the BOXES of the right one -- worse than running out of the window,
+-- because the words that overlap are both readable and both wrong.
+--
+-- One sweep rather than an assertion per label (convention: a case is tested
+-- once). `GetStringWidth` in this harness counts bytes at 7 px, which
+-- over-estimates the real font: a label that fits here fits in the client.
+do
+    local keptSize, keptPreset = SanctuaryDB.uiSize, SanctuaryDB.filters.preset
+    local keptScope = SanctuaryDB.filters.scope
+    equal(GetLocale(), "frFR", "the sweep runs in the longer of the two locales")
+    SanctuaryDB.filters.scope = "strangers"
+    SanctuaryDB.filters.preset = "custom"
+    SanctuaryDB.uiSize = { 500, 0 }
+    _G["SanctuaryTab_protection"]:Click()
+    ns.refreshUI()
+
+    local choose = _G.SanctuaryChoose
+    equal(choose:GetWidth(), 464, "at 500 px the screen leaves 464 px inside its margins")
+
+    -- Every box and dot of the two columns, plus the two controls that sit at the
+    -- screen's own margin instead of in a column. `room` is what the control's
+    -- own place leaves its label; `holder` is what the right edge is measured
+    -- against.
+    local SWEEP = {
+        { name = "SanctuaryFilter_groupInvite", room = 194, column = 220 },
+        { name = "SanctuaryFilter_whisper",     room = 194, column = 220 },
+        { name = "SanctuaryFilter_say",         room = 194, column = 220 },
+        { name = "SanctuaryFilter_yell",        room = 194, column = 220 },
+        { name = "SanctuaryFilter_emote",       room = 194, column = 220 },
+        { name = "SanctuaryFilter_duel",        room = 194, column = 220 },
+        { name = "SanctuaryFilter_trade",       room = 194, column = 220 },
+        { name = "SanctuaryFilter_guildInvite", room = 194, column = 220 },
+        { name = "SanctuaryChannel_none",       room = 178, column = 204 },
+        { name = "SanctuaryChannel_keywords",   room = 178, column = 204 },
+        { name = "SanctuaryChannel_all",        room = 178, column = 204 },
+        -- Indented under its parent in "I choose": 220 less the 26 px indent.
+        { name = "SanctuaryStrictCheck",        room = 168, column = 194 },
+        -- Never in a column: the whole inner width less its own box and gap.
+        { name = "SanctuaryAutoTrust",          room = 438, column = 464 },
+    }
+    for _, entry in ipairs(SWEEP) do
+        local box = _G[entry.name]
+        local label = box and box.label
+        check(label ~= nil, entry.name .. " is on screen with a label")
+        local width = label:GetWidth() or 0
+        check(width > 0, entry.name .. " has a label width at 500 px")
+        equal(width, entry.room, entry.name .. " is bounded by what its own place leaves it")
+        -- The right edge, read off the anchors the widgets carry: the box, the
+        -- 8 px gap `newCheck` leaves, and the label.
+        check((box:GetWidth() or 0) + 8 + width <= entry.column,
+            entry.name .. " ends inside its column (" ..
+                ((box:GetWidth() or 0) + 8 + width) .. " of " .. entry.column .. ")")
+        -- And it folds rather than cutting: a bounded FontString that wraps is
+        -- the whole point of the bound.
+        check(label.__wordWrap ~= false, entry.name .. " folds rather than truncating")
+    end
+
+    -- Not vacuous. The longest label of the screen really is longer than the
+    -- room it has, at the 5.14 px per character the session measured on the real
+    -- font -- so the sweep above is not green because nothing was ever too long.
+    local guild = _G.SanctuaryFilter_guildInvite
+    equal(utf8.len(guild.label:GetText()), 49,
+        "the guild line is the 49-character sentence it is meant to be")
+    check(utf8.len(guild.label:GetText()) * 5.14 > 194,
+        "which needs more room than its column leaves it ("
+            .. string.format("%.0f", utf8.len(guild.label:GetText()) * 5.14)
+            .. " px for 194)")
+
+    -- The fold is paid for in height: the row of the guild line is taller than
+    -- the mock-up's row, and what comes under it starts below the folded block
+    -- rather than through it.
+    local _, _, _, _, guildY = guild:GetPoint()
+    local _, _, _, _, guildDrop = guild.label:GetPoint()
+    local _, _, _, _, channelsY = _G.SanctuaryChannelsLabel:GetPoint()
+    local guildRow = guildY - channelsY - 6
+    check(guildRow > 24, "the folded guild row is taller than the mock-up's 24 px ("
+        .. guildRow .. ")")
+    local guildBottom = guildY + guildDrop - (guild.label:GetStringHeight() or 0)
+    check(channelsY <= guildBottom,
+        "and the channels label starts under the folded block, not through it ("
+            .. channelsY .. " against " .. guildBottom .. ")")
+
+    -- The child box of the left column, which is the defect the fold CREATES:
+    -- "Enhanced filtering in instances" is indented to exactly where its parent's
+    -- label begins, so a parent folded over two lines lands on top of it unless
+    -- the child hangs from the row rather than from the 18 px box.
+    local group = _G.SanctuaryFilter_groupInvite
+    local _, _, _, _, groupY = group:GetPoint()
+    local _, _, _, _, groupDrop = group.label:GetPoint()
+    local strict = _G.SanctuaryStrictCheck
+    local _, strictRelative, strictPoint, strictX, strictY = strict:GetPoint()
+    equal(strictRelative, group, "the child still hangs from the box it depends on")
+    equal(strictPoint, "BOTTOMLEFT", "on the row under it")
+    equal(strictX, 26, "indented by the sub-row indent of the mock-up")
+    local groupBottom = groupY + groupDrop - (group.label:GetStringHeight() or 0)
+    local strictTop = groupY - (group:GetHeight() or 0) + strictY
+    check(strictTop < groupBottom,
+        "and its top is strictly under the folded label of its parent ("
+            .. strictTop .. " against " .. groupBottom .. ")")
+
+    -- Both halves of the target survive the fold. The hit area is the label's own
+    -- box at both corners, so it follows the block; and the tooltip is the whole
+    -- sentence, which is what makes a folded label readable in full.
+    equal(select(2, guild.labelHit:GetPoint(1)), guild.label,
+        "the folded label is still the second half of its own target")
+    equal(select(2, guild.labelHit:GetPoint(2)), guild.label,
+        "at both corners, so the target is the block and not the first line")
+    rawset(GameTooltip, "__lastText", nil)
+    guild.labelHit:GetScript("OnEnter")(guild.labelHit)
+    equal(tostring(rawget(GameTooltip, "__lastText") or ""), ns.L["TIP_GUILD_INVITE"],
+        "and hovering the words gives the whole sentence")
+    guild.labelHit:GetScript("OnLeave")(guild.labelHit)
+
+    -- The other home of the strict box. In "Everything" it leaves the column and
+    -- sits at the screen's own margin, with the experimental mention on the right
+    -- of its label: the bound has to leave that mention its place, or the two run
+    -- into each other on the one line of the screen that carries two texts.
+    SanctuaryDB.filters.preset = "all"
+    ns.refreshUI()
+    do
+        local wide = _G.SanctuaryStrictCheck
+        local note = _G.SanctuaryStrictNote
+        check(note ~= nil and note:IsShown(), "the experimental mention is on screen in Everything")
+        local room = 464 - 26 - ((note:GetStringWidth() or 0) + 8)
+        equal(wide.label:GetWidth(), room,
+            "at screen level the strict label is bounded by what the mention leaves it")
+        check(26 + (wide.label:GetWidth() or 0) + 8 + (note:GetStringWidth() or 0) <= 464,
+            "so the box, its label and the mention fit the inner width together")
+    end
+
+    SanctuaryDB.uiSize = keptSize
+    SanctuaryDB.filters.preset = keptPreset
+    SanctuaryDB.filters.scope = keptScope
+    ns.refreshUI()
+end
+
+-- ---------------------------------------------------------------------------
 -- Question 3: the anti-spam of the public channels
 -- ---------------------------------------------------------------------------
 
