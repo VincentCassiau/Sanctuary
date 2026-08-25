@@ -1380,14 +1380,15 @@ local function buildProtectionTab(parent)
     -- The enhanced-instance box is a single widget with two homes: under the two
     -- cards in "Everything", indented under "Block group invitations" in "I
     -- choose". Two widgets would mean two states to keep in step.
+    --
+    -- "(experimental)" is part of the label and not a mention beside it
+    -- (decision 162e): set on the right of the row it read as a word belonging
+    -- to the far edge of the window rather than to the box, and the row had to
+    -- reserve room for it at every width.
     protection.strict = newCheck(parent, "SanctuaryStrictCheck",
         L["FILTER_STRICT_GROUP_INVITE_SYSTEM"], L["TIP_STRICT_GROUP_INVITE_SYSTEM"],
         function() return filterStored("strictGroupInviteSystemMessages") == true end,
         function(value) setFilter("strictGroupInviteSystemMessages", value) end)
-    -- Named: it is the one mention that shares a line with a label, so what the
-    -- bound leaves it is a measurement a check has to be able to take.
-    protection.strictNote = newLabel(parent, L["STRICT_EXPERIMENTAL"], FONT_BODY, C.dim,
-        nil, "SanctuaryStrictNote")
 
     -- Automatic trust used to live at the bottom of Advanced, three sections
     -- down, with its sentence spelt out underneath. It decides who is allowed --
@@ -1775,13 +1776,12 @@ applyTabWidth.protection = function()
             + (HOME.rowHeight - HOME.checkSize))
     -- The strict box has two homes and therefore two widths: indented under its
     -- parent in the left column of "I choose", at the screen's own margin in
-    -- "Everything", where it carries the experimental mention on the right of
-    -- its label and has to leave it its place. The mode is asked here rather
-    -- than in the refresh below, because a resize runs this pass AFTER the
-    -- refresh has drawn -- a width posted in the refresh is a width the next
-    -- drag overwrites.
+    -- "Everything", where its label runs the whole column -- nothing shares the
+    -- row with it any more (decision 162e). The mode is asked here rather than
+    -- in the refresh below, because a resize runs this pass AFTER the refresh
+    -- has drawn -- a width posted in the refresh is a width the next drag
+    -- overwrites.
     local strictRoom = width - (HOME.checkSize + 8)
-        - ((protection.strictNote:GetStringWidth() or 0) + 8)
     if ns.getPreset() == "custom" then
         strictRoom = protection.checkLabelWidth - HOME.subIndent
     end
@@ -1903,14 +1903,10 @@ refreshTab.protection = function()
         protection.strict:SetPoint("TOPLEFT", protection.checks.groupInvite,
             "BOTTOMLEFT", HOME.subIndent,
             -((protection.groupInviteRow or HOME.rowHeight) - HOME.checkSize))
-        protection.strictNote:Hide()
         y = y - protection.chooseHeight - 4
     else
         protection.choose:Hide()
         place(protection.strict)
-        protection.strictNote:ClearAllPoints()
-        protection.strictNote:SetPoint("LEFT", protection.strict.label, "RIGHT", 8, 0)
-        protection.strictNote:Show()
         y = y - protection.rowHeight.strict
     end
     protection.strict:Refresh()

@@ -6661,8 +6661,8 @@ do
     local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
         definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
 
-    equal(#englishOrder, 230, "the default locale defines 230 keys")
-    equal(#frenchOrder, 230, "and the French block defines 230")
+    equal(#englishOrder, 229, "the default locale defines 229 keys")
+    equal(#frenchOrder, 229, "and the French block defines 229")
     equal(#englishDupes, 0,
         "no key is defined twice in the default locale ("
             .. table.concat(englishDupes, ", ") .. ")")
@@ -7359,8 +7359,19 @@ do
     equal(frenchLocale.ANTISPAM_COVERED,
         "D\195\169j\195\160 couvert : Vous filtrez tout sur les canaux publics, le spam des inconnus n'y appara\195\174t jamais.",
         "and so is the one under question 3")
-    equal(frenchLocale.STRICT_EXPERIMENTAL, "\226\128\148 exp\195\169rimental",
-        "the experimental mention says the word and nothing more")
+    -- Decision 162e: the mention is part of the label, in brackets, and there is
+    -- no second string beside the box any more. Set on the right of the row it
+    -- read as a word belonging to the edge of the window rather than to the box
+    -- it qualifies.
+    equal(frenchLocale.FILTER_STRICT_GROUP_INVITE_SYSTEM,
+        "Filtrage renforc\195\169 en instance (exp\195\169rimental)",
+        "the label carries the mention itself, in French")
+    equal(defaultLocale.FILTER_STRICT_GROUP_INVITE_SYSTEM,
+        "Enhanced filtering in instances (experimental)",
+        "and says the same thing in the default locale")
+    equal(frenchLocale.STRICT_EXPERIMENTAL, nil,
+        "the mention that used to sit beside it is gone")
+    equal(defaultLocale.STRICT_EXPERIMENTAL, nil, "from both locales")
     SanctuaryDB.filters.scope = keptScope
     ns.refreshUI()
 end
@@ -7659,20 +7670,19 @@ do
     guild.labelHit:GetScript("OnLeave")(guild.labelHit)
 
     -- The other home of the strict box. In "Everything" it leaves the column and
-    -- sits at the screen's own margin, with the experimental mention on the right
-    -- of its label: the bound has to leave that mention its place, or the two run
-    -- into each other on the one line of the screen that carries two texts.
+    -- sits at the screen's own margin, where its label now runs the whole width:
+    -- decision 162e folded "(experimental)" into the label itself, so nothing
+    -- shares that row any more and nothing has to be left room on it.
     SanctuaryDB.filters.preset = "all"
     ns.refreshUI()
     do
         local wide = _G.SanctuaryStrictCheck
-        local note = _G.SanctuaryStrictNote
-        check(note ~= nil and note:IsShown(), "the experimental mention is on screen in Everything")
-        local room = 464 - 26 - ((note:GetStringWidth() or 0) + 8)
-        equal(wide.label:GetWidth(), room,
-            "at screen level the strict label is bounded by what the mention leaves it")
-        check(26 + (wide.label:GetWidth() or 0) + 8 + (note:GetStringWidth() or 0) <= 464,
-            "so the box, its label and the mention fit the inner width together")
+        equal(_G.SanctuaryStrictNote, nil,
+            "no mention is drawn beside the box any more")
+        check((wide.label:GetText() or ""):find("(", 1, true) ~= nil,
+            "the label says it itself, in brackets")
+        equal(wide.label:GetWidth(), 464 - 26,
+            "and is bounded by the inner width alone")
     end
 
     SanctuaryDB.uiSize = keptSize
