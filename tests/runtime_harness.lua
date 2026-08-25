@@ -6103,6 +6103,12 @@ local function newWidget(kind, name, parent, template)
     -- it was rounded, is exactly what "the box is invisible" and "the radio is a
     -- square" are made of.
     function w:SetColorTexture(r, g, b, a) self.__colorTexture = { r, g, b, a or 1 } end
+    -- Recorded too: which file a texture is pointed at, and whether it is being
+    -- cropped, are the two things "the minimap shows the wrong picture" is made
+    -- of, and neither leaves any other trace.
+    function w:SetTexture(path) self.__texture = path end
+    function w:GetTexture() return self.__texture end
+    function w:SetTexCoord(...) self.__texCoord = { ... } end
     function w:EnableMouse(value) self.__mouseEnabled = value and true or false end
     -- Kept as four numbers rather than a table: a colour is read back one
     -- component at a time, and "is this line green" is a check the panel's
@@ -8128,6 +8134,63 @@ ns.InitializeUI()
 local minimapButton = _G.SanctuaryMinimapButton
 check(minimapButton ~= nil, "the minimap button is created at login")
 equal(minimapButton:IsShown(), true, "and shown while the setting allows it")
+
+-- Decisions 147 and 149: the button wears the lantern, not `inv_shield_06`.
+--
+-- And the file it points at has to be one the client can actually load, which is
+-- the part nothing here could see before. The artwork the mission folder carries
+-- is a PNG -- a format WoW does not read from an add-on folder -- and every one
+-- of its pixels is opaque, so shipping it as it stood would have put a white
+-- square inside the tracking ring. What is checked is the shipped file itself:
+-- an uncompressed 32-bit TGA, a power of two on both sides, with real
+-- transparency in it.
+do
+    local icon = minimapButton.icon
+    check(icon ~= nil, "the button has an icon")
+    equal(icon:GetTexture(), "Interface\\AddOns\\Sanctuary\\media\\lanterne",
+        "pointed at the add-on's own lantern")
+    check(tostring(icon:GetTexture()):find("Icons", 1, true) == nil,
+        "and not at a Blizzard icon any more")
+    equal(icon.__texCoord, nil,
+        "drawn whole: the crop was there to cut a Blizzard icon's border")
+    -- No extension in the path: the client resolves .blp or .tga itself, and a
+    -- texture is data -- nothing about it belongs in the .toc, which lists only
+    -- Lua and XML.
+    check(tostring(icon:GetTexture()):find("%.%a+$") == nil,
+        "with no extension spelt out in the path")
+
+    local handle = io.open(repoRoot .. "/media/lanterne.tga", "rb")
+    check(handle ~= nil, "the file is in the add-on folder, beside the code")
+    if handle then
+        local header = handle:read(18)
+        equal(#header, 18, "and it has a TGA header")
+        equal(header:byte(2), 0, "no colour map")
+        -- Type 2 is uncompressed true-colour. Type 10 is the RLE variant, which
+        -- is what every convert-to-TGA tool writes by default and what the
+        -- client does not read.
+        equal(header:byte(3), 2, "uncompressed true-colour, not the RLE variant")
+        local width = header:byte(13) + header:byte(14) * 256
+        local height = header:byte(15) + header:byte(16) * 256
+        equal(width, 64, "64 px wide")
+        equal(height, 64, "and 64 tall -- a power of two on both sides")
+        equal(header:byte(17), 32, "32 bits a pixel, so there is room for an alpha")
+        equal(header:byte(18) % 16, 8, "and eight of them are the alpha")
+        -- Really transparent, and really drawn: a file that is all background is
+        -- an empty button, and one that is all artwork is the white square.
+        local body = handle:read("a")
+        handle:close()
+        equal(#body, width * height * 4, "the pixels are all there")
+        local clear, opaque = 0, 0
+        for at = 4, #body, 4 do
+            local alpha = body:byte(at)
+            if alpha == 0 then clear = clear + 1
+            elseif alpha > 200 then opaque = opaque + 1 end
+        end
+        check(clear > width * height / 4,
+            "most of the square is see-through (" .. clear .. " px)")
+        check(opaque > 200, "and there is a lantern drawn in it (" .. opaque .. " px)")
+    end
+end
 
 -- The position-to-angle conversion is pure, so it is proved without a mouse.
 equal(math.floor(ns.minimapAngleFromPosition(0, 0, 10, 0) + 0.5), 0, "due east is 0 degrees")
