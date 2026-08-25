@@ -7426,7 +7426,16 @@ do
             equal(trust:IsShown(), true,
                 "remembering " .. preset .. ": automatic trust stays on screen")
             equal(trust.enabled, false, "greyed with the block it belongs to")
-            equal(trust:GetAlpha(), 0.8, "and dimmed with it, not left in plain white")
+            -- Drawn like the cards, and measured against them rather than
+            -- against a number of its own: a witness of the same dead block is
+            -- the same witness. What was on screen was the generic greyed
+            -- control -- one notch of dimming, the accent blue kept on the tick
+            -- -- so a ticked box was the brightest thing in the section that had
+            -- gone out.
+            equal(trust:GetAlpha(), _G.SanctuaryQ2_all:GetAlpha(),
+                "and dimmed with them, not one notch as an ordinary greyed box")
+            check(sameColor(trust.mark.__colorTexture, _G.SanctuaryQ2_all.mark.__colorTexture),
+                "its remembered tick in their grey, not in the accent")
             equal(trust:GetChecked(), SanctuaryDB.filters.autoTrust == true,
                 "still showing the answer that is remembered underneath")
             local _, _, _, trustX, trustY = trust:GetPoint()

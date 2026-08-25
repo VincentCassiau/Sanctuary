@@ -436,25 +436,40 @@ local function newCheck(parent, name, text, tooltip, get, set)
 
     frame.get, frame.set = get, set
     frame.enabled = true
+    frame.witness = false
 
     function frame:Refresh()
         local on = self.get and self.get() and true or false
         self:SetChecked(on)
         if self.mark then
             if on then self.mark:Show() else self.mark:Hide() end
+            -- A witness keeps the tick it remembers, drawn in the grey of the
+            -- block it went out with. The accent blue is the brightest colour
+            -- of the screen: left on, a ticked box was the most visible thing
+            -- in the one section that is meant to have gone out.
+            self.mark:SetColorTexture(unpack(self.witness and C.disabled or C.checkOn))
         end
         self.label:SetTextColor(unpack(self.enabled and C.soft or C.disabled))
         applyBackdrop(self, C.checkBg, self.enabled and C.border or C.disabled)
         -- Rule 4: greyed dims as well as greys. The label is a child of the
         -- SCREEN rather than of the box, so it has to be told separately or half
         -- the control fades and the other half does not.
-        local alpha = self.enabled and 1 or DISABLED_ALPHA
+        local alpha = self.enabled and 1
+            or (self.witness and WITNESS_ALPHA or DISABLED_ALPHA)
         self:SetAlpha(alpha)
         self.label:SetAlpha(alpha)
     end
 
-    function frame:SetEnabledState(enabled)
+    -- Two kinds of greying, and they are not drawn alike. `asWitness` is the one
+    -- decision 163 (option A) and decision 170a describe: the QUESTION this box
+    -- answers has gone dead, so the box joins the cards of that block --
+    -- WITNESS_ALPHA, the remembered mark in grey, nothing on hover. Without it,
+    -- a box is greyed the ordinary way -- the box it hangs from is unticked --
+    -- and stays a control somebody is being asked to read: DISABLED_ALPHA, its
+    -- own mark, and its sentence still there under the pointer.
+    function frame:SetEnabledState(enabled, asWitness)
         self.enabled = enabled and true or false
+        self.witness = (not self.enabled) and asWitness and true or false
         self:Refresh()
     end
 
@@ -2027,13 +2042,14 @@ refreshTab.protection = function()
     -- Automatic trust goes the other way (decision 170a). It writes into
     -- "Always allowed", and an allowance buys nothing back in a mode that
     -- filters nobody for being a stranger -- so in the open mode the box is a
-    -- witness like the two cards above it: greyed, no click, no hover, still
-    -- showing what is remembered. `isFilterOn` says the same thing on the core
-    -- side, and the two cannot disagree: neither reads the other's answer, but
-    -- both are the one decision written twice on purpose -- the screen has to
-    -- draw it before anything happens, the core has to apply it whether the
-    -- screen was ever opened or not.
-    protection.trust:SetEnabledState(not blockedOnly)
+    -- witness like the two cards above it, and drawn as one: the second
+    -- argument is what says so. Greyed, no click, no hover, still showing what
+    -- is remembered. `isFilterOn` says the same thing on the core side, and the
+    -- two cannot disagree: neither reads the other's answer, but both are the
+    -- one decision written twice on purpose -- the screen has to draw it before
+    -- anything happens, the core has to apply it whether the screen was ever
+    -- opened or not.
+    protection.trust:SetEnabledState(not blockedOnly, true)
     -- The widths first, and through the one function that knows them: a screen
     -- laid out against a width it no longer has is the whole of this defect.
     applyTabWidth.protection()
