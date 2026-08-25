@@ -173,6 +173,10 @@ L["BNET_NOT_BLOCKED_HOW"] = "Do it directly on Battle.net."
 -- who has just been harassed does not need to be told off.
 L["REFUSED_NAME"] = "A name is written Name or Name-Realm"
 L["REFUSED_PATTERN"] = "A pattern is text: letters only"
+-- And what a field says when the entry went in, decision 167c. Same line, same
+-- six seconds, green instead of orange. The name is repeated because it is the
+-- one the chip will carry, realm and all.
+L["ADDED_OK"] = "Added: %s."
 L["PANEL_BLOCKED_NAMES"] = "Names"
 L["PANEL_BLOCKED_PATTERNS"] = "Patterns"
 L["PANEL_PATTERNS_DESC"] = "A pattern is a piece of text: any name containing it is blocked, even a friend's."
@@ -450,6 +454,7 @@ L["BNET_NOT_BLOCKED"] = "Sanctuary ne bloque pas les amis Battle.net."
 L["BNET_NOT_BLOCKED_HOW"] = "Faites-le directement sur Battle.net."
 L["REFUSED_NAME"] = "Un pseudo s'\195\169crit Pseudo ou Pseudo-Royaume"
 L["REFUSED_PATTERN"] = "Un pattern est un texte : des lettres seulement"
+L["ADDED_OK"] = "Ajout\195\169 : %s."
 L["PANEL_BLOCKED_NAMES"] = "Pseudos"
 L["PANEL_BLOCKED_PATTERNS"] = "Patterns"
 L["PANEL_PATTERNS_DESC"] = "Un pattern est un texte : tout pseudo qui le contient est bloqu\195\169, m\195\170me s'il est ami."

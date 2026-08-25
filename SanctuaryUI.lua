@@ -244,23 +244,24 @@ local NOTE_GAP = 4
 -- 14 px of line.
 local NOTE_LINE = 15
 -- Room kept under an add field for its sentence, showing or not, so nothing on
--- screen moves when one appears. Two lines: the blocked names field is the one
--- that can answer with the Battle.net sentence, which takes two at the note
--- width in both languages, and the three fields keep the same room so their
--- labels sit at the same distance. The harness measures the six strings against
--- this value.
-local NOTE_ROOM_TWO_LINES = NOTE_GAP + 2 * NOTE_LINE
+-- screen moves when one appears. ONE line, decision 167c: the labels start just
+-- under the field they belong to, which is what two lines of reserved emptiness
+-- were pushing them away from (constat 164.3). The one sentence that takes two
+-- lines is the Battle.net refusal on the blocked names field; it pushes the
+-- labels down for its six seconds and they come back, which is the trade
+-- decision 167c makes. The harness measures the sentences against this value.
+local NOTE_ROOM_ONE_LINE = NOTE_GAP + NOTE_LINE
 -- The one rule the three add fields share, and the whole of constat D.4: a field
 -- row, then the room its refusal sentence needs, then the labels it feeds --
 -- always below the field, always the same distance from it. Allowed used to draw
 -- its labels ABOVE the field, blocked names put them at the bottom of the
 -- section, and patterns left a wider gap than either: three fields, three
--- answers to the same question. The two-line room is taken everywhere, not only
--- where the Battle.net sentence can appear, because "the same spacing" is what
--- was asked for and a field whose labels sit fifteen pixels higher than its
--- neighbour's is the difference that was noticed in the first place.
+-- answers to the same question. The one-line room is taken everywhere, not only
+-- where a sentence can appear, because "the same spacing" is what was asked for
+-- and a field whose labels sit fifteen pixels higher than its neighbour's is the
+-- difference that was noticed in the first place.
 local LIST_INPUT_ROW = 34
-local LIST_LABELS_GAP = LIST_INPUT_ROW + NOTE_ROOM_TWO_LINES
+local LIST_LABELS_GAP = LIST_INPUT_ROW + NOTE_ROOM_ONE_LINE
 local LIST_REFRESH_SECONDS = 10
 
 local function applyBackdrop(frame, bg, border, edgeSize)
@@ -675,12 +676,16 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
     box.hint:SetWidth((width or 220) - 14)
     box.hint:SetWordWrap(false)
 
-    -- The line that says why an entry was refused. It starts at the box's left
-    -- edge, so there is never a doubt which of the three fields is being
-    -- answered, but it runs the panel's width rather than the box's: the box is
-    -- 250 px and the sentences are up to 82 characters. The panels keep its room
-    -- reserved whether it is showing or not -- a sentence that appears must not
-    -- shove the list under it downwards, nor lie over it.
+    -- The line that answers the field. It starts at the box's left edge, so
+    -- there is never a doubt which of the three fields is being answered, but it
+    -- runs the panel's width rather than the box's: the box is 250 px and the
+    -- sentences are up to 82 characters. The panels keep its room reserved
+    -- whether it is showing or not -- a sentence that appears must not shove the
+    -- list under it downwards, nor lie over it.
+    --
+    -- One line, two answers, decision 167c: orange when the entry was refused,
+    -- green when it went in. Same place, same six seconds, so a person watches
+    -- one spot rather than hunting for where the add-on replied.
     box.note = newLabel(box, "", FONT_BODY, C.orange)
     box.note:SetPoint("TOPLEFT", box, "BOTTOMLEFT", 0, -NOTE_GAP)
     box.note:Hide()
@@ -710,18 +715,26 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
     end
 
     -- The generation token the undo strip uses, and for the same reason: two
-    -- refusals a second apart leave two timers running, and the older one must
+    -- answers a second apart leave two timers running, and the older one must
     -- not wipe the sentence the newer one has just put up. Same six seconds as
     -- the undo strip, from the same constant -- one duration on this screen.
-    function box:SayNo(text)
+    --
+    -- The colour is set on every answer and never assumed: the label is one
+    -- FontString reused by both, so a green line followed by a refusal would
+    -- otherwise say no in the colour of yes.
+    function box:Say(text, color)
         local mine = {}
         self.noteToken = mine
+        self.note:SetTextColor(unpack(color))
         self.note:SetText(text)
         self.note:Show()
         C_Timer.After(UNDO_SECONDS, function()
             if self.noteToken == mine then self:ClearNote() end
         end)
     end
+
+    function box:SayNo(text) self:Say(text, C.orange) end
+    function box:SayYes(text) self:Say(text, C.green) end
 
     -- An opt-in cross inside the field, for the one box that carries a question
     -- rather than an entry: the tester. It is a read of the lists, so emptying
@@ -3066,9 +3079,24 @@ local function submitEntry(box, addFn)
     local text = box:GetText()
     box:SetText("")
     box:RefreshHint()
-    local ok, key, _, refusal, displaced = addFn(text)
+    local ok, key, data, refusal, displaced = addFn(text)
     local sentence = refusal and REFUSAL_TEXT[refusal]
-    if sentence then box:SayNo(sentence()) else box:ClearNote() end
+    if sentence then
+        box:SayNo(sentence())
+    elseif ok then
+        -- Decision 167c: the field says yes as well as no. The name it repeats
+        -- is the one the chip will carry -- `qualifiedDisplayName`, the same
+        -- reading the panels use -- so "Kadaj" typed and "Kadaj-Ysondre" listed
+        -- is not a person wondering whether they added the right character. A
+        -- pattern has no realm to add and comes back through it untouched.
+        box:SayYes(string.format(L["ADDED_OK"],
+            ns.qualifiedDisplayName(key, type(data) == "table" and data.displayName or nil)
+                or tostring(key)))
+    else
+        -- Refused with no sentence of its own -- an empty field, a duplicate --
+        -- and the last answer goes rather than standing over a new gesture.
+        box:ClearNote()
+    end
     if ok then offerDisplacedUndo(key, displaced) end
     if ok and ns.refreshUI then ns.refreshUI() end
 end

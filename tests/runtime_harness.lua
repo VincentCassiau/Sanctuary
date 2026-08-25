@@ -6682,8 +6682,8 @@ do
     local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
         definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
 
-    equal(#englishOrder, 232, "the default locale defines 232 keys")
-    equal(#frenchOrder, 232, "and the French block defines 232")
+    equal(#englishOrder, 233, "the default locale defines 233 keys")
+    equal(#frenchOrder, 233, "and the French block defines 233")
     equal(#englishDupes, 0,
         "no key is defined twice in the default locale ("
             .. table.concat(englishDupes, ", ") .. ")")
@@ -8494,7 +8494,8 @@ check(undo.label:GetText():find("Bothways-TestRealm", 1, true) ~= nil,
     "naming it, realm and all, like the two panels it moved between")
 check(undo.label:GetText():find(ns.L["TILE_ALLOWED"], 1, true) ~= nil,
     "and the list it came out of")
-equal(nameBox.note:IsShown(), false, "and nothing was refused")
+equal(nameBox.note:GetText(), string.format(ns.L["ADDED_OK"], "Bothways-TestRealm"),
+    "and the field says the name went in, realm and all")
 
 undo.button:Click()
 equal(SanctuaryDB.blockedNames[blockedKey], nil, "Annuler takes the new entry back out")
@@ -8684,15 +8685,24 @@ equal(nameBox.note:GetText(),
 queued[2]()
 equal(nameBox.note:GetText(), "", "and its own timer is what clears it")
 
--- An entry that goes in says nothing at all, and clears whatever was there.
+-- An entry that goes in answers on the same line, in green, over whatever
+-- refusal was standing there (decision 167c). The colour is asserted because one
+-- FontString carries both answers: a green line followed by a refusal, or the
+-- other way round, would otherwise be said in the colour of the previous one.
 nameBox:SetText("-")
 panel.nameBtn:Click()
 check(nameBox.note:IsShown(), "a refusal is showing")
+equal(nameBox.note.__colorR, 1.000, "in the orange of a refusal")
 nameBox:SetText("Acceptedname")
 panel.nameBtn:Click()
-equal(nameBox.note:GetText(), "", "an accepted entry says nothing")
-equal(nameBox.note:IsShown(), false, "and takes the refusal off the screen")
+equal(nameBox.note:GetText(), string.format(ns.L["ADDED_OK"], "Acceptedname-TestRealm"),
+    "an accepted entry says so, on the line the refusal was on")
+equal(nameBox.note:IsShown(), true, "which is what replaces the refusal on screen")
+equal(nameBox.note.__colorG, 0.902, "and it is said in green")
 equal(ns.getListCounts().blocked.names, beforeNames + 1, "having written the name")
+-- And it goes the same way a refusal does, after the same six seconds.
+runTimers(3)
+equal(nameBox.note:IsShown(), false, "the green line goes on its own too")
 
 -- Closing the window drops the sentence with the text it was about.
 nameBox:SetText("-")
@@ -8714,26 +8724,33 @@ equal(allowedBox.note:GetWidth(), 500, "the allowed field answers at the panel's
 equal(nameBox.note:GetWidth(), 500, "the blocked names field answers at the panel's width")
 equal(patternBox.note:GetWidth(), 500, "and the pattern field too")
 
--- ... and the six strings measured against it, because the strings are what
+-- ... and the sentences measured against it, because the sentences are what
 -- changes. 6.5 px is a majorant for one character of FONT_BODY in a latin face;
--- characters are counted, not bytes, French being stored as escaped UTF-8. Each
--- field reserves the lines its own worst case needs: one under the two name
--- fields and the pattern field, two under the blocked names, the only field the
--- Battle.net sentence can answer in. This check is what fails the day one of the
--- six sentences grows past the room its field keeps.
+-- characters are counted, not bytes, French being stored as escaped UTF-8.
+-- Decision 167c cut the reserved room to ONE line under all three fields, so the
+-- labels start just under the field they belong to: every answer but one has to
+-- fit that line, and this check is what fails the day one of them grows past it.
 local NOTE_PIXELS, NOTE_CHAR_PX = 500, 6.5
 local function noteLines(text)
     local characters = select(2, text:gsub("[^\128-\191]", ""))
     return math.ceil(characters * NOTE_CHAR_PX / NOTE_PIXELS)
 end
+-- The longest name the green answer can be handed: a 12-character pseudo, which
+-- is WoW's own ceiling, on a realm of twice that.
+local LONGEST_ENTRY = string.rep("W", 12) .. "-" .. string.rep("W", 24)
 for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) do
     local localeName, strings = entry[1], entry[2]
     check(noteLines(strings["REFUSED_NAME"]) <= 1,
         "REFUSED_NAME fits the one line the name fields keep (" .. localeName .. ")")
     check(noteLines(strings["REFUSED_PATTERN"]) <= 1,
         "REFUSED_PATTERN fits the one line the pattern field keeps (" .. localeName .. ")")
-    check(noteLines(strings["BNET_NOT_BLOCKED"]) <= 2,
-        "BNET_NOT_BLOCKED fits the two lines the blocked names field keeps ("
+    check(noteLines(string.format(strings["ADDED_OK"], LONGEST_ENTRY)) <= 1,
+        "ADDED_OK fits it too, with the longest name it can name (" .. localeName .. ")")
+    -- The one exception, and it is deliberate: the Battle.net refusal takes two
+    -- lines in French and pushes the labels down for its six seconds. Held to
+    -- two so it never quietly becomes three.
+    check(noteLines(strings["BNET_NOT_BLOCKED"] .. " " .. strings["BNET_NOT_BLOCKED_HOW"]) <= 2,
+        "the Battle.net refusal pushes the labels by one line and no more ("
         .. localeName .. ")")
 end
 
@@ -10644,6 +10661,11 @@ do
     if allowedChip and nameChip and patternChip then
         check(allowedChip < allowedInput,
             "the allowed labels are UNDER their field now, not above it")
+        -- 34 px of field row, then ONE line of answer room: decision 167c cut
+        -- the reserve from two lines to one so the labels start just under the
+        -- field instead of a line and a half below it (constat 164.3).
+        equal(allowedInput - allowedChip, 34 + 4 + 15,
+            "one line of answer room under the field, not two")
         equal(allowedInput - allowedChip, nameInput - nameChip,
             "at exactly the distance the blocked names keep")
         equal(nameInput - nameChip, patternInput - patternChip,
