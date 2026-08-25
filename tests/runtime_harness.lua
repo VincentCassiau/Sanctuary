@@ -9755,6 +9755,11 @@ equal(SanctuaryDB.uiSize, nil, "twice over, and still nothing written")
 -- move once the mouse has travelled, so the pair is counted on the RELEASE, and
 -- a release that ends a move is neither half of a pair nor the start of one.
 do
+    -- Both memories of the window are parked here and given back at the end of
+    -- the block: this one writes a POSITION on every drag it plays, and the
+    -- position is persisted exactly like the size.
+    asFound.titleBarPosition = SanctuaryDB.uiPosition
+    asFound.titleBarSize = SanctuaryDB.uiSize
     local titleBar = _G.SanctuaryTitleBar
     check(titleBar ~= nil, "the title bar is a frame of its own")
     local titleDown = titleBar:GetScript("OnMouseDown")
@@ -9894,6 +9899,9 @@ do
     equal(mainFrame:GetHeight(), movedSize[2], "and the height")
     equal(SanctuaryDB.uiSize, nil, "and never writes a manual size")
     check(SanctuaryDB.uiPosition ~= nil, "what it records is where the window is")
+
+    SanctuaryDB.uiPosition = asFound.titleBarPosition
+    SanctuaryDB.uiSize = asFound.titleBarSize
 end
 
 -- And the fitted mode is really back: the height follows the screen again, and
