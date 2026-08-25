@@ -355,6 +355,12 @@ local function newCheck(parent, name, text, tooltip, get, set)
         end
         self.label:SetTextColor(unpack(self.enabled and C.soft or C.disabled))
         applyBackdrop(self, C.checkBg, self.enabled and C.border or C.disabled)
+        -- Rule 4: greyed dims as well as greys. The label is a child of the
+        -- SCREEN rather than of the box, so it has to be told separately or half
+        -- the control fades and the other half does not.
+        local alpha = self.enabled and 1 or DISABLED_ALPHA
+        self:SetAlpha(alpha)
+        self.label:SetAlpha(alpha)
     end
 
     function frame:SetEnabledState(enabled)
@@ -405,6 +411,9 @@ local function newRadio(parent, name, text, tooltip, isOn, select)
             self.rim:SetColorTexture(unpack(rim))
         end
         self.label:SetTextColor(unpack(self.enabled and C.soft or C.disabled))
+        local alpha = self.enabled and 1 or DISABLED_ALPHA
+        self:SetAlpha(alpha)
+        self.label:SetAlpha(alpha)
     end
 
     function frame:SetEnabledState(enabled)
@@ -772,8 +781,10 @@ local function newDropdown(parent, name, width, rows, get, set)
         self.value:SetText(text)
         self.value:SetTextColor(unpack(self.enabled and C.ink or C.disabled))
         self.caret:SetCaretColor(self.enabled and C.dim or C.disabled)
-        self.caret:SetAlpha(self.enabled and 1 or DISABLED_ALPHA)
         applyBackdrop(self, C.input, self.enabled and C.border or C.disabled)
+        -- Rule 4. On the field itself, which carries the arrow with it -- the
+        -- caret is a child, so dimming both would dim it twice.
+        self:SetAlpha(self.enabled and 1 or DISABLED_ALPHA)
     end
 
     function field:SetEnabledState(enabled)

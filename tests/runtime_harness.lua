@@ -6773,6 +6773,18 @@ do
         "and says why it is greyed once the channels are all filtered")
     equal(_G.SanctuaryQ3_yes.enabled, false, "with the cards greyed beside it")
     equal(_G.SanctuaryQ3_yes:GetAlpha(), 0.8, "and dimmed, not only greyed")
+    equal(_G.SanctuaryAntiSpamInterval:GetAlpha(), 0.8, "the field beside them too")
+    -- Every kind of control answers rule 4 the same way, label included: a box
+    -- whose square fades while the words beside it stay bright is half a state.
+    _G.SanctuaryFilter_duel:SetEnabledState(false)
+    equal(_G.SanctuaryFilter_duel:GetAlpha(), 0.8, "a greyed box dims")
+    equal(_G.SanctuaryFilter_duel.label:GetAlpha(), 0.8, "and so do the words beside it")
+    _G.SanctuaryFilter_duel:SetEnabledState(true)
+    equal(_G.SanctuaryFilter_duel:GetAlpha(), 1, "and both come back")
+    equal(_G.SanctuaryFilter_duel.label:GetAlpha(), 1, "together")
+    _G.SanctuaryChannel_all:SetEnabledState(false)
+    equal(_G.SanctuaryChannel_all:GetAlpha(), 0.8, "a greyed dot dims as well")
+    _G.SanctuaryChannel_all:SetEnabledState(true)
     SanctuaryDB.filters.channelMode = "none"
     ns.refreshUI()
 end
