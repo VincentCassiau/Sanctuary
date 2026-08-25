@@ -696,6 +696,7 @@ local function canonicalState()
 end
 local stateAtRest = canonicalState()
 
+
 -- Where a section parks the shared flag it is about to flip, so what it hands
 -- back is the value it FOUND and not a default it assumes. Keyed by a name of
 -- the section's own, because two sections that park the same flag must not
@@ -2375,6 +2376,10 @@ check(chatFilters.CHAT_MSG_BN_WHISPER ~= nil, "registration retry keeps the regi
 SanctuaryDB.filters.autoTrust = asFound.secretTrust
 SanctuaryDB.debugEnabled = asFound.secretDebug
 wipe(SanctuaryDB.manualWhitelist)
+-- The tracker is a saved table like any other: the group this section put in it
+-- is gone from the simulation, so it goes out of the tracker here rather than
+-- surviving until the wipe some fifteen hundred lines below.
+wipe(SanctuaryCharDB.groupTracker)
 ns.invalidateWhitelist()
 
 -- ---------------------------------------------------------------------------
@@ -2663,6 +2668,7 @@ ns.captureDebugSnapshot("export")
 snapshot = lastDebug("SNAPSHOT")
 equal(snapshot and snapshot.data.debugEnabled, true, "the export snapshot records debug mode when it is on")
 ns.resetDebugLog()
+SanctuaryDB.debugEnabled = asFound.exportSnapshotDebug
 
 
 -- The main chunk is at Lua's 200-local ceiling, so everything added below runs
@@ -2677,6 +2683,7 @@ ns.resetDebugLog()
 -- The panel is a rendering of this table. Checking the table is what makes the
 -- panel checkable without a game client, and it is what a checklist step now
 -- reduces to.
+asFound.catalogueDebug = SanctuaryDB.debugEnabled
 SanctuaryDB.debugEnabled = true
 ns.resetDebugLog()
 
@@ -2799,6 +2806,7 @@ equal(StaticPopup1:IsShown(), true, "and the pending request is still there")
 equal(StaticPopup1.which, "PARTY_INVITE", "untouched, on its own slot")
 StaticPopup1:Hide()
 runTimers()
+SanctuaryDB.debugEnabled = asFound.catalogueDebug
 
 -- ===========================================================================
 -- SECTION: Whitelist readback
@@ -2918,6 +2926,11 @@ ns.invalidateWhitelist()
 -- SECTION: Report markers, manifest and in-game summary
 -- ===========================================================================
 
+-- This section reads what a recording says about itself, so it arms recording
+-- itself rather than borrowing the mode the section above happened to leave on.
+asFound.reportMarkersDebug = SanctuaryDB.debugEnabled
+SanctuaryDB.debugEnabled = true
+
 -- The five things the closing step used to look for by scrolling the exported
 -- text by hand.
 local emptyMarkers = ns.getReportMarkers({})
@@ -3036,7 +3049,7 @@ check(#summary < 2000,
     "the summary stays short enough to read on screen (" .. #summary .. " chars)")
 check(#ns.buildDebugReportText() > #summary,
     "the full report is still available and is the larger of the two")
-SanctuaryDB.debugEnabled = asFound.exportSnapshotDebug
+SanctuaryDB.debugEnabled = asFound.reportMarkersDebug
 
 -- ---------------------------------------------------------------------------
 -- The summary tested on its values, not on its shape
@@ -3173,6 +3186,7 @@ equal(SanctuaryDB.reportManifest and SanctuaryDB.reportManifest.trigger, "summar
 equal(ns.escapeExportText("a|Kb|kc"), "a||Kb||kc", "the summary escapes what the widget would render")
 
 ns.resetDebugLog()
+SanctuaryDB.debugEnabled = asFound.summaryDebug
 
 
 -- ===========================================================================
@@ -3182,6 +3196,15 @@ ns.resetDebugLog()
 -- One phrase: always blocked, else always allowed, else unknown -- and only the
 -- third tier depends on a setting. Everything below proves that phrase, on the
 -- paths that carry it.
+
+-- Eleven of the checks between here and C14 read the debug entry a decision
+-- wrote, so they need recording on. They used to get it from a section far
+-- above that switched recording on and never switched it back; recording is
+-- armed here instead, and given back before the migration enclave, whose first
+-- boundary is where this stretch hands over. Every block after that enclave
+-- arms and disarms recording for itself.
+asFound.decisionModelDebug = SanctuaryDB.debugEnabled
+SanctuaryDB.debugEnabled = true
 
 -- A fresh load opens the section below.
 --
@@ -3753,6 +3776,7 @@ end
 -- and what it writes is the group member, not whoever shares his pseudo at home.
 resetModelState()
 do
+    local kept = SanctuaryDB.filters.autoTrust
     SanctuaryDB.filters.autoTrust = true
     wipe(SanctuaryCharDB.groupTracker)
     inGroup = true
@@ -3774,6 +3798,7 @@ do
     wipe(SanctuaryCharDB.groupTracker)
     ns.removeAllowed("trustaj-hyjal")
     ns.invalidateWhitelist()
+    SanctuaryDB.filters.autoTrust = kept
 end
 
 -- What the panels and the tester put on screen. The realm is in the key, so it
@@ -4569,6 +4594,10 @@ StaticPopup_Show("PARTY_INVITE", "Pest")
 fire("PARTY_INVITE_REQUEST", "Pest")
 equal(StaticPopup1:GetAlpha(), 0, "a blocked invitation is masked")
 chatMessages = {}
+-- `setEnabled(true)` further down writes the override, it does not clear it, so
+-- the key this section found absent would stay present -- the same "on" said a
+-- different way, and a difference the boundary reads as a leak.
+asFound.protectionToggleOverride = SanctuaryCharDB.overrides.enabled
 ns.setEnabled(false)
 equal(ns.isEnabled(), false, "setEnabled writes the override")
 equal(StaticPopup1:GetAlpha(), 1, "and unmasks what was hidden")
@@ -4581,6 +4610,7 @@ StaticPopup1.inviteAccepted = true
 StaticPopup1:Hide()
 StaticPopup1.inviteAccepted = nil
 runTimers(3)
+SanctuaryCharDB.overrides.enabled = asFound.protectionToggleOverride
 
 -- C14 -- the summary only speaks when something new was blocked.
 resetModelState()
@@ -4602,6 +4632,7 @@ now = now + 1000
 runTickers()
 equal(#chatMessages, 1, "and one more block produces one again")
 SanctuaryDB.notifications.mode = asFound.summaryMode
+SanctuaryDB.debugEnabled = asFound.decisionModelDebug
 
 -- C15 -- the schema reset.
 asFound.schemaResetScope = SanctuaryDB.filters.scope
@@ -5776,7 +5807,6 @@ equal(ns.addBlocked("toto-éonar"), true, "the name is blocked on its accented r
 equal(ns.classifyName("Toto-Eonar").verdict, "unknown",
     "and the same pseudo on another realm walks free")
 resetModelState()
-SanctuaryDB.debugEnabled = asFound.summaryDebug
 
 -- ---------------------------------------------------------------------------
 -- Whispering yourself
@@ -6117,6 +6147,7 @@ ChatFrame2 = nil
 ChatFrame3 = nil
 resetModelState()
 SanctuaryDB.filters.preset = "custom"
+SanctuaryDB.debugEnabled = asFound.selfWhisperDebug
 
 -- ===========================================================================
 -- SECTION UI: the interface file, under a widget mock
@@ -6398,7 +6429,6 @@ end
 assert(loadfile(repoRoot .. "/SanctuaryUI.lua"))("Sanctuary", ns)
 check(type(ns.ToggleUI) == "function", "the interface file exports its toggle")
 check(coreCreateFrame ~= nil, "the core CreateFrame mock stays reachable")
-SanctuaryDB.debugEnabled = asFound.selfWhisperDebug
 
 -- ---------------------------------------------------------------------------
 -- Every localized key the two Lua files ask for actually exists
