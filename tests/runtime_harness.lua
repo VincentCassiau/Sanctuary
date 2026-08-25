@@ -615,6 +615,68 @@ fire("ADDON_LOADED", "Sanctuary")
 -- gets its own section further down.
 SanctuaryDB.filters.preset = "custom"
 fire("PLAYER_ENTERING_WORLD")
+
+-- THE INVARIANT OF THIS FILE, and the only one that is not about the add-on.
+--
+-- One instance of the add-on is loaded, once, above; every section after this
+-- line borrows the same model. A section that flips a shared flag -- debug mode,
+-- the window size, a preset, a list, the clock, the locale -- puts back THE
+-- VALUE IT FOUND before it hands over, never a value it assumes is the default.
+-- Two of them did not, and the cost was paid where nobody looked: the section
+-- that leaned on the leak passed here and failed in a clone of the published
+-- repository, because the section it leaned on lives inside a block conditioned
+-- on tooling a clone does not have.
+--
+-- This is the state as the suite finds it. The block at the very end of the file
+-- takes it again and names whichever flag came back different.
+local function canonicalState()
+    local filters = SanctuaryDB.filters or {}
+    local size = SanctuaryDB.uiSize
+    local notifications = SanctuaryDB.notifications or {}
+    local antiSpam = SanctuaryDB.antiSpam or {}
+    local overrides = (SanctuaryCharDB or {}).overrides or {}
+    local function count(tbl)
+        local total = 0
+        for _ in pairs(tbl or {}) do total = total + 1 end
+        return total
+    end
+    -- An ordered list rather than a map: a failure has to read the same way
+    -- twice, and `pairs` does not promise that.
+    return {
+        { "debug mode", SanctuaryDB.debugEnabled },
+        { "window size", size and (tostring(size[1]) .. "x" .. tostring(size[2])) or "default" },
+        { "scope", filters.scope },
+        { "preset", filters.preset },
+        { "group invitations", filters.groupInvite },
+        { "whispers", filters.whisper },
+        { "say", filters.say },
+        { "yell", filters.yell },
+        { "emotes", filters.emote },
+        { "duels", filters.duel },
+        { "trades", filters.trade },
+        { "guild invitations", filters.guildInvite },
+        { "public channels", filters.channelMode },
+        { "enhanced instance filtering", filters.strictGroupInviteSystemMessages },
+        { "automatic trust", filters.autoTrust },
+        { "notification mode", notifications.mode },
+        { "anti-spam", antiSpam.enabled },
+        { "anti-spam window", antiSpam.intervalSeconds },
+        { "this character's override", overrides.enabled },
+        { "allowed names", count(SanctuaryDB.manualWhitelist) },
+        { "always-blocked names", count(SanctuaryDB.blockedNames) },
+        { "suspect patterns", count(SanctuaryDB.keywords) },
+        { "the day the clock reads", date("%Y-%m-%d") },
+        { "the client locale", GetLocale() },
+    }
+end
+local stateAtRest = canonicalState()
+
+-- Where a section parks the shared flag it is about to flip, so what it hands
+-- back is the value it FOUND and not a default it assumes. Keyed by a name of
+-- the section's own, because two sections that park the same flag must not
+-- share a parking space.
+local asFound = {}
+
 equal(ns.VERSION, "1.0.0", "version exported")
 equal(#muted, 0, "no global sound files muted at rest")
 equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "party invite dialog sound suppressed while group filter active")
@@ -737,6 +799,7 @@ groupMembers = { "Dungeonmate-TestRealm" }
 local systemMessage = "[Harasser-TestRealm] vous a invité à rejoindre un groupe, mais vous ne pouviez pas accepter car vous êtes déjà dans un groupe."
 filtered = chatFilters.CHAT_MSG_SYSTEM(nil, "CHAT_MSG_SYSTEM", systemMessage)
 check(filtered, "already-in-group invite system message suppressed")
+asFound.legacyDebug = SanctuaryDB.debugEnabled
 SanctuaryDB.debugEnabled = true
 SanctuaryDB.debugLog = {}
 local beforeLogs = #SanctuaryDB.log
@@ -1157,6 +1220,7 @@ inGroup = false
 inRaid = false
 inInstance = false
 currentInstanceType = "none"
+SanctuaryDB.debugEnabled = asFound.legacyDebug
 
 -- ---------------------------------------------------------------------------
 -- Retail secret-chat contract instrumentation.
@@ -1171,6 +1235,12 @@ currentInstanceType = "none"
 -- These tests pin that contract: strict mode can never suppress a secret system
 -- line through the filter, whatever the group/instance context.
 -- ---------------------------------------------------------------------------
+
+-- This section reads the debug log on nearly every line, so it arms debug mode
+-- itself rather than inheriting it from the zone above.
+asFound.secretDebug = SanctuaryDB.debugEnabled
+SanctuaryDB.debugEnabled = true
+
 local function expectRegistrySkipsSecret(label)
     local discarded, path = dispatchChatFilter("CHAT_MSG_SYSTEM", secretChatPayload)
     equal(path, "skipped", label .. " skips the addon filter callback")
@@ -2058,6 +2128,7 @@ equal(#chatMessages, beforeSlashMessages, "and none of them prints anything")
 ns.ToggleUI = nil
 
 -- Auto-trust tracking must survive a dungeon loading screen.
+asFound.secretTrust = SanctuaryDB.filters.autoTrust
 SanctuaryDB.filters.autoTrust = true
 inGroup = true
 groupMembers = { "Dungeonmate-TestRealm" }
@@ -2246,6 +2317,11 @@ equal(chatFilterRegistrations, registrationsBeforeRetry, "registration retry doe
 equal(chatFilters.CHAT_MSG_SYSTEM, systemFilterBeforeRetry, "registration retry keeps the registered system filter")
 check(chatFilters.CHAT_MSG_BN_WHISPER ~= nil, "registration retry keeps the registered BNet filter")
 
+SanctuaryDB.filters.autoTrust = asFound.secretTrust
+SanctuaryDB.debugEnabled = asFound.secretDebug
+wipe(SanctuaryDB.manualWhitelist)
+ns.invalidateWhitelist()
+
 -- ---------------------------------------------------------------------------
 -- Debug report rendering
 -- ---------------------------------------------------------------------------
@@ -2306,6 +2382,7 @@ for _, raw in ipairs({
         "escaped report value survives client rendering: " .. raw)
 end
 
+asFound.reportDebug = SanctuaryDB.debugEnabled
 SanctuaryDB.debugEnabled = true
 SanctuaryDB.logging.maxEntries = 5000
 ns.resetDebugLog()
@@ -2322,16 +2399,20 @@ check(renderedReport:find("normalized=|Kq2|k", 1, true) ~= nil,
 
 -- Globals and patterns go through the same escaping: the 2026-08-20 export lost
 -- the hyperlink part of ERR_INVITED_TO_GROUP_SS and showed only "[%s]".
+asFound.inviteGlobal = ERR_INVITED_TO_GROUP_SS
 ERR_INVITED_TO_GROUP_SS = "|Hplayer:%s|h[%s]|h vous a invite a rejoindre un groupe."
 report = ns.buildDebugReportText()
 check(renderClientMarkup(report):find("|Hplayer:%s|h[%s]|h", 1, true) ~= nil,
     "escaped report restores the raw invite global")
-ERR_INVITED_TO_GROUP_SS = nil
+ERR_INVITED_TO_GROUP_SS = asFound.inviteGlobal
+SanctuaryDB.debugEnabled = asFound.reportDebug
 
 -- ---------------------------------------------------------------------------
 -- Debug log retention accounting
 -- ---------------------------------------------------------------------------
 
+asFound.retentionDebug = SanctuaryDB.debugEnabled
+SanctuaryDB.debugEnabled = true
 SanctuaryDB.logging.maxEntries = 3
 ns.resetDebugLog()
 for i = 1, 5 do
@@ -2367,11 +2448,14 @@ equal(ns.getDebugLogStats().dropped, 0, "clearing the debug log resets the dropp
 report = ns.buildDebugReportText()
 check(report:find("!!! TRUNCATED", 1, true) == nil, "an untruncated report carries no truncation warning")
 SanctuaryDB.logging.maxEntries = 5000
+SanctuaryDB.debugEnabled = asFound.retentionDebug
 
 -- ---------------------------------------------------------------------------
 -- Snapshot counters that are not ready yet
 -- ---------------------------------------------------------------------------
 
+asFound.snapshotDebug = SanctuaryDB.debugEnabled
+SanctuaryDB.debugEnabled = true
 local realGetNumFriends = C_FriendList.GetNumFriends
 C_FriendList.GetNumFriends = function() return nil end
 ns.resetDebugLog()
@@ -2392,6 +2476,7 @@ ns.resetDebugLog()
 ns.captureDebugSnapshot()
 snapshot = lastDebug("SNAPSHOT")
 equal(snapshot.data.charFriends, 0, "a loaded friend counter is still reported as a number")
+SanctuaryDB.debugEnabled = asFound.snapshotDebug
 
 -- ---------------------------------------------------------------------------
 -- Protected popup sound guard: the files must end up unmuted
@@ -2400,6 +2485,7 @@ equal(snapshot.data.charFriends, 0, "a loaded friend counter is still reported a
 -- A mute posted by MuteSoundFile survives /reload and relogging, so a failed
 -- unmute is not a transient glitch: it silences the game's generic panel sounds
 -- until the client is restarted. The release path has to retry.
+asFound.soundGuardDebug = SanctuaryDB.debugEnabled
 SanctuaryDB.debugEnabled = true
 ns.resetDebugLog()
 playedSounds = {}
@@ -2455,6 +2541,7 @@ check(not mutedSoundFiles[567490], "the stale popup-open mute is lifted at load"
 check(not mutedSoundFiles[567464], "the stale popup-close mute is lifted at load")
 equal(SanctuaryDB.protectedPopupSoundMuted, nil, "lifting a stale mute clears the flag")
 runTimers(6)
+SanctuaryDB.debugEnabled = asFound.soundGuardDebug
 
 -- ---------------------------------------------------------------------------
 -- Retention accounting: a legacy log that already rotated
@@ -2464,6 +2551,8 @@ runTimers(6)
 -- accounting can already have rotated, so it holds fewer entries than the
 -- numbers it carries, and calibrating on the count reissues numbers that are
 -- already in the report.
+asFound.legacyRotationDebug = SanctuaryDB.debugEnabled
+SanctuaryDB.debugEnabled = true
 SanctuaryDB.logging.maxEntries = 5000
 SanctuaryDB.debugLogStats = nil
 SanctuaryDB.debugLog = {}
@@ -2488,6 +2577,7 @@ equal(ns.getDebugLogStats().produced - #SanctuaryDB.debugLog, ns.getDebugLogStat
     "kept plus dropped accounts for every produced entry")
 ns.resetDebugLog()
 SanctuaryDB.logging.maxEntries = 5000
+SanctuaryDB.debugEnabled = asFound.legacyRotationDebug
 
 -- ---------------------------------------------------------------------------
 -- Export snapshot when debug mode is off
@@ -2495,6 +2585,7 @@ SanctuaryDB.logging.maxEntries = 5000
 
 -- Unticking debug mode keeps the log, so "play, untick, export later" is a
 -- normal path. The report has to describe the state it reports on.
+asFound.exportSnapshotDebug = SanctuaryDB.debugEnabled
 SanctuaryDB.debugEnabled = false
 ns.resetDebugLog()
 ns.captureDebugSnapshot("load")
@@ -2885,6 +2976,7 @@ check(#summary < 2000,
     "the summary stays short enough to read on screen (" .. #summary .. " chars)")
 check(#ns.buildDebugReportText() > #summary,
     "the full report is still available and is the larger of the two")
+SanctuaryDB.debugEnabled = asFound.exportSnapshotDebug
 
 -- ---------------------------------------------------------------------------
 -- The summary tested on its values, not on its shape
@@ -2903,6 +2995,7 @@ check(#ns.buildDebugReportText() > #summary,
 -- The rule below is the one that already anchored `Verdict:`: play the
 -- scenarios, then assert the line carries the value that state implies. A
 -- constant substituted for any of them makes one of these fall.
+asFound.summaryDebug = SanctuaryDB.debugEnabled
 SanctuaryDB.debugEnabled = true
 ns.resetDebugLog()
 ns.debugLog("CHAT_OUTPUT", { action = "NO_MATCH" })
@@ -5580,6 +5673,8 @@ resetModelState()
 equal(ns.addBlocked("toto-éonar"), true, "the name is blocked on its accented realm")
 equal(ns.classifyName("Toto-Eonar").verdict, "unknown",
     "and the same pseudo on another realm walks free")
+resetModelState()
+SanctuaryDB.debugEnabled = asFound.summaryDebug
 
 -- ---------------------------------------------------------------------------
 -- Whispering yourself
@@ -5659,6 +5754,7 @@ ChatFrame2 = nil
 ChatFrame3 = nil
 ChatFrame4 = nil
 ns.hookChatOutputDiagnostics()
+asFound.selfWhisperDebug = SanctuaryDB.debugEnabled
 SanctuaryDB.debugEnabled = true
 ns.resetDebugLog()
 local lockdownPayload = makeSecretValue("lockdown-line")
@@ -6198,6 +6294,7 @@ end
 assert(loadfile(repoRoot .. "/SanctuaryUI.lua"))("Sanctuary", ns)
 check(type(ns.ToggleUI) == "function", "the interface file exports its toggle")
 check(coreCreateFrame ~= nil, "the core CreateFrame mock stays reachable")
+SanctuaryDB.debugEnabled = asFound.selfWhisperDebug
 
 -- ---------------------------------------------------------------------------
 -- Every localized key the two Lua files ask for actually exists
@@ -6477,6 +6574,7 @@ end
 -- The four tabs open, and the fifth only in debug mode
 -- ---------------------------------------------------------------------------
 
+asFound.tabsDebug = SanctuaryDB.debugEnabled
 SanctuaryDB.debugEnabled = false
 ns.ToggleUI()
 local mainFrame = _G.SanctuaryMainFrame
@@ -6514,6 +6612,7 @@ equal(diagTab:IsShown(), false, "unticking debug mode hides the diagnostics tab 
 equal(diagContent:IsShown(), false, "unticking debug mode closes the panel it was showing")
 equal(_G["SanctuaryTabContent_protection"]:IsShown(), true,
     "closing the debug panel falls back to a tab that still exists")
+SanctuaryDB.debugEnabled = asFound.tabsDebug
 
 -- ---------------------------------------------------------------------------
 -- Every box, dot and tab is actually drawn
@@ -6950,6 +7049,7 @@ end
 -- the edge on the case nobody had measured.
 do
     local kept = SanctuaryDB.uiSize
+    asFound.drawnPreset = SanctuaryDB.filters.preset
     SanctuaryDB.filters.preset = "all"
     SanctuaryDB.uiSize = { 900, 700 }
     ns.refreshUI()
@@ -7039,6 +7139,7 @@ _G.SanctuaryAutoTrust:Click()
 equal(SanctuaryDB.filters.autoTrust, true, "and it still writes its own key")
 _G.SanctuaryAutoTrust:Click()
 equal(SanctuaryDB.filters.autoTrust, false, "both ways")
+SanctuaryDB.filters.preset = asFound.drawnPreset
 
 end)()
 
@@ -7063,6 +7164,7 @@ equal(_G.SanctuaryStrictCheck.enabled, true, "and so does the enhanced-instance 
 -- Question 2: the preset, the boxes, and the box that lives in both modes
 -- ---------------------------------------------------------------------------
 
+asFound.questionTwoPreset = SanctuaryDB.filters.preset
 _G.SanctuaryQ2_custom:Click()
 equal(SanctuaryDB.filters.preset, "custom", "\"I choose\" writes the preset")
 equal(_G.SanctuaryChoose:IsShown(), true, "and unfolds the detailed boxes")
@@ -7087,6 +7189,7 @@ equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, true,
 equal(ns.isFilterOn("strictGroupInviteSystemMessages"), true, "and the core applies it")
 _G.SanctuaryStrictCheck:Click()
 equal(SanctuaryDB.filters.strictGroupInviteSystemMessages, false, "and untickable again")
+SanctuaryDB.filters.preset = asFound.questionTwoPreset
 
 -- ---------------------------------------------------------------------------
 -- Question 3: the anti-spam of the public channels
@@ -7142,6 +7245,7 @@ _G["SanctuaryTab_protection"]:Click()
 
 -- Already covered. Nothing is clickable, the note says why, and not one answer
 -- is overwritten -- going back finds them exactly as they were.
+asFound.antiSpamPreset = SanctuaryDB.filters.preset
 SanctuaryDB.filters.preset = "custom"
 SanctuaryDB.filters.channelMode = "all"
 ns.refreshUI()
@@ -7208,6 +7312,7 @@ end
 
 ns.setAntiSpamEnabled(false)
 ns.setAntiSpamInterval(300)
+SanctuaryDB.filters.preset = asFound.antiSpamPreset
 ns.refreshUI()
 
 end
@@ -7333,6 +7438,10 @@ do
     -- a cross there would answer a question nobody asked.
     equal(_G.SanctuaryBlockedAddInput.clear, nil, "a list field carries no cross")
 end
+wipe(SanctuaryDB.manualWhitelist)
+wipe(SanctuaryDB.blockedNames)
+SanctuaryDB.keywords = {}
+ns.invalidateWhitelist()
 
 -- ---------------------------------------------------------------------------
 -- The allowed panel
@@ -7360,6 +7469,10 @@ local function panelRowTexts(panel)
     return table.concat(texts, "\n")
 end
 
+-- The one name this panel has to show is added here rather than inherited from
+-- the section above: a panel test that depends on a neighbour's list reads green
+-- for a reason that has nothing to do with the panel.
+ns.addAllowed("Toto")
 ns.OpenPanel("allowed")
 local allowedPanel = _G.SanctuaryPanelAllowed
 check(allowedPanel ~= nil and allowedPanel:IsShown(), "the allowed panel opens")
@@ -7510,6 +7623,8 @@ ns.removeAllowed("trusty-testrealm")
 ns.refreshUI()
 
 end
+wipe(SanctuaryDB.manualWhitelist)
+ns.invalidateWhitelist()
 
 -- ---------------------------------------------------------------------------
 -- The ten-second refresh
@@ -7517,6 +7632,9 @@ end
 
 -- Created when the panel opens, cancelled when it closes: a ticker that outlives
 -- its panel rebuilds a list nobody is looking at, for the whole session.
+-- The manual entry this section removes and puts back is its own: it is added
+-- here so the ticker has something by hand to lose.
+ns.addAllowed("Toto")
 local tickersBefore = #tickers
 ns.ClosePanel()
 ns.OpenPanel("allowed")
@@ -7586,16 +7704,20 @@ ns.removeAllowed("toto-testrealm")
 runTickers()
 check(panelRowTexts(allowedPanel):find("Toto", 1, true) == nil,
     "an entry removed by hand is not put back by the ticker")
-ns.addAllowed("Toto")
 clearUndoForTests = nil
 
 ns.ClosePanel()
 equal(#tickers, tickersBefore + 1, "closing the panel does not create another one")
+wipe(SanctuaryDB.manualWhitelist)
+ns.invalidateWhitelist()
 
 -- ---------------------------------------------------------------------------
 -- The blocked panel
 -- ---------------------------------------------------------------------------
 
+-- Same rule as the allowed panel above: the one name this panel has to list is
+-- put there by this section.
+ns.addBlocked("Xxxxxxx-Ysondre")
 ns.OpenPanel("blocked")
 local blockedPanel = _G.SanctuaryPanelBlocked
 check(blockedPanel ~= nil and blockedPanel:IsShown(), "the blocked panel opens")
@@ -7635,6 +7757,10 @@ end
 check(normalisedPattern, "spaces and case are stripped")
 equal(ns.addPattern("SPSPAM"), false, "and a duplicate is a no-op")
 ns.ClosePanel()
+wipe(SanctuaryDB.manualWhitelist)
+wipe(SanctuaryDB.blockedNames)
+SanctuaryDB.keywords = {}
+ns.invalidateWhitelist()
 
 -- ---------------------------------------------------------------------------
 -- A label never runs under the cross, and a hint never runs out of its field
@@ -8087,6 +8213,7 @@ end
 -- The header control
 -- ---------------------------------------------------------------------------
 
+asFound.headerOverride = SanctuaryCharDB.overrides.enabled
 local stateButton = _G.SanctuaryStateButton
 check(stateButton ~= nil, "the header carries the single state control")
 stateButton:Click()
@@ -8111,6 +8238,10 @@ stateButton:Click()
 equal(ns.isEnabled(), false, "and it works again")
 stateButton:Click()
 equal(ns.isEnabled(), true, "left as it was found")
+-- ON and "no override recorded" both answer `isEnabled()` with true, so the
+-- stored value has to be put back by hand or the next section inherits a
+-- character override this one only ever meant to toggle.
+SanctuaryCharDB.overrides.enabled = asFound.headerOverride
 
 -- ---------------------------------------------------------------------------
 -- The journal
@@ -8220,6 +8351,7 @@ wipe(SanctuaryDB.log)
 -- Advanced
 -- ---------------------------------------------------------------------------
 
+asFound.advancedDebug = SanctuaryDB.debugEnabled
 SanctuaryDB.debugEnabled = true
 mainFrame:Hide()
 mainFrame:Show()
@@ -8275,6 +8407,7 @@ exportFrame:Hide()
 -- The journal size is clamped on write, so nobody leaves thinking they set 50.
 _G.SanctuaryMaxEntriesInput:SetText("50")
 _G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesInput)
+SanctuaryDB.debugEnabled = asFound.advancedDebug
 equal(SanctuaryDB.logging.maxEntries, 100, "a journal size below the floor is clamped up")
 _G.SanctuaryMaxEntriesInput:SetText("999999")
 _G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesInput)
@@ -8497,6 +8630,7 @@ do
     GetCursorPosition = function() return 180, 100 end
 end
 
+asFound.minimapOverride = SanctuaryCharDB.overrides.enabled
 local togglesBefore = ns.isEnabled()
 minimapButton:GetScript("OnClick")(minimapButton, "RightButton")
 equal(ns.isEnabled(), not togglesBefore, "a right click flips the protection")
@@ -8510,6 +8644,7 @@ _G.SanctuaryMinimapCheck:Click()
 equal(SanctuaryDB.minimap.hide, true, "and hides it")
 equal(minimapButton:IsShown(), false, "the button follows the setting")
 _G.SanctuaryMinimapCheck:Click()
+SanctuaryCharDB.overrides.enabled = asFound.minimapOverride
 
 -- ---------------------------------------------------------------------------
 -- The right-click menu
@@ -8640,6 +8775,7 @@ C_ChatInfo.InChatMessagingLockdown = savedLockdown
 -- The diagnostics panel
 -- ---------------------------------------------------------------------------
 
+asFound.diagnosticsDebug = SanctuaryDB.debugEnabled
 SanctuaryDB.debugEnabled = true
 mainFrame:Hide()
 mainFrame:Show()
@@ -8848,6 +8984,7 @@ runTimers(4)
 clearBtn:Click()
 equal(resultText:GetText(), ns.L["DIAG_RESULT_EMPTY"], "clearing empties the result box")
 equal(restoreBtn:IsShown(), false, "and the way back goes when the dialog does")
+SanctuaryDB.debugEnabled = asFound.diagnosticsDebug
 
 -- ---------------------------------------------------------------------------
 -- Closing the window drops what was read
@@ -8892,6 +9029,7 @@ check(chooseScroll ~= nil, "the content area is a scroll")
 -- Measured in a window the person shrank, so both answers are the screen's own
 -- height rather than the viewport they are both floored at.
 SanctuaryDB.uiSize = { 780, 520 }
+asFound.windowSizePreset = SanctuaryDB.filters.preset
 SanctuaryDB.filters.preset = "all"
 ns.refreshUI()
 local foldedContent = chooseScroll:GetScrollChild():GetHeight() or 0
@@ -9420,7 +9558,7 @@ SanctuaryDB.filters.preset = "custom"
 ns.refreshUI()
 check(mainFrame:GetHeight() > shortestFitted,
     "and unfolding the detailed boxes makes the window taller again")
-SanctuaryDB.filters.preset = "all"
+SanctuaryDB.filters.preset = asFound.windowSizePreset
 ns.refreshUI()
 
 end
@@ -9431,6 +9569,14 @@ end
 
 -- A scope of its own: the enclosing chunk is at Lua's ceiling of 200 locals.
 ;(function()
+
+-- Several blocks below open the diagnostics tab, which exists only in debug
+-- mode. The scope arms it once, here, and hands back what it found on the way
+-- out -- rather than reading a flag some earlier section happened to leave on.
+local chantiersDebug = SanctuaryDB.debugEnabled
+local chantiersPreset = SanctuaryDB.filters.preset
+SanctuaryDB.debugEnabled = true
+ns.refreshTabBar()
 
 -- A.1 -- the undo strip is bounded, and Annuler is never the half that is cut.
 do
@@ -9830,6 +9976,7 @@ end
 -- and a window a person could only widen.
 do
     local keptScreen, keptSize = UIParent.GetHeight, SanctuaryDB.uiSize
+    local keptPreset = SanctuaryDB.filters.preset
     SanctuaryDB.filters.preset = "all"
     SanctuaryDB.uiSize = nil
     -- What the window leaves the screen: a breathing edge at each end, and
@@ -9920,6 +10067,7 @@ do
 
     UIParent.GetHeight = keptScreen
     SanctuaryDB.uiSize = keptSize
+    SanctuaryDB.filters.preset = keptPreset
     _G["SanctuaryTab_protection"]:Click()
     ns.refreshUI()
 end
@@ -10091,6 +10239,10 @@ do
     ns.refreshUI()
 end
 
+SanctuaryDB.debugEnabled = chantiersDebug
+SanctuaryDB.filters.preset = chantiersPreset
+ns.refreshTabBar()
+ns.refreshUI()
 
 end)()
 
@@ -10655,6 +10807,12 @@ end
 local savedFrames = {}
 for i = 1, 20 do savedFrames[i] = _G["ChatFrame" .. i] end
 for i = 2, 20 do _G["ChatFrame" .. i] = nil end
+-- `prepare()` below writes three shared settings on every scenario. They are
+-- taken here and given back at the end of the scope, so the sections that follow
+-- read the model this one was handed rather than the one it needed.
+local scopeDebug = SanctuaryDB.debugEnabled
+local scopePreset = SanctuaryDB.filters.preset
+local scopeNotifications = SanctuaryDB.notifications.mode
 local whisperTab = { chatType = "WHISPER", chatTarget = "" }
 local bnetTab = { chatType = "BN_WHISPER", chatTarget = "" }
 ChatFrame5 = whisperTab
@@ -10903,6 +11061,9 @@ DEFAULT_CHAT_FRAME = savedDefaultFrame
 for i = 1, 20 do _G["ChatFrame" .. i] = savedFrames[i] end
 ns.hookChatOutputDiagnostics()
 prepare()
+SanctuaryDB.debugEnabled = scopeDebug
+SanctuaryDB.filters.preset = scopePreset
+SanctuaryDB.notifications.mode = scopeNotifications
 
 end)()
 
@@ -10919,6 +11080,8 @@ end)()
 check(type(ns.decideChat) == "function", "the core publishes one decision for chat messages")
 check(type(ns.CHAT_KINDS) == "table", "and the table its filters and handlers are generated from")
 
+local structureDebug = SanctuaryDB.debugEnabled
+local structurePreset = SanctuaryDB.filters.preset
 resetModelState()
 SanctuaryDB.debugEnabled = true
 SanctuaryDB.filters.whisper = true
@@ -10972,6 +11135,8 @@ inGroup = false
 guildMembers = {}
 groupMembers = {}
 resetModelState()
+SanctuaryDB.debugEnabled = structureDebug
+SanctuaryDB.filters.preset = structurePreset
 
 end)()
 
@@ -11154,6 +11319,20 @@ resetModelState()
 end
 
 end)()
+
+-- The sentinel: what the suite ends on, against what it started on. It names the
+-- FLAG rather than the section, because the flag is what the next person to read
+-- a failure here needs -- searching the file for the two lines that write it
+-- finds the section in seconds.
+--
+-- What it catches is a leak that SURVIVES to the end. A section that leaves a
+-- flag on and a later one that happens to turn it off cancel out here and pass:
+-- the rule stated at the top of the file is the invariant, and this is its net
+-- check, not its proof. Reading a per-section drift needs an instrumented copy.
+for index, entry in ipairs(canonicalState()) do
+    equal(entry[2], stateAtRest[index][2],
+        "the suite gives the model back as it found it: " .. entry[1])
+end
 
 if failures > 0 then
     io.stderr:write(string.format("%d/%d assertions failed\n", failures, assertions))
