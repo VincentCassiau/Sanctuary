@@ -10664,6 +10664,8 @@ end
 -- A.6 -- "Enhanced filtering in instances" answers to the box above it.
 do
     local keptScope = SanctuaryDB.filters.scope
+    local keptPreset = SanctuaryDB.filters.preset
+    local keptGroupInvite = SanctuaryDB.filters.groupInvite
     SanctuaryDB.filters.scope = "strangers"
     SanctuaryDB.filters.preset = "custom"
     SanctuaryDB.filters.groupInvite = true
@@ -10702,9 +10704,11 @@ do
     ns.refreshUI()
     equal(strict.enabled, true,
         "and live in the open mode with the remembered parent unticked")
-    -- Both borrowed values go back where this section found them.
-    SanctuaryDB.filters.preset = "all"
-    SanctuaryDB.filters.groupInvite = true
+    -- The three borrowed values go back where this section found them, read
+    -- rather than assumed: a literal that happens to match the state at rest
+    -- today fails somewhere else entirely the day that state changes.
+    SanctuaryDB.filters.preset = keptPreset
+    SanctuaryDB.filters.groupInvite = keptGroupInvite
     SanctuaryDB.filters.scope = keptScope
     ns.refreshUI()
 end
