@@ -4189,21 +4189,21 @@ local function createMinimapButton()
         btn:SetFrameStrata("MEDIUM")
         btn:SetFrameLevel(8)
 
-        -- The lantern, decisions 147 and 149: a gold outline, a lit glass, a
-        -- thin handle. It replaces `inv_shield_06`, the Blizzard icon the
-        -- manifest still declares -- and the manifest is what the AddOns list
-        -- reads, so the two are not the same picture and the path is written
-        -- here rather than asked for there.
+        -- The logo, decision 155: one drawing for the whole add-on. The same
+        -- file answers here and in the AddOns list, because `## IconTexture` in
+        -- the manifest names this very path -- so the icon beside the name and
+        -- the button on the minimap cannot drift into two different pictures.
+        -- The invariant is the path: manifest, `SetTexture` and the file on
+        -- disk are one asset, and the harness holds the three to it.
         --
         -- Written without an extension on purpose: the client resolves it to the
         -- .blp it prefers or the .tga we ship, and a path with the extension
         -- spelt out is a path that has to be edited the day the file is
-        -- compiled. A texture is data, so nothing about it goes in the .toc --
-        -- only Lua and XML are listed there.
+        -- compiled.
         btn.icon = btn:CreateTexture(nil, "BACKGROUND")
         btn.icon:SetSize(20, 20)
         btn.icon:SetPoint("CENTER", btn, "CENTER", 0, 0)
-        btn.icon:SetTexture("Interface\\AddOns\\Sanctuary\\media\\lanterne")
+        btn.icon:SetTexture("Interface\\AddOns\\Sanctuary\\media\\logo")
         -- No TexCoord crop. The 8 % that used to come off each side was there to
         -- cut the border a Blizzard icon is painted with; this artwork has its
         -- own margin and a transparent background, so cropping it would only
