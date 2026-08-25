@@ -4692,6 +4692,20 @@ equal(#chatMessages, 1, "and one more block produces one again")
 SanctuaryDB.notifications.mode = asFound.summaryMode
 SanctuaryDB.debugEnabled = asFound.decisionModelDebug
 
+-- THE MIGRATION ENCLAVE. C15 to C18 do not settle the model, they REPLACE it:
+-- each builds a whole saved file of its own and hands it to the loader. A leak
+-- born before them is not given back by that replacement, it is thrown away
+-- with the table that carried it -- so a boundary placed after C18 finds a
+-- model that looks pristine and says nothing. Measured: a wrong retention limit
+-- set just above C15 reaches the end of the run unnamed.
+--
+-- The two boundaries below close that hole. What comes in is checked here, the
+-- real tables are parked, the migrations play on the files they build for
+-- themselves, and the originals are put back before C19 -- which is what makes
+-- the boundary after C18 mean anything again.
+assertModelAtRest()
+local realSavedVariables, realCharSavedVariables = SanctuaryDB, SanctuaryCharDB
+
 -- C15 -- the schema reset.
 asFound.schemaResetScope = SanctuaryDB.filters.scope
 asFound.schemaResetLimit = SanctuaryDB.logging.maxEntries
@@ -4947,6 +4961,17 @@ SanctuaryDB.antiSpam.enabled = false
 SanctuaryDB.antiSpam.intervalSeconds = 300
 
 end
+
+SanctuaryDB, SanctuaryCharDB = realSavedVariables, realCharSavedVariables
+-- Loading again rebuilds what the add-on keeps in its own memory from the
+-- tables that are back. It is idempotent on a v2 file, which C15 proves a few
+-- lines above. The whitelist cache is the exception: that load does NOT rebuild
+-- it on a v2 file, and it is still built on the tables just thrown away, so it
+-- has to be dropped by name.
+fire("ADDON_LOADED", "Sanctuary")
+ns.invalidateWhitelist()
+chatMessages = {}
+assertModelAtRest()
 
 -- C19 -- the anti-spam of the public channels: one verdict per message.
 do
