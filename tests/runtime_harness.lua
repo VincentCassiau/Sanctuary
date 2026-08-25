@@ -640,12 +640,21 @@ local function canonicalState()
     local size = SanctuaryDB.uiSize
     local notifications = SanctuaryDB.notifications or {}
     local antiSpam = SanctuaryDB.antiSpam or {}
+    local logging = SanctuaryDB.logging or {}
+    local minimap = SanctuaryDB.minimap or {}
     local overrides = (SanctuaryCharDB or {}).overrides or {}
     local function count(tbl)
         local total = 0
         for _ in pairs(tbl or {}) do total = total + 1 end
         return total
     end
+    -- Everything the add-on persists is compared here EXCEPT what the two
+    -- journals hold -- `log`, `debugLog`, `debugLogStats` -- and this
+    -- character's `sessionStats.blockedCount`: the journals are the working
+    -- data a section fills and empties on purpose, and the counter is one a
+    -- run is meant to make climb. Comparing either would fail a suite that is
+    -- doing exactly its job. The question does not need reopening.
+    --
     -- An ordered list rather than a map: a failure has to read the same way
     -- twice, and `pairs` does not promise that.
     return {
@@ -665,8 +674,13 @@ local function canonicalState()
         { "enhanced instance filtering", filters.strictGroupInviteSystemMessages },
         { "automatic trust", filters.autoTrust },
         { "notification mode", notifications.mode },
+        { "the summary's interval", notifications.minimalIntervalMinutes },
         { "anti-spam", antiSpam.enabled },
         { "anti-spam window", antiSpam.intervalSeconds },
+        { "recording into the journal", logging.enabled },
+        { "the retention limit", logging.maxEntries },
+        { "the minimap button, hidden or shown", minimap.hide },
+        { "the minimap button's angle", minimap.angle },
         { "this character's override", overrides.enabled },
         { "allowed names", count(SanctuaryDB.manualWhitelist) },
         { "always-blocked names", count(SanctuaryDB.blockedNames) },
