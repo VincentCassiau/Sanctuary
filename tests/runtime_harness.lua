@@ -8709,6 +8709,31 @@ equal(ns.getListCounts().blocked.names, beforeNames + 1, "having written the nam
 runTimers(3)
 equal(nameBox.note:IsShown(), false, "the green line goes on its own too")
 
+-- And it goes with the label it named, whichever gesture takes that label off.
+-- There are six crosses, a right-click menu and Annuler, and none of them is
+-- where this is checked: the redraw all of them end with is. One name to remove
+-- that the sentence is not about, one that it is.
+do
+    nameBox:SetText("Otherchip")
+    panel.nameBtn:Click()
+    nameBox:SetText("Saidyes")
+    panel.nameBtn:Click()
+    local said = string.format(ns.L["ADDED_OK"], "Saidyes-TestRealm")
+    equal(nameBox.note:GetText(), said, "the field says which of the two went in")
+
+    findRow(panel, "Otherchip-TestRealm").remove:Click()
+    equal(nameBox.note:GetText(), said,
+        "taking another label off leaves a sentence that is still true")
+
+    findRow(panel, "Saidyes-TestRealm").remove:Click()
+    equal(nameBox.note:GetText(), "",
+        "the cross on the label it named takes the sentence with it")
+    equal(nameBox.note:IsShown(), false, "sentence and room together")
+    -- The removal left an undo offer standing: let it expire, the way the rest
+    -- of this section expects the strip to be off screen.
+    runTimers(3)
+end
+
 -- Closing the window drops the sentence with the text it was about.
 nameBox:SetText("-")
 panel.nameBtn:Click()

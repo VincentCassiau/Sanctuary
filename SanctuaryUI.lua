@@ -264,6 +264,11 @@ local NOTE_ROOM_ONE_LINE = NOTE_GAP + NOTE_LINE
 local LIST_INPUT_ROW = 34
 local LIST_LABELS_GAP = LIST_INPUT_ROW + NOTE_ROOM_ONE_LINE
 local LIST_REFRESH_SECONDS = 10
+-- The three add fields, named once. Two sweeps walk them -- the one that takes
+-- a sentence off when what it announced has left the list, and the one that
+-- empties the fields when the window closes -- and a fourth field added to one
+-- list alone would be a field the other sweep never visits.
+local LIST_INPUT_KEYS = { "addInput", "nameInput", "patternInput" }
 
 local function applyBackdrop(frame, bg, border, edgeSize)
     if not frame.SetBackdrop then return end
@@ -725,6 +730,7 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
     function box:ClearNote()
         local wasShown = self.note:IsShown()
         self.noteToken = nil
+        self.noteKey, self.noteHolds = nil, nil
         self.note:SetText("")
         self.note:Hide()
         -- A sentence taller than the reserved line had pushed the labels down:
@@ -740,9 +746,14 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
     -- The colour is set on every answer and never assumed: the label is one
     -- FontString reused by both, so a green line followed by a refusal would
     -- otherwise say no in the colour of yes.
-    function box:Say(text, color)
+    function box:Say(text, color, key, holds)
         local mine = {}
         self.noteToken = mine
+        -- What the sentence is about, when it is about something: a yes names an
+        -- entry, and `holds` is how to ask whether that entry is still listed. A
+        -- refusal names nothing and passes neither, so nothing can cut its six
+        -- seconds short.
+        self.noteKey, self.noteHolds = key, holds
         self.note:SetTextColor(unpack(color))
         self.note:SetText(text)
         self.note:Show()
@@ -756,7 +767,28 @@ local function newInput(parent, name, width, hintText, onEnter, keepText)
     end
 
     function box:SayNo(text) self:Say(text, C.orange) end
-    function box:SayYes(text) self:Say(text, C.green) end
+    function box:SayYes(text, key, holds) self:Say(text, C.green, key, holds) end
+
+    -- "Ajouté : Kadaj-Ysondre." is true for exactly as long as Kadaj-Ysondre is
+    -- on the list. There are six crosses that can take him back off, plus the
+    -- right-click menu and Annuler, and a sentence still saying yes over an
+    -- empty row is the screen lying about the one thing it is there to show. So
+    -- the check is here, on the redraw every one of those gestures ends with,
+    -- rather than a ClearNote at each of them -- the next gesture added would be
+    -- the one nobody remembered. Removing ANOTHER label leaves this sentence
+    -- alone: it is its own key that is looked up, not the state of the list.
+    --
+    -- Quiet on purpose: the caller is the redraw, and asking for another one
+    -- from inside it lays the panel out twice.
+    function box:ForgetStaleNote()
+        if not self.noteKey then return end
+        local holds = self.noteHolds
+        if not holds or holds(self.noteKey) then return end
+        self.noteToken = nil
+        self.noteKey, self.noteHolds = nil, nil
+        self.note:SetText("")
+        self.note:Hide()
+    end
 
     -- An opt-in cross inside the field, for the one box that carries a question
     -- rather than an entry: the tester. It is a read of the lists, so emptying
@@ -1343,7 +1375,7 @@ local DISPLACED_UNDO = {
     blocked = { titleKey = "TILE_BLOCKED", remove = "removeAllowed", restore = "restoreBlocked" },
 }
 
-local function offerDisplacedUndo(addedKey, displaced, box)
+local function offerDisplacedUndo(addedKey, displaced)
     if type(displaced) ~= "table" then return end
     local spec = DISPLACED_UNDO[displaced.list]
     if not spec or not addedKey then return end
@@ -1354,9 +1386,9 @@ local function offerDisplacedUndo(addedKey, displaced, box)
         ns[spec.remove](addedKey)
         ns[spec.restore](displaced.key, displaced.data)
         -- The green "Ajouté" under the field confirmed the very addition this
-        -- takes back: left standing it would go on saying yes to a gesture that
-        -- no longer happened, on the one screen a person comes to check.
-        if box then box:ClearNote() end
+        -- takes back. Nothing to do about it here: the entry has just left its
+        -- list, and the redraw Annuler ends with is where a sentence about an
+        -- entry that is gone stops being shown.
     end)
 end
 
@@ -3180,6 +3212,29 @@ local REFUSAL_TEXT = {
     pattern = function() return L["REFUSED_PATTERN"] end,
 }
 
+-- Where to look to know whether the name a green sentence named is still
+-- listed. Which list it went into is something the add function already says, so
+-- the answer is worked out once, here, instead of being carried down from each
+-- of the three field-and-button pairs.
+local function entryStillListed(addFn)
+    if addFn == ns.addAllowed then
+        return function(key)
+            return (SanctuaryDB and SanctuaryDB.manualWhitelist or {})[key] ~= nil
+        end
+    elseif addFn == ns.addBlocked then
+        return function(key)
+            return (SanctuaryDB and SanctuaryDB.blockedNames or {})[key] ~= nil
+        end
+    elseif addFn == ns.addPattern then
+        return function(key)
+            for _, existing in ipairs(SanctuaryDB and SanctuaryDB.keywords or {}) do
+                if existing == key then return true end
+            end
+            return false
+        end
+    end
+end
+
 -- The one submission path for the three field-and-button pairs. There were six
 -- bodies -- one on Enter and one on the button, per pair -- doing the same
 -- things, which is this release's whole subject, in this file: two paths that
@@ -3201,13 +3256,13 @@ local function submitEntry(box, addFn)
         -- pattern has no realm to add and comes back through it untouched.
         box:SayYes(string.format(L["ADDED_OK"],
             ns.qualifiedDisplayName(key, type(data) == "table" and data.displayName or nil)
-                or tostring(key)))
+                or tostring(key)), key, entryStillListed(addFn))
     else
         -- Refused with no sentence of its own -- an empty field, a duplicate --
         -- and the last answer goes rather than standing over a new gesture.
         box:ClearNote()
     end
-    if ok then offerDisplacedUndo(key, displaced, box) end
+    if ok then offerDisplacedUndo(key, displaced) end
     if ok and ns.refreshUI then ns.refreshUI() end
 end
 
@@ -3598,6 +3653,16 @@ local function refreshBlockedPanel(force)
 end
 
 local function refreshOpenPanel(force)
+    -- Before the panels measure themselves, so a sentence taken off here gives
+    -- its room back on this same pass rather than one redraw later.
+    for _, panel in pairs(panels) do
+        if type(panel) == "table" then
+            for _, key in ipairs(LIST_INPUT_KEYS) do
+                local box = panel[key]
+                if box and box.ForgetStaleNote then box:ForgetStaleNote() end
+            end
+        end
+    end
     if openPanel == "allowed" then
         refreshAllowedPanel(force)
     elseif openPanel == "blocked" then
@@ -4127,7 +4192,7 @@ local function clearTransientFields()
     if protection.testAnswer then protection.testAnswer:SetText("") end
     for _, panel in pairs(panels) do
         if type(panel) == "table" then
-            for _, key in ipairs({ "addInput", "nameInput", "patternInput" }) do
+            for _, key in ipairs(LIST_INPUT_KEYS) do
                 local box = panel[key]
                 if box and box.SetText then
                     box:SetText("")
