@@ -228,7 +228,7 @@ L["DEBUG_EXPORT_TITLE"] = "Sanctuary report"
 
 -- Advanced
 L["FILTER_AUTO_TRUST"] = "Trust people who stay at least 5 minutes in my group or my raid"
-L["ADV_TRUST_DESC"] = "They are then added to \"Always allowed\", permanently. You can remove them at any time."
+L["ADV_TRUST_DESC"] = "After 5 minutes in your group or your raid, a player is added automatically to your \"Always allowed\": they will always be able to contact you again, even after the dungeon. You can take them off the list at any time."
 L["ADV_DIAG_TITLE"] = "Diagnostics"
 L["DEBUG_ENABLE"] = "Enable debug mode"
 L["ADV_DEBUG_DESC"] = "Records technical data about filtered interactions -- and about system messages hidden in instances -- to help understand a problem. Nothing is sent: you copy and paste."
@@ -503,7 +503,7 @@ L["DEBUG_EXPORT_TITLE"] = "Rapport Sanctuary"
 
 -- Advanced
 L["FILTER_AUTO_TRUST"] = "Faire confiance aux joueurs qui restent au moins 5 minutes dans mon groupe ou mon raid"
-L["ADV_TRUST_DESC"] = "Ils sont alors ajout\195\169s aux \194\171 Toujours autoris\195\169s \194\187, d\195\169finitivement. Vous pouvez les retirer \195\160 tout moment."
+L["ADV_TRUST_DESC"] = "Apr\195\168s 5 minutes pass\195\169es dans votre groupe ou votre raid, un joueur est ajout\195\169 automatiquement \195\160 vos \194\171 Toujours autoris\195\169s \194\187 : il pourra toujours vous recontacter, m\195\170me apr\195\168s le donjon. Vous pouvez le retirer de la liste \195\160 tout moment."
 L["ADV_DIAG_TITLE"] = "Diagnostics"
 L["DEBUG_ENABLE"] = "Activer le mode debug"
 L["ADV_DEBUG_DESC"] = "Enregistre des donn\195\169es techniques sur les interactions filtr\195\169es \226\128\148 et les messages syst\195\168me masqu\195\169s en instance \226\128\148 pour aider \195\160 comprendre un probl\195\168me. Rien n'est envoy\195\169 : vous copiez-collez."
