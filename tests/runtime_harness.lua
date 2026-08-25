@@ -8600,35 +8600,58 @@ local minimapButton = _G.SanctuaryMinimapButton
 check(minimapButton ~= nil, "the minimap button is created at login")
 equal(minimapButton:IsShown(), true, "and shown while the setting allows it")
 
--- Decisions 147 and 149: the button wears the lantern, not `inv_shield_06`.
+-- Decision 155: one drawing for the whole add-on, and it is the add-on's own.
 --
--- And the file it points at has to be one the client can actually load, which is
--- the part nothing here could see before. The artwork the mission folder carries
--- is a PNG -- a format WoW does not read from an add-on folder -- and every one
--- of its pixels is opaque, so shipping it as it stood would have put a white
--- square inside the tracking ring. What is checked is the shipped file itself:
--- an uncompressed 32-bit TGA, a power of two on both sides, with real
--- transparency in it.
+-- THREE SURFACES, ONE ASSET. The manifest declares `## IconTexture`, which is
+-- what the AddOns list draws; `SetTexture` here is what the minimap draws; and a
+-- file has to be on disk for either of them to resolve. Nothing held the three
+-- together, so the day one of them was edited the list and the minimap could
+-- show two different pictures and every test stayed green.
+--
+-- And the file has to be one the client can actually load: an uncompressed
+-- 32-bit TGA, a power of two on both sides, written bottom-up, with real
+-- transparency in it. A PNG is a format WoW does not read from an add-on folder,
+-- and artwork with every pixel opaque is a white square inside the tracking ring.
 do
     local icon = minimapButton.icon
     check(icon ~= nil, "the button has an icon")
-    equal(icon:GetTexture(), "Interface\\AddOns\\Sanctuary\\media\\lanterne",
-        "pointed at the add-on's own lantern")
-    check(tostring(icon:GetTexture()):find("Icons", 1, true) == nil,
-        "and not at a Blizzard icon any more")
+    local drawn = tostring(icon:GetTexture())
+    check(drawn:find("Icons", 1, true) == nil,
+        "the button does not wear a Blizzard icon")
     equal(icon.__texCoord, nil,
         "drawn whole: the crop was there to cut a Blizzard icon's border")
     -- No extension in the path: the client resolves .blp or .tga itself, and a
-    -- texture is data -- nothing about it belongs in the .toc, which lists only
-    -- Lua and XML.
-    check(tostring(icon:GetTexture()):find("%.%a+$") == nil,
+    -- path with the extension spelt out is one that has to be edited the day the
+    -- file is compiled.
+    check(drawn:find("%.%a+$") == nil,
         "with no extension spelt out in the path")
 
-    local handle = io.open(repoRoot .. "/media/lanterne.tga", "rb")
-    check(handle ~= nil, "the file is in the add-on folder, beside the code")
+    -- Surface one: the manifest. Read from the .toc rather than repeated here,
+    -- so the assertion cannot agree with a copy of the wrong answer.
+    local manifest = io.open(repoRoot .. "/Sanctuary.toc", "r")
+    check(manifest ~= nil, "the manifest is readable")
+    local declared
+    if manifest then
+        for line in manifest:lines() do
+            declared = declared or line:match("^##%s*IconTexture:%s*(.-)%s*$")
+        end
+        manifest:close()
+    end
+    check(declared ~= nil, "and it declares an icon for the AddOns list")
+    equal(declared, drawn,
+        "the AddOns list and the minimap name the same asset")
+
+    -- Surface three: the file itself. The client's path is turned back into a
+    -- path on disk -- the add-on folder IS `Sanctuary`, and the extension is the
+    -- one we ship.
+    local relative = tostring(declared):gsub("\\", "/")
+        :gsub("^Interface/AddOns/Sanctuary/", "")
+    local handle = io.open(repoRoot .. "/" .. relative .. ".tga", "rb")
+    check(handle ~= nil,
+        "and the file that path resolves to is in the add-on folder (" .. relative .. ".tga)")
     if handle then
         local header = handle:read(18)
-        equal(#header, 18, "and it has a TGA header")
+        equal(#header, 18, "it has a TGA header")
         equal(header:byte(2), 0, "no colour map")
         -- Type 2 is uncompressed true-colour. Type 10 is the RLE variant, which
         -- is what every convert-to-TGA tool writes by default and what the
@@ -8640,20 +8663,49 @@ do
         equal(height, 64, "and 64 tall -- a power of two on both sides")
         equal(header:byte(17), 32, "32 bits a pixel, so there is room for an alpha")
         equal(header:byte(18) % 16, 8, "and eight of them are the alpha")
+        -- Bit 5 of the descriptor is the origin. Zero is bottom-left, which is
+        -- what the client reads; the other way round is an upside-down icon.
+        equal(math.floor(header:byte(18) / 32) % 2, 0, "written bottom-up")
         -- Really transparent, and really drawn: a file that is all background is
         -- an empty button, and one that is all artwork is the white square.
         local body = handle:read("a")
         handle:close()
         equal(#body, width * height * 4, "the pixels are all there")
         local clear, opaque = 0, 0
-        for at = 4, #body, 4 do
-            local alpha = body:byte(at)
-            if alpha == 0 then clear = clear + 1
-            elseif alpha > 200 then opaque = opaque + 1 end
+        -- The bounding box of what is drawn, which is what "centred in the ring"
+        -- means when nobody has the client open. Rows are stored bottom-up, so
+        -- the first and last rows are the bottom and top of the picture -- which
+        -- changes nothing to a comparison of the two margins.
+        local firstCol, lastCol, firstRow, lastRow = width, -1, height, -1
+        for row = 0, height - 1 do
+            for col = 0, width - 1 do
+                local alpha = body:byte((row * width + col) * 4 + 4)
+                if alpha == 0 then clear = clear + 1
+                elseif alpha > 200 then opaque = opaque + 1 end
+                if alpha > 8 then
+                    if col < firstCol then firstCol = col end
+                    if col > lastCol then lastCol = col end
+                    if row < firstRow then firstRow = row end
+                    if row > lastRow then lastRow = row end
+                end
+            end
         end
         check(clear > width * height / 4,
             "most of the square is see-through (" .. clear .. " px)")
-        check(opaque > 200, "and there is a lantern drawn in it (" .. opaque .. " px)")
+        check(opaque > 200, "and there is a drawing in it (" .. opaque .. " px)")
+        -- Centred, and big enough to read at the size of a minimap button. Two
+        -- pixels of tolerance: the drawing is not symmetric and does not have to
+        -- be, but an icon sitting to one side of its own square reads as a
+        -- misplaced icon beside the ones next to it.
+        check(math.abs(firstCol - (width - 1 - lastCol)) <= 2,
+            "the drawing is centred sideways (" .. firstCol .. " / "
+                .. (width - 1 - lastCol) .. " px of margin)")
+        check(math.abs(firstRow - (height - 1 - lastRow)) <= 2,
+            "and up and down (" .. firstRow .. " / "
+                .. (height - 1 - lastRow) .. " px of margin)")
+        check(math.max(lastCol - firstCol + 1, lastRow - firstRow + 1) >= 48,
+            "and it fills its square (" ..
+                math.max(lastCol - firstCol + 1, lastRow - firstRow + 1) .. " px)")
     end
 end
 
