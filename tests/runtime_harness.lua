@@ -6347,6 +6347,86 @@ equal(#invalidUtf8, 0,
     "every locale value is valid UTF-8 (" .. table.concat(invalidUtf8, ", ") .. ")")
 
 -- ---------------------------------------------------------------------------
+-- No visible string asks the game font for a glyph it does not have
+-- ---------------------------------------------------------------------------
+
+-- The window is set in Friz Quadrata, which carries Latin-1 and the Windows-1252
+-- additions on top of it -- the typographic quotes, the dashes, the ellipsis,
+-- the angle quotes -- and nothing beyond. WoW draws anything else as a white
+-- rectangle: "un rectangle blanc dans le menu des durees" was U+25BE, the small
+-- down-pointing triangle, written into the duration field as a glyph. It is not
+-- a translation problem -- no locale can render it -- so the arrow is drawn now,
+-- and this is what keeps the next one from being written instead of drawn.
+--
+-- Two places a visible glyph can come from here: a locale value, and a string
+-- literal in the code written as escaped bytes, which is what the caret was.
+do
+    local FONT_EXTRA = {}
+    for _, code in ipairs({ 0x20AC, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+        0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x017D, 0x2018, 0x2019, 0x201C,
+        0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153,
+        0x017E, 0x0178 }) do
+        FONT_EXTRA[code] = true
+    end
+    local function outsideFont(text)
+        if not utf8.len(text) then return nil end
+        for _, code in utf8.codes(text) do
+            if code >= 0x100 and not FONT_EXTRA[code] then
+                return string.format("U+%04X", code)
+            end
+        end
+        return nil
+    end
+    local unrenderable = {}
+    for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) do
+        for key, value in pairs(entry[2]) do
+            if type(value) == "string" then
+                local code = outsideFont(value)
+                if code then
+                    unrenderable[#unrenderable + 1] = entry[1] .. "." .. key .. " " .. code
+                end
+            end
+        end
+    end
+    -- And the escaped byte runs in the two code files. A comment cannot hold
+    -- one -- accented French in a comment is written as itself -- so a run of
+    -- "\226\150\190" is a string literal and nothing else.
+    --
+    -- A run written as a table KEY (`FOLD["\196\176"]`) is skipped: those are
+    -- the case-folding tables, which match on characters the add-on reads and
+    -- never draws -- Turkish, Cyrillic, Latin Extended-A. Nothing visible here
+    -- is ever a key, so the shape tells the two apart on its own.
+    for _, file in ipairs({ "/Sanctuary.lua", "/SanctuaryUI.lua" }) do
+        local handle = assert(io.open(repoRoot .. file, "r"))
+        local source = handle:read("a")
+        handle:close()
+        local cursor = 1
+        while true do
+            local runStart = source:find("\\%d%d?%d?", cursor)
+            if not runStart then break end
+            local bytes, at = {}, runStart
+            while true do
+                local _, stop, digits = source:find("^\\(%d%d?%d?)", at)
+                if not stop then break end
+                bytes[#bytes + 1] = string.char(tonumber(digits) % 256)
+                at = stop + 1
+            end
+            local isKey = source:sub(runStart - 2, runStart - 1) == "[\""
+                and source:sub(at, at + 1) == "\"]"
+            local code = not isKey and outsideFont(table.concat(bytes)) or nil
+            if code then
+                unrenderable[#unrenderable + 1] = file:sub(2) .. " " .. code
+            end
+            cursor = at
+        end
+    end
+    table.sort(unrenderable)
+    equal(#unrenderable, 0,
+        "no visible string carries a glyph the game font cannot draw ("
+        .. table.concat(unrenderable, ", ") .. ")")
+end
+
+-- ---------------------------------------------------------------------------
 -- The four tabs open, and the fifth only in debug mode
 -- ---------------------------------------------------------------------------
 

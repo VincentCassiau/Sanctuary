@@ -575,9 +575,41 @@ local function closeOpenDropdown()
 end
 
 local DROPDOWN_ROW_HEIGHT = 22
--- U+25BE, the small down-pointing triangle the mock-up draws in the field. A
--- glyph, not a sentence: there is nothing here for a translator to say.
-local DROPDOWN_CARET = "\226\150\190"
+-- The arrow in the field, DRAWN rather than written.
+--
+-- It used to be U+25BE, the small down-pointing triangle of the mock-up. Friz
+-- Quadrata -- the face this whole window is set in -- has no glyph for it: WoW
+-- draws a white rectangle instead, which is what "rectangle blanc dans le menu
+-- des durees" is. The font covers Latin-1 and the Windows-1252 additions and
+-- nothing else, so the geometric shapes block is out of reach whatever the
+-- locale, and a glyph nobody can render is not a translation problem to be
+-- fixed in one language.
+--
+-- Four bars, each two pixels tall, 8 px wide down to 2: a staircase that reads
+-- as a triangle at this size and depends on no font, no atlas and no file.
+local CARET_ROWS = 4
+local function newCaret(parent, color)
+    local caret = CreateFrame("Frame", nil, parent)
+    caret:SetSize(CARET_ROWS * 2, CARET_ROWS * 2)
+    caret.bars = {}
+    for index = 1, CARET_ROWS do
+        local bar = caret:CreateTexture(nil, "OVERLAY")
+        bar:SetSize((CARET_ROWS - index + 1) * 2, 2)
+        if index == 1 then
+            bar:SetPoint("TOP", caret, "TOP", 0, 0)
+        else
+            bar:SetPoint("TOP", caret.bars[index - 1], "BOTTOM", 0, 0)
+        end
+        bar:SetColorTexture(unpack(color))
+        caret.bars[index] = bar
+    end
+    -- One call for the four bars: the field greys its arrow with the rest of
+    -- itself, and a triangle half in one colour is worse than no triangle.
+    function caret:SetCaretColor(newColor)
+        for _, bar in ipairs(self.bars) do bar:SetColorTexture(unpack(newColor)) end
+    end
+    return caret
+end
 
 local function newDropdown(parent, name, width, rows, get, set)
     local field = CreateFrame("Button", name, parent, "BackdropTemplate")
@@ -585,7 +617,7 @@ local function newDropdown(parent, name, width, rows, get, set)
     applyBackdrop(field, C.input, C.border)
     field.value = newLabel(field, "", FONT_BODY, C.ink)
     field.value:SetPoint("LEFT", field, "LEFT", 8, 0)
-    field.caret = newLabel(field, DROPDOWN_CARET, FONT_BODY, C.dim)
+    field.caret = newCaret(field, C.dim)
     field.caret:SetPoint("RIGHT", field, "RIGHT", -8, 0)
     field.enabled = true
 
@@ -639,7 +671,8 @@ local function newDropdown(parent, name, width, rows, get, set)
         end
         self.value:SetText(text)
         self.value:SetTextColor(unpack(self.enabled and C.ink or C.disabled))
-        self.caret:SetTextColor(unpack(self.enabled and C.dim or C.disabled))
+        self.caret:SetCaretColor(self.enabled and C.dim or C.disabled)
+        self.caret:SetAlpha(self.enabled and 1 or DISABLED_ALPHA)
         applyBackdrop(self, C.input, self.enabled and C.border or C.disabled)
     end
 
