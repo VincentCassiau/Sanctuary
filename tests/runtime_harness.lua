@@ -1554,6 +1554,7 @@ fire("CHAT_MSG_SYSTEM", "invitation group text that does not match localized pat
 equal(SanctuaryDB.debugLog[#SanctuaryDB.debugLog].data.result, "NO_MATCH", "unmatched invite-like system message diagnosed")
 
 SanctuaryDB.notifications.mode = "minimal"
+asFound.minimalInterval = SanctuaryDB.notifications.minimalIntervalMinutes
 SanctuaryDB.notifications.minimalIntervalMinutes = 1
 SanctuaryCharDB.sessionStats.blockedCount = 2
 local beforeMinimalMessages = #chatMessages
@@ -1561,16 +1562,18 @@ runTickers()
 equal(#chatMessages, beforeMinimalMessages + 1, "minimal notification printed once")
 runTickers()
 equal(#chatMessages, beforeMinimalMessages + 1, "minimal notification throttled")
+SanctuaryDB.notifications.minimalIntervalMinutes = asFound.minimalInterval
 SanctuaryDB.notifications.mode = "silent"
 
 SanctuaryDB.debugLog = {}
+asFound.debugRotationLimit = SanctuaryDB.logging.maxEntries
 SanctuaryDB.logging.maxEntries = 7
 for i = 1, 10 do
     ns.debugLog("ROTATE", { i = i })
 end
 equal(#SanctuaryDB.debugLog, 7, "debug log rotates to configured max entries")
 equal(SanctuaryDB.debugLog[1].data.i, 4, "debug log keeps newest entries after configured rotation")
-SanctuaryDB.logging.maxEntries = 5000
+SanctuaryDB.logging.maxEntries = asFound.debugRotationLimit
 
 -- Popup helpers must handle multiple simultaneous StaticPopup frames and
 -- restore their original alpha values.
@@ -1850,6 +1853,7 @@ SanctuaryDB.filters.guildInvite = true
 
 -- Trade detection uses the available NPC/unit label and logs hyphenated realms
 -- without allocating a replacement log table during rotation.
+asFound.blockRotationLimit = SanctuaryDB.logging.maxEntries
 SanctuaryDB.logging.maxEntries = 2
 SanctuaryDB.log = {}
 now = now + 2
@@ -1862,7 +1866,7 @@ equal(#SanctuaryDB.log, 2, "block log rotates to configured max entries")
 equal(SanctuaryDB.log[1].name, "Second", "log rotation keeps second newest name")
 equal(SanctuaryDB.log[1].realm, "Realm-Two", "realm with hyphen parsed after first separator")
 equal(SanctuaryDB.log[2].realm, "Realm-With-Hyphen", "multi-hyphen realm preserved")
-SanctuaryDB.logging.maxEntries = 5000
+SanctuaryDB.logging.maxEntries = asFound.blockRotationLimit
 SanctuaryDB.log = {}
 
 npcName = "Traderbad-TestRealm"
@@ -2414,6 +2418,7 @@ for _, raw in ipairs({
 end
 
 asFound.reportDebug = SanctuaryDB.debugEnabled
+asFound.reportLimit = SanctuaryDB.logging.maxEntries
 SanctuaryDB.debugEnabled = true
 SanctuaryDB.logging.maxEntries = 5000
 ns.resetDebugLog()
@@ -2436,6 +2441,7 @@ report = ns.buildDebugReportText()
 check(renderClientMarkup(report):find("|Hplayer:%s|h[%s]|h", 1, true) ~= nil,
     "escaped report restores the raw invite global")
 ERR_INVITED_TO_GROUP_SS = asFound.inviteGlobal
+SanctuaryDB.logging.maxEntries = asFound.reportLimit
 SanctuaryDB.debugEnabled = asFound.reportDebug
 
 -- ---------------------------------------------------------------------------
@@ -2443,6 +2449,7 @@ SanctuaryDB.debugEnabled = asFound.reportDebug
 -- ---------------------------------------------------------------------------
 
 asFound.retentionDebug = SanctuaryDB.debugEnabled
+asFound.retentionLimit = SanctuaryDB.logging.maxEntries
 SanctuaryDB.debugEnabled = true
 SanctuaryDB.logging.maxEntries = 3
 ns.resetDebugLog()
@@ -2478,7 +2485,7 @@ equal(ns.getDebugLogStats().produced, 0, "clearing the debug log resets the prod
 equal(ns.getDebugLogStats().dropped, 0, "clearing the debug log resets the dropped counter")
 report = ns.buildDebugReportText()
 check(report:find("!!! TRUNCATED", 1, true) == nil, "an untruncated report carries no truncation warning")
-SanctuaryDB.logging.maxEntries = 5000
+SanctuaryDB.logging.maxEntries = asFound.retentionLimit
 SanctuaryDB.debugEnabled = asFound.retentionDebug
 
 -- ---------------------------------------------------------------------------
@@ -2583,6 +2590,7 @@ SanctuaryDB.debugEnabled = asFound.soundGuardDebug
 -- numbers it carries, and calibrating on the count reissues numbers that are
 -- already in the report.
 asFound.legacyRotationDebug = SanctuaryDB.debugEnabled
+asFound.legacyRotationLimit = SanctuaryDB.logging.maxEntries
 SanctuaryDB.debugEnabled = true
 SanctuaryDB.logging.maxEntries = 5000
 SanctuaryDB.debugLogStats = nil
@@ -2607,7 +2615,7 @@ equal(ns.getDebugLogStats().produced, 5201,
 equal(ns.getDebugLogStats().produced - #SanctuaryDB.debugLog, ns.getDebugLogStats().dropped,
     "kept plus dropped accounts for every produced entry")
 ns.resetDebugLog()
-SanctuaryDB.logging.maxEntries = 5000
+SanctuaryDB.logging.maxEntries = asFound.legacyRotationLimit
 SanctuaryDB.debugEnabled = asFound.legacyRotationDebug
 
 -- ---------------------------------------------------------------------------
@@ -5501,6 +5509,7 @@ do
     -- goes on hiding, because hiding is not journalling.
     clean()
     SanctuaryDB.antiSpam.enabled = true
+    asFound.hiddenRepeatRecording = SanctuaryDB.logging.enabled
     SanctuaryDB.logging.enabled = false
     local quiet = "nothing to record here"
     deliverChatMessage("filters_first", 3, "CHAT_MSG_CHANNEL",
@@ -5510,13 +5519,14 @@ do
         channelPayload(quiet, SPAMMY, 811002))
     equal(hidden[1], true, "the repeat is still hidden with the Journal off")
     equal(#SanctuaryDB.log, 0, "and nothing is written")
-    SanctuaryDB.logging.enabled = true
+    SanctuaryDB.logging.enabled = asFound.hiddenRepeatRecording
 end
 
 -- A full journal. Rotation drops the oldest entries, and only those leave the
 -- index: what stays goes on folding, which is the very case the fold was asked
 -- for.
 clean()
+asFound.journalRotationLimit = SanctuaryDB.logging.maxEntries
 SanctuaryDB.logging.maxEntries = 3
 ns.logBlock("channel", SPAMMY, "line one", nil, nil)
 now = now + 5
@@ -5540,7 +5550,7 @@ for _, entry in ipairs(SanctuaryDB.log) do
     if entry.msg == "line three" then stillThere = entry end
 end
 equal(stillThere and stillThere.count, 2, "with one more occurrence on it")
-SanctuaryDB.logging.maxEntries = 5000
+SanctuaryDB.logging.maxEntries = asFound.journalRotationLimit
 
 -- Emptying the journal empties what folds into it.
 clean()
@@ -5560,6 +5570,7 @@ end
 do
 
 resetModelState()
+asFound.journalWarningLimit = SanctuaryDB.logging.maxEntries
 SanctuaryDB.logging.maxEntries = 100
 
 local function fillJournal(count)
@@ -5609,11 +5620,12 @@ equal(said(fullAt100), 1, "once, like the other one")
 
 -- Nothing to record, nothing to warn about.
 fillJournal(100)
+asFound.journalWarningRecording = SanctuaryDB.logging.enabled
 SanctuaryDB.logging.enabled = false
 chatMessages = {}
 fire("PLAYER_ENTERING_WORLD")
 equal(#chatMessages, 0, "with the Journal switched off nothing is said")
-SanctuaryDB.logging.enabled = true
+SanctuaryDB.logging.enabled = asFound.journalWarningRecording
 
 fillJournal(100)
 SanctuaryCharDB.overrides.enabled = false
@@ -5628,7 +5640,7 @@ chatMessages = {}
 fire("PLAYER_ENTERING_WORLD")
 equal(said(fullAt100), 1, "a journal that filled up again warns again")
 
-SanctuaryDB.logging.maxEntries = 5000
+SanctuaryDB.logging.maxEntries = asFound.journalWarningLimit
 ns.clearJournal()
 resetModelState()
 
@@ -5926,6 +5938,7 @@ equal(#SanctuaryDB.debugLog, 0, "and nothing at all is recorded")
 SanctuaryDB.debugEnabled = true
 
 -- H6 -- the journal option changes nothing either way.
+asFound.secretLineRecording = SanctuaryDB.logging.enabled
 for _, enabled in ipairs({ true, false }) do
     SanctuaryDB.logging.enabled = enabled
     ns.resetDebugLog()
@@ -5934,7 +5947,7 @@ for _, enabled in ipairs({ true, false }) do
     equal(shown, 0, "masked whatever the journal option says")
     equal(journalled, 0, "and the journal is untouched either way")
 end
-SanctuaryDB.logging.enabled = true
+SanctuaryDB.logging.enabled = asFound.secretLineRecording
 
 -- H7 -- the lockdown reading is observed, never blocking.
 local savedLockdownApi = C_ChatInfo.InChatMessagingLockdown
@@ -8679,6 +8692,7 @@ end
 exportFrame:Hide()
 
 -- The journal size is clamped on write, so nobody leaves thinking they set 50.
+asFound.advancedLimit = SanctuaryDB.logging.maxEntries
 _G.SanctuaryMaxEntriesInput:SetText("50")
 _G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesInput)
 SanctuaryDB.debugEnabled = asFound.advancedDebug
@@ -8704,7 +8718,7 @@ _G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesIn
 equal(SanctuaryDB.logging.maxEntries, 100, "text that is not a number changes nothing")
 equal(_G.SanctuaryMaxEntriesInput:GetText(), "100",
     "and the field goes back to the value that is stored")
-_G.SanctuaryMaxEntriesInput:SetText("5000")
+_G.SanctuaryMaxEntriesInput:SetText(tostring(asFound.advancedLimit))
 _G.SanctuaryMaxEntriesInput:GetScript("OnEnterPressed")(_G.SanctuaryMaxEntriesInput)
 
 -- ---------------------------------------------------------------------------
@@ -8889,6 +8903,7 @@ end
 equal(ns.minimapRadius(140), 80, "the default minimap keeps the radius the button had")
 check(ns.minimapRadius(240) > 120, "a minimap enlarged in Edit Mode pushes the button out with it")
 equal(ns.minimapRadius(nil), 80, "and a minimap that cannot be measured falls back on the default")
+asFound.minimapAngle = SanctuaryDB.minimap.angle
 do
     Minimap.GetWidth = function() return 240 end
     SanctuaryDB.minimap.angle = 0
@@ -8954,6 +8969,7 @@ do
     Minimap.GetEffectiveScale = function() return 1 end
     UIParent.GetEffectiveScale = restoreUIParentScale
     GetCursorPosition = function() return 180, 100 end
+    SanctuaryDB.minimap.angle = asFound.minimapAngle
 end
 
 asFound.minimapOverride = SanctuaryCharDB.overrides.enabled
@@ -11132,12 +11148,14 @@ end
 local savedFrames = {}
 for i = 1, 20 do savedFrames[i] = _G["ChatFrame" .. i] end
 for i = 2, 20 do _G["ChatFrame" .. i] = nil end
--- `prepare()` below writes three shared settings on every scenario. They are
+-- `prepare()` below writes five shared settings on every scenario. They are
 -- taken here and given back at the end of the scope, so the sections that follow
 -- read the model this one was handed rather than the one it needed.
 local scopeDebug = SanctuaryDB.debugEnabled
 local scopePreset = SanctuaryDB.filters.preset
 local scopeNotifications = SanctuaryDB.notifications.mode
+local scopeRecording = SanctuaryDB.logging.enabled
+local scopeRetention = SanctuaryDB.logging.maxEntries
 local whisperTab = { chatType = "WHISPER", chatTarget = "" }
 local bnetTab = { chatType = "BN_WHISPER", chatTarget = "" }
 ChatFrame5 = whisperTab
@@ -11389,6 +11407,8 @@ prepare()
 SanctuaryDB.debugEnabled = scopeDebug
 SanctuaryDB.filters.preset = scopePreset
 SanctuaryDB.notifications.mode = scopeNotifications
+SanctuaryDB.logging.enabled = scopeRecording
+SanctuaryDB.logging.maxEntries = scopeRetention
 
 end)()
 
@@ -11482,6 +11502,7 @@ end)()
 do
 
 resetModelState()
+asFound.reloadRecording = SanctuaryDB.logging.enabled
 SanctuaryDB.logging.enabled = true
 ns.clearJournal()
 setHarnessDay("2026-08-24")
@@ -11543,6 +11564,7 @@ equal(SanctuaryDB.log[2].count, 2, "and the most recent one takes the occurrence
 -- must go on folding, which is the whole point on a full journal.
 setHarnessDay("2026-08-27")
 reloaded.clearJournal()
+asFound.reloadRotationLimit = SanctuaryDB.logging.maxEntries
 SanctuaryDB.logging.maxEntries = 3
 for index, line in ipairs({ "the evicted line", "the next one out", "the surviving line" }) do
     SanctuaryDB.log[index] = { t = time(), d = "2026-08-27 12:00:00", type = "channel",
@@ -11561,7 +11583,7 @@ reloaded.logBlock("channel", "Rotator-TestRealm", "the evicted line", nil, nil)
 equal(SanctuaryDB.log[3].msg, "the evicted line", "the evicted line comes back")
 equal(SanctuaryDB.log[3].count, nil,
     "as a new entry, not one more occurrence of a line nobody can reach")
-SanctuaryDB.logging.maxEntries = 5000
+SanctuaryDB.logging.maxEntries = asFound.reloadRotationLimit
 
 -- An entry that carries no message is not indexed by the walk either.
 setHarnessDay("2026-08-28")
@@ -11640,6 +11662,7 @@ GetNormalizedRealmName = ownRealm
 
 setHarnessDay("2026-06-20")
 resetModelState()
+SanctuaryDB.logging.enabled = asFound.reloadRecording
 
 end
 
