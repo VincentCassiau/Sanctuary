@@ -3411,11 +3411,46 @@ local function createMainFrame()
     tinsert(UISpecialFrames, "SanctuaryMainFrame")
 
     -- Header: a title, one control, a cross. Nothing else.
-    local header = CreateFrame("Frame", nil, mainFrame, "BackdropTemplate")
+    local header = CreateFrame("Frame", "SanctuaryTitleBar", mainFrame, "BackdropTemplate")
     header:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 0, 0)
     header:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", 0, 0)
     header:SetHeight(HEADER_HEIGHT)
     applyBackdrop(header, C.header, C.border)
+
+    -- The title bar carries the two window gestures, decision 136 -- "comme ca
+    -- on garde un seul comportement sur le drag n drop". Dragging it moves the
+    -- window, exactly as dragging the body does; double-clicking it puts the
+    -- window back to the size it opens at, which is what the grip's own
+    -- double-click used to do.
+    --
+    -- The move goes through RegisterForDrag rather than OnMouseDown, and that is
+    -- what "sans declencher un deplacement au passage" rests on: the client
+    -- fires OnDragStart only once the mouse has actually travelled, so neither
+    -- click of a double-click starts a move.
+    header:EnableMouse(true)
+    header:RegisterForDrag("LeftButton")
+    header:SetScript("OnDragStart", function() mainFrame:StartMoving() end)
+    header:SetScript("OnDragStop", function()
+        mainFrame:StopMovingOrSizing()
+        local point, _, _, x, y = mainFrame:GetPoint()
+        if SanctuaryDB then SanctuaryDB.uiPosition = { point = point, x = x, y = y } end
+    end)
+    header.lastClick = 0
+    header:SetScript("OnMouseDown", function(self)
+        local now = GetTime()
+        if now - (self.lastClick or 0) < 0.4 then
+            self.lastClick = 0
+            -- The SIZE only. Where the window sits is a separate gesture and a
+            -- separate memory, and a person who has moved the window and wants
+            -- it back at its normal size has not asked for it to jump to the
+            -- middle of the screen.
+            manualSize = nil
+            if SanctuaryDB then SanctuaryDB.uiSize = nil end
+            ns.refreshUI()
+            return
+        end
+        self.lastClick = now
+    end)
 
     local title = newLabel(header, "Sanctuary", 18, C.accent)
     title:SetPoint("LEFT", header, "LEFT", 16, 0)
@@ -3551,44 +3586,40 @@ local function createMainFrame()
     layoutUndoLine()
     undoLine:Hide()
 
-    -- Grip: dragging switches to manual sizing, double-clicking goes back to
-    -- fitted. No numeric size setting -- decision 61.
+    -- Grip: ONE gesture, and only one -- it drags, and that is all it does
+    -- (decisions 135-136, "ca doit juste suivre ma souris et si je clique dessus
+    -- sans rien bouger la fenetre ne doit pas etre redimensionnee"). The way
+    -- back to the default size is a double-click on the title bar, above.
+    --
+    -- What made a click alone resize the window was not StartSizing -- the
+    -- client moves nothing while the mouse does not -- but the release: it wrote
+    -- the current size down unconditionally, which switched the window from the
+    -- fitted mode to the manual one, and the manual mode is clamped to the
+    -- grip's own floor rather than to the screen's. So a window that had been
+    -- fitted to a short screen jumped to that floor on a click that moved
+    -- nothing. The size at the press is kept and compared: no movement, no
+    -- write, no refresh, nothing at all.
     resizeGrip = CreateFrame("Button", "SanctuaryResizeGrip", mainFrame)
     resizeGrip:SetSize(16, 16)
     resizeGrip:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMRIGHT", -2, 2)
     resizeGrip:SetFrameLevel(LEVEL_OVER_PANEL)
     resizeGrip:SetNormalTexture("Interface/ChatFrame/UI-ChatIM-SizeGrabber-Up")
     resizeGrip:SetHighlightTexture("Interface/ChatFrame/UI-ChatIM-SizeGrabber-Highlight")
-    resizeGrip.lastClick = 0
-    resizeGrip.sizing = false
-    resizeGrip:SetScript("OnMouseDown", function()
-        local now = GetTime()
-        if now - (resizeGrip.lastClick or 0) < 0.4 then
-            resizeGrip.lastClick = 0
-            resizeGrip.sizing = false
-            manualSize = nil
-            if SanctuaryDB then SanctuaryDB.uiSize = nil end
-            ns.refreshUI()
-            return
-        end
-        resizeGrip.lastClick = now
-        resizeGrip.sizing = true
+    resizeGrip:SetScript("OnMouseDown", function(self)
+        self.fromWidth, self.fromHeight = mainFrame:GetWidth(), mainFrame:GetHeight()
         mainFrame:StartSizing("BOTTOMRIGHT")
     end)
-    resizeGrip:SetScript("OnMouseUp", function()
+    resizeGrip:SetScript("OnMouseUp", function(self)
         mainFrame:StopMovingOrSizing()
-        -- The second click of a double-click never started a resize: it cleared
-        -- the remembered size and went back to the fitted mode. Recording the
-        -- current size here unconditionally put it straight back on the button
-        -- release, so the way back to the fitted mode did not survive the click.
-        if not resizeGrip.sizing then return end
-        resizeGrip.sizing = false
-        manualSize = { mainFrame:GetWidth(), mainFrame:GetHeight() }
-        if SanctuaryDB then SanctuaryDB.uiSize = { manualSize[1], manualSize[2] } end
+        local width, height = mainFrame:GetWidth(), mainFrame:GetHeight()
+        -- A click that moved nothing is a click, not a drag.
+        if width == self.fromWidth and height == self.fromHeight then return end
+        manualSize = { width, height }
+        if SanctuaryDB then SanctuaryDB.uiSize = { width, height } end
         -- Recording the size is not applying it. The content area keeps the
         -- height it was given by the last refresh until something hands it the
         -- new one, so a drag left the screen either floating in a taller window
-        -- or spilling out under a shorter one, over the tab strip, with no bar.
+        -- or spilling out under a shorter one, with no bar.
         ns.refreshUI()
     end)
 

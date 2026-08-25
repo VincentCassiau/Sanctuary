@@ -8628,17 +8628,81 @@ mainFrame:Hide()
 mainFrame:Show()
 equal(mainFrame:GetWidth(), 700, "and reopening brings the dragged width back with it")
 
--- Double-click: two press/release pairs less than 0.4 s apart. The second
--- OnMouseDown cleared the remembered size -- and the OnMouseUp of that very same
--- click wrote it straight back, so the way back to the fitted mode did not
--- survive the button being released.
+-- One gesture per zone, decisions 135-136. The grip ONLY drags: a press and a
+-- release with nothing moved in between must leave the window exactly as it was
+-- -- no write, no switch out of the fitted mode, no jump. That press/release
+-- pair used to record the current size unconditionally, which is what
+-- "la poignee redimensionne a chaque re-clic" was made of.
+now = now + 5
+local restingWidth, restingHeight = mainFrame:GetWidth(), mainFrame:GetHeight()
+local restingSize = { SanctuaryDB.uiSize[1], SanctuaryDB.uiSize[2] }
+gripDown(grip)
+gripUp(grip)
+equal(mainFrame:GetWidth(), restingWidth, "clicking the grip without moving keeps the width")
+equal(mainFrame:GetHeight(), restingHeight, "and the height")
+equal(SanctuaryDB.uiSize[1], restingSize[1], "and writes nothing down")
+equal(SanctuaryDB.uiSize[2], restingSize[2], "in either dimension")
+-- And from the fitted mode, where the defect actually showed: a click on the
+-- grip must not switch the window over to the manual mode at all.
+SanctuaryDB.uiSize = nil
+ns.refreshUI()
+local fittedHeight = mainFrame:GetHeight()
 now = now + 5
 gripDown(grip)
 gripUp(grip)
+equal(SanctuaryDB.uiSize, nil, "a click on the grip never leaves the fitted mode")
+equal(mainFrame:GetHeight(), fittedHeight, "and the window does not move a pixel")
+-- Two clicks in a row are still two clicks: the grip has no double-click any
+-- more, so nothing here may be read as one.
 now = now + 0.2
 gripDown(grip)
 gripUp(grip)
-equal(SanctuaryDB.uiSize, nil, "a double-click forgets the remembered size for good")
+equal(SanctuaryDB.uiSize, nil, "twice over, and still nothing written")
+
+-- The way back to the default size is a double-click on the TITLE BAR
+-- (decision 136): two press/release pairs less than 0.4 s apart, where the title
+-- and the on/off control are.
+local titleBar = _G.SanctuaryTitleBar
+check(titleBar ~= nil, "the title bar is a frame of its own")
+local titleDown = titleBar:GetScript("OnMouseDown")
+check(type(titleDown) == "function", "and it answers a press")
+now = now + 5
+gripDown(grip)
+mainFrame:SetSize(700, 940)
+gripUp(grip)
+equal(SanctuaryDB.uiSize[1], 700, "a drag is still recorded")
+now = now + 5
+titleDown(titleBar)
+now = now + 0.2
+titleDown(titleBar)
+equal(SanctuaryDB.uiSize, nil,
+    "a double-click on the title bar forgets the remembered size for good")
+-- A single click on the title bar is not half a gesture: it does nothing.
+now = now + 5
+gripDown(grip)
+mainFrame:SetSize(700, 940)
+gripUp(grip)
+now = now + 5
+titleDown(titleBar)
+now = now + 2
+equal(SanctuaryDB.uiSize[1], 700, "one click on the title bar changes nothing")
+now = now + 5
+titleDown(titleBar)
+now = now + 0.2
+titleDown(titleBar)
+equal(SanctuaryDB.uiSize, nil, "and the pair still counts once the pause is over")
+
+-- Dragging the title bar moves the window and never resizes it: the two
+-- gestures live in two zones and neither does the other's work.
+do
+    local movedSize = { mainFrame:GetWidth(), mainFrame:GetHeight() }
+    titleBar:GetScript("OnDragStart")(titleBar)
+    titleBar:GetScript("OnDragStop")(titleBar)
+    equal(mainFrame:GetWidth(), movedSize[1], "a title-bar drag leaves the width alone")
+    equal(mainFrame:GetHeight(), movedSize[2], "and the height")
+    equal(SanctuaryDB.uiSize, nil, "and never writes a manual size")
+    check(SanctuaryDB.uiPosition ~= nil, "what it records is where the window is")
+end
 
 -- And the fitted mode is really back: the height follows the screen again, and
 -- the width goes back to the one the window is designed at.
