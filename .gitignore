@@ -10,10 +10,8 @@ desktop.ini
 *.bak
 *.orig
 
-# Claude Code
-CLAUDE.md
-AGENTS.md
-.claude/
-
 # Local project-only working notes
 internal_docs/
+
+# Local diagnostic build output (never published)
+dist/

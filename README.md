@@ -1,171 +1,86 @@
 # Sanctuary
 
-> Whitelist-based anti-harassment protection for World of Warcraft.
+> Anti-harassment and anti-spam protection for World of Warcraft: Sanctuary blocks invitations, messages, whispers and other toxic interactions from harmful players before they can bother you.
 
-*[Version francaise ci-dessous](#version-francaise)*
+*[Version française](README.fr.md)*
 
-## What it does
+![Sanctuary's main screen](media/screenshots/en-protection.png)
 
-Sanctuary silently blocks all interactions from players who are not on your whitelist. Unlike blacklist-based addons, nothing gets through unless explicitly authorized.
+## What Sanctuary does
 
-**Blocked interactions:**
-- Group invitations (including system messages and sounds)
-- Whispers (regular and BattleNet)
-- Duels, trades, guild invitations
-- /say, /yell, /emote (optional)
-- Channel messages (optional)
+By default, only the players you know can contact you. A second mode lets everyone through, except the players you have decided to block, by name or by pattern.
 
-**Trusted by default:**
-- Guild members
-- BattleNet friends
-- Character friends
-- Current group/raid members
+Blocked interactions leave no trace: no window, no message, no sound.
 
-Everything else is blocked and logged.
+**What Sanctuary can block:**
+- group and guild invitations
+- whispers from WoW characters (never Battle.net ones)
+- duels and trades
+- /say, /yell and emotes
+- spam in the public channels
 
-## Why Sanctuary?
+**Who always gets through:**
+- your guild
+- your friends
+- your current group or raid
+- the names you have allowed
 
-Most addons that deal with unwanted interactions work on a **blacklist** model: you block specific players and everyone else gets through. Sanctuary flips this around with a **whitelist** model: only explicitly trusted players can interact with you. Everything else is silently blocked.
+## Why Sanctuary
 
-What makes Sanctuary different:
-- **Whitelist-first** -- Guild, friends, and group members are trusted automatically. Everyone else is blocked by default.
-- **Full suppression** -- Not just auto-decline, but also system message hiding and sound muting. Nothing reaches you.
-- **Suspect patterns** -- Keyword-based name matching that overrides even the whitelist, for players who create new characters with recognizable names.
-- **Complete logging** -- Every blocked interaction is recorded with timestamp, type, source, and message content. Exportable.
+Most add-ons work with a blacklist: you block one player, everyone else gets through. A harasser switches characters and starts again. Sanctuary allows the opposite: only the people you trust can reach you, strangers are blocked outright. The blacklist is there too, with patterns: a piece of a name is enough to block a whole family of characters.
 
-Sanctuary works alongside addons like LeatrixPlus, BadBoy, and Global Ignore List without conflict.
+![The Journal](media/screenshots/en-journal.png)
+
+The Journal keeps a record of everything that was blocked, with the time, the type and the message. A repeated spam counts once, with its number of repeats.
 
 ## Installation
 
-1. Download or clone this repository
-2. Copy the folder to `World of Warcraft/_retail_/Interface/AddOns/Sanctuary/`
-3. Make sure the folder is named `Sanctuary` (not `Sanctuary-main`)
-4. Restart WoW or type `/reload`
+The easiest way: install Sanctuary from CurseForge, with the app or from the project page.
+
+By hand:
+
+1. Download this repository.
+2. Copy the folder to `World of Warcraft/_retail_/Interface/AddOns/Sanctuary/`.
+3. Make sure the folder is named `Sanctuary`.
+4. Restart WoW or type `/reload`.
 
 ## Usage
 
-Type `/sanc` or `/sanctuary` to open the configuration window.
+Click the Sanctuary icon around the minimap, or type `/sanc` to open the window.
 
-The GUI has 5 tabs:
-- **Filters** -- Toggle which interactions to block, notification mode, channel filtering
-- **Patterns** -- Add suspect name patterns (e.g. "goldbank" blocks any player whose name contains it)
-- **Whitelist** -- Manually add trusted players
-- **Logs** -- Browse blocked interactions, export logs
-- **About** -- Version information and opt-in diagnostics export
+The main screen asks five questions: who can contact you, what Sanctuary should block, whether to hide the spam of the public channels, what Sanctuary tells you in chat, and your lists.
 
-For severe invite spam while already grouped or in an instance, the Filters tab includes enhanced instance filtering that can hide protected system messages Sanctuary cannot read. Leave it off unless unwanted invites still appear during dungeons, raids, or instances.
+Enhanced filtering in instances (experimental) is a box of its own. When WoW locks the chat down (instance bosses, Mythic+ keys, PvP matches), add-ons can no longer read system messages. With this option on, while you are grouped or in an instance, Sanctuary hides every system message, not only invitations. Turn it on only if unwanted invitations still reach you in a dungeon, a raid or PvP.
 
-Developer diagnostics: `/sanc simulate <name>` runs the group-invite decision and chat-filter path without calling WoW decline APIs or showing the real `PARTY_INVITE` popup. `/sanc simulate bnetfriend 1` checks the first Battle.net friend against the BNet-whisper filter without printing the account name. `/sanc diag sound invite`, `/sanc diag popup duel`, and `/sanc diag popup guild` exercise focused live-client diagnostics for protected sounds/popups.
+## Your lists
 
-## How the whitelist works
+![Always blocked](media/screenshots/en-blocked.png)
 
-The addon maintains a whitelist from multiple sources. All sources are always active:
+![Always allowed](media/screenshots/en-allowed.png)
 
-| Source | Automatic |
-|--------|:---------:|
-| Guild members | Yes |
-| BattleNet friends | Yes |
-| Character friends | Yes |
-| Group/raid members | Yes |
-| Manual whitelist | You add them |
-| Auto-trust (optional) | After 5 min in group |
+The people you trust come from several sources, all active at the same time:
 
-**Suspect patterns override the whitelist.** If a player's name contains a suspect keyword, they are blocked even if they are in your guild or friends list.
+| Source | How |
+|--------|-----|
+| Guild | automatic |
+| Friends | automatic |
+| Current group or raid | automatic, for as long as the group lasts |
+| Always allowed | you add them |
+| Automatic trust | after 5 minutes in your group, if you tick the option |
+
+**Blocked names and patterns win over everything.** A name containing a pattern is blocked, even in your guild or your group.
+
+**Sanctuary never blocks anyone on Battle.net.** Your Battle.net friends always get through. To cut a Battle.net contact off, do it in Battle.net.
+
+## If something goes wrong
+
+Open the Advanced tab and turn debug mode on. Reproduce the problem, then copy the journal from the Journal tab and paste it into a GitHub issue. Nothing is sent automatically.
 
 ## Compatibility
 
-- **WoW version:** Retail (Midnight) -- Interface 120007
-- **Retail only.** Classic, Cataclysm Classic, Season of Discovery, and other non-retail clients are not supported or tested.
-- **LeatrixPlus:** Compatible. Sanctuary adds system message suppression on top of LeatrixPlus's auto-decline.
-- **BadBoy:** Compatible. Both addons work independently on their respective filters.
-- **No dependencies.** Pure WoW API, no external libraries.
+- WoW Retail (Midnight). Classic and the other clients are not supported for now.
+- No dependencies, no external library.
 
 ## License
-
-[MIT](LICENSE)
-
----
-
-## Version francaise
-
-> Protection anti-harcelement par whitelist pour World of Warcraft.
-
-### Qu'est-ce que Sanctuary ?
-
-Sanctuary bloque silencieusement toutes les interactions des joueurs qui ne sont pas dans votre whitelist. Contrairement aux addons par liste noire, rien ne passe sauf ce qui est explicitement autorise.
-
-**Interactions bloquees :**
-- Invitations de groupe (y compris les messages systeme et les sons)
-- Whispers (normaux et BattleNet)
-- Duels, echanges, invitations de guilde
-- /dire, /crier, /emote (optionnel)
-- Messages dans les canaux (optionnel)
-
-**Sources de confiance par defaut :**
-- Membres de guilde
-- Amis BattleNet
-- Amis du personnage
-- Membres du groupe/raid en cours
-
-Tout le reste est bloque et journalise.
-
-### Pourquoi Sanctuary ?
-
-La plupart des addons qui gerent les interactions non souhaitees fonctionnent sur un modele de **blacklist** : vous bloquez des joueurs specifiques et tous les autres passent. Sanctuary inverse cette logique avec un modele de **whitelist** : seuls les joueurs explicitement autorises peuvent interagir avec vous. Tout le reste est bloque silencieusement.
-
-Ce qui differencie Sanctuary :
-- **Whitelist d'abord** -- Guilde, amis et membres du groupe sont automatiquement autorises. Tous les autres sont bloques par defaut.
-- **Suppression totale** -- Pas seulement le refus automatique, mais aussi la suppression des messages systeme et la coupure du son. Rien ne vous parvient.
-- **Patterns suspects** -- Detection par mots-cles dans les pseudos qui prime meme sur la whitelist, pour les joueurs qui creent de nouveaux personnages avec des noms reconnaissables.
-- **Journalisation complete** -- Chaque interaction bloquee est enregistree avec horodatage, type, source et contenu du message. Exportable.
-
-Sanctuary fonctionne aux cotes d'addons comme LeatrixPlus, BadBoy et Global Ignore List sans conflit.
-
-### Installation
-
-1. Telechargez ou clonez ce depot
-2. Copiez le dossier dans `World of Warcraft/_retail_/Interface/AddOns/Sanctuary/`
-3. Verifiez que le dossier s'appelle bien `Sanctuary`
-4. Relancez WoW ou tapez `/reload`
-
-### Utilisation
-
-Tapez `/sanc` ou `/sanctuary` pour ouvrir la fenetre de configuration.
-
-L'interface comporte 5 onglets :
-- **Filtres** -- Activer/desactiver les filtres, mode de notification, filtrage des canaux
-- **Patterns** -- Ajouter des mots-cles suspects (ex: "goldbank" bloque tout joueur dont le pseudo contient ce mot)
-- **Whitelist** -- Ajouter manuellement des joueurs de confiance
-- **Logs** -- Consulter les interactions bloquees, exporter les logs
-- **A propos** -- Version et export de diagnostics active manuellement
-
-Pour les spams d'invitations severes quand vous etes deja en groupe ou en instance, l'onglet Filtres contient un filtrage renforce en instance qui peut masquer les messages systeme proteges que Sanctuary ne peut pas lire. Laissez-le desactive sauf si vous recevez quand meme des invitations indesirables en donjon, raid ou instance.
-
-Diagnostics developpeur : `/sanc simulate <name>` execute la decision d'invitation de groupe et le filtre de chat sans appeler les APIs de refus WoW ni afficher la vraie popup `PARTY_INVITE`. `/sanc simulate bnetfriend 1` teste le premier ami Battle.net contre le filtre de whisper BNet sans afficher le nom du compte. `/sanc diag sound invite`, `/sanc diag popup duel` et `/sanc diag popup guild` lancent des diagnostics client cibles sur les sons/popups proteges.
-
-### Fonctionnement de la whitelist
-
-L'addon maintient une whitelist a partir de plusieurs sources. Toutes les sources sont toujours actives :
-
-| Source | Automatique |
-|--------|:-----------:|
-| Membres de guilde | Oui |
-| Amis BattleNet | Oui |
-| Amis du personnage | Oui |
-| Membres du groupe/raid | Oui |
-| Whitelist manuelle | Vous les ajoutez |
-| Auto-trust (optionnel) | Apres 5 min en groupe |
-
-**Les patterns suspects priment sur la whitelist.** Si le pseudo d'un joueur contient un mot-cle suspect, il sera bloque meme s'il est dans votre guilde ou votre liste d'amis.
-
-### Compatibilite
-
-- **Version WoW :** Retail (Midnight) -- Interface 120007
-- **Retail uniquement.** Classic, Cataclysm Classic, Season of Discovery et les autres clients non-retail ne sont pas supportes ni testes.
-- **LeatrixPlus :** Compatible. Sanctuary ajoute la suppression des messages systeme en complement du refus automatique de LeatrixPlus.
-- **BadBoy :** Compatible. Les deux addons fonctionnent ensemble sans conflit.
-- **Aucune dependance.** API WoW native uniquement, pas de librairie externe.
-
-### Licence
 
 [MIT](LICENSE)
