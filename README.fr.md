@@ -1,79 +1,86 @@
 # Sanctuary
 
-> Protection anti-harcelement pour World of Warcraft.
+> Protection contre le harcèlement et le spam dans World of Warcraft : Sanctuary bloque les invitations, messages, chuchotements et autres interactions toxiques des personnes néfastes avant même que vous ne soyez dérangé.
 
 *[English version](README.md)*
 
-## Qu'est-ce que Sanctuary ?
+![Écran principal de Sanctuary](media/screenshots/fr-protection.png)
 
-Sanctuary fonctionne dans les deux sens : par defaut, seuls les joueurs que vous connaissez peuvent vous contacter ; un second mode laisse tout passer, sauf les joueurs que vous avez decide de bloquer, par pseudo ou par pattern.
+## Ce que fait Sanctuary
 
-**Interactions bloquees :**
-- Invitations de groupe (y compris les messages systeme et les sons)
-- Les chuchotements des personnages WoW (les chuchotements Battle.net ne sont jamais filtres)
-- Duels, echanges, invitations de guilde
-- /dire, /crier, /emote (optionnel)
-- Messages dans les canaux (optionnel)
+Par défaut, seuls les joueurs que vous connaissez peuvent vous contacter. Un second mode laisse tout passer, sauf les joueurs que vous avez décidé de bloquer, par pseudo ou par pattern.
 
-**Sources de confiance par defaut :**
-- Membres de guilde
-- Amis BattleNet
-- Amis du personnage
-- Membres du groupe/raid en cours
+Les interactions bloquées ne laissent aucune trace : pas de fenêtre, pas de message, pas de son.
 
-Dans le mode par defaut, tout le reste est bloque et journalise.
+**Ce que Sanctuary peut bloquer :**
+- les invitations de groupe et de guilde
+- les chuchotements des personnages WoW (jamais ceux de Battle.net)
+- les duels et les échanges
+- le /dire, le /crier et les émotes
+- le spam des canaux publics
 
-## Pourquoi Sanctuary ?
+**Qui passe toujours :**
+- votre guilde
+- vos amis
+- votre groupe ou votre raid du moment
+- les pseudos que vous avez autorisés
 
-La plupart des addons qui gerent les interactions non souhaitees fonctionnent sur un modele de **blacklist** : vous bloquez des joueurs specifiques et tous les autres passent. Sanctuary propose ce modele aussi, mais son mode par defaut est l'autre : seuls les joueurs explicitement autorises peuvent interagir avec vous, et tout le reste est bloque silencieusement.
+## Pourquoi Sanctuary
 
-Ce qui differencie Sanctuary :
-- **Whitelist d'abord** -- Guilde, amis et membres du groupe sont automatiquement autorises. Tous les autres sont bloques par defaut.
-- **Suppression totale** -- Pas seulement le refus automatique, mais aussi la suppression des messages systeme et la coupure du son. Rien ne vous parvient.
-- **Patterns suspects** -- Detection par mots-cles dans les pseudos qui prime meme sur la whitelist, pour les joueurs qui creent de nouveaux personnages avec des noms reconnaissables.
-- **Journalisation complete** -- Chaque interaction bloquee est enregistree avec horodatage, type, source et contenu du message. Exportable.
+La plupart des add-ons fonctionnent avec une liste noire (blacklist) : vous bloquez un joueur, tous les autres passent. Un harceleur change de personnage et recommence. Sanctuary permet l'inverse : seules les personnes de confiance vous atteignent, les inconnus sont bloqués d'office. La liste noire existe aussi, avec des patterns : un morceau de pseudo suffit à bloquer toute une famille de personnages.
 
-Sanctuary fonctionne aux cotes d'addons comme LeatrixPlus, BadBoy et Global Ignore List sans conflit.
+![Le Journal](media/screenshots/fr-journal.png)
+
+Le Journal garde la trace de tout ce qui a été bloqué, avec l'heure, le type et le message. Un spam répété ne compte qu'une fois, avec son nombre de répétitions.
+
 
 ## Installation
 
-1. Telechargez ou clonez ce depot
-2. Copiez le dossier dans `World of Warcraft/_retail_/Interface/AddOns/Sanctuary/`
-3. Verifiez que le dossier s'appelle bien `Sanctuary`
-4. Relancez WoW ou tapez `/reload`
+Le plus simple : installez Sanctuary depuis CurseForge, avec l'application ou depuis la page du projet.
+
+À la main :
+
+1. Téléchargez ce dépôt.
+2. Copiez le dossier dans `World of Warcraft/_retail_/Interface/AddOns/Sanctuary/`.
+3. Vérifiez que le dossier s'appelle bien `Sanctuary`.
+4. Relancez WoW ou tapez `/reload`.
 
 ## Utilisation
 
-Tapez `/sanc` ou `/sanctuary` pour ouvrir la fenetre de configuration.
+Cliquez sur l'icône de Sanctuary autour de la minicarte, ou tapez `/sanc` pour ouvrir la fenêtre.
 
-L'ecran principal pose cinq questions : qui peut vous contacter, ce que Sanctuary bloque, s'il faut masquer le spam des canaux publics, ce que Sanctuary vous dit dans le chat, et vos listes. Le Journal garde la trace de tout ce qui a ete bloque.
+L'écran principal pose cinq questions : qui peut vous contacter, ce que Sanctuary doit bloquer, s'il faut masquer le spam des canaux publics, ce que Sanctuary vous dit dans le chat, et vos listes.
 
-Le filtrage renforce en instance (experimental) est une case a part sur l'ecran principal. Elle se grise si vous avez decoche le blocage des invitations de groupe. Quand WoW verrouille le chat (combats de boss d'instance, cles mythiques, matchs JcJ), les add-ons ne peuvent plus lire les messages systeme. En activant cette option, tant que vous etes en groupe ou en instance, Sanctuary masque tous les messages systeme, pas seulement les invitations -- le jeu ne permet pas de les distinguer. Ne l'activez que si des invitations de groupe indesirables vous parviennent encore en donjon, en raid ou en match JcJ.
+Le filtrage renforcé en instance (expérimental) est une case à part. Quand WoW verrouille le chat (boss d'instance, clés mythiques, matchs JcJ), les add-ons ne peuvent plus lire les messages système. En activant cette option, tant que vous êtes en groupe ou en instance, Sanctuary masque tous les messages système, pas seulement les invitations. Ne l'activez que si des invitations indésirables vous parviennent encore en donjon, en raid ou en JcJ.
 
-## Fonctionnement de la whitelist
+## Vos listes
 
-L'addon maintient une whitelist a partir de plusieurs sources. Toutes les sources sont toujours actives :
+![Toujours bloqués](media/screenshots/fr-blocked.png)
 
-| Source | Automatique |
-|--------|:-----------:|
-| Membres de guilde | Oui |
-| Amis BattleNet | Oui |
-| Amis du personnage | Oui |
-| Membres du groupe/raid | Oui |
-| Whitelist manuelle | Vous les ajoutez |
-| Auto-trust (optionnel) | Apres 5 min en groupe |
+![Toujours autorisés](media/screenshots/fr-allowed.png)
 
-**Les patterns suspects priment sur la whitelist.** Si le pseudo d'un joueur contient un mot-cle suspect, il sera bloque meme s'il est dans votre guilde ou votre liste d'amis.
+Les personnes de confiance viennent de plusieurs sources, toutes actives en même temps :
 
-**Sanctuary ne bloque jamais personne sur Battle.net.** Vos amis Battle.net sont toujours autorises sur Battle.net : ni la liste des bloques ni les patterns suspects ne s'appliquent aux chuchotements Battle.net. Ajouter quelqu'un sur Battle.net est un acte de confiance que Sanctuary ne remet pas en cause -- pour couper un contact Battle.net, retirez-le ou bloquez-le dans Battle.net.
+| Source | Comment |
+|--------|---------|
+| Guilde | automatique |
+| Amis | automatique |
+| Groupe ou raid du moment | automatique, le temps du groupe |
+| Toujours autorisés | vous les ajoutez |
+| Trust automatique | après 5 minutes dans votre groupe, si vous cochez l'option |
 
-## Compatibilite
+**Les bloqués et les patterns priment sur tout.** Un pseudo qui contient un pattern est bloqué, même dans votre guilde ou votre groupe.
 
-- **Version WoW :** Retail (Midnight)
-- **Retail uniquement.** Classic, Cataclysm Classic, Season of Discovery et les autres clients non-retail ne sont pas supportes ni testes.
-- **LeatrixPlus :** Compatible. Sanctuary ajoute la suppression des messages systeme en complement du refus automatique de LeatrixPlus.
-- **BadBoy :** Compatible. Les deux addons fonctionnent ensemble sans conflit.
-- **Aucune dependance.** API WoW native uniquement, pas de librairie externe.
+**Sanctuary ne bloque jamais personne sur Battle.net.** Vos amis Battle.net passent toujours. Pour couper un contact Battle.net, faites-le dans Battle.net.
+
+## En cas de problème
+
+Ouvrez l'onglet Avancé et activez le mode debug. Reproduisez le problème, puis copiez le journal depuis l'onglet Journal et collez-le dans une issue GitHub. Rien n'est envoyé automatiquement.
+
+## Compatibilité
+
+- WoW Retail (Midnight). Classic et les autres clients ne sont pas pris en charge pour le moment.
+- Aucune dépendance, aucune bibliothèque externe.
 
 ## Licence
 
