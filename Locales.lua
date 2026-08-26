@@ -62,7 +62,7 @@ L["Q1_BLOCKEDONLY_TITLE"] = "Everyone, except the people I block"
 L["Q1_BLOCKEDONLY_DESC"] = "Nothing is filtered, apart from your blocked names and your patterns."
 
 -- Question 2 -- what Sanctuary blocks
-L["Q2_TITLE"] = "What does Sanctuary block from other people?"
+L["Q2_TITLE"] = "What should Sanctuary block?"
 L["Q2_ALL_TITLE"] = "Everything"
 L["Q2_ALL_DESC"] = "Group invitations, private messages, duels, trades, guild invitations. Recommended."
 L["Q2_CUSTOM_TITLE"] = "I choose"
@@ -348,7 +348,7 @@ L["Q1_BLOCKEDONLY_TITLE"] = "Tout le monde, sauf ceux que je bloque"
 L["Q1_BLOCKEDONLY_DESC"] = "Rien n'est filtr\195\169, \195\160 part vos bloqu\195\169s et vos patterns."
 
 -- Question 2 -- what Sanctuary blocks
-L["Q2_TITLE"] = "Que bloque Sanctuary chez les autres ?"
+L["Q2_TITLE"] = "Qu'est-ce que Sanctuary doit bloquer ?"
 L["Q2_ALL_TITLE"] = "Tout"
 L["Q2_ALL_DESC"] = "Invitations de groupe, messages priv\195\169s, duels, \195\169changes, invitations de guilde. Recommand\195\169."
 L["Q2_CUSTOM_TITLE"] = "Je choisis"
