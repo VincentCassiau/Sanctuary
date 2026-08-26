@@ -8369,6 +8369,28 @@ check(rendered:find("Trusty", 1, true) ~= nil, "and unfolding is where it shows 
 trustHeader = findRow(allowedPanel, ns.L["WL_SOURCE_TRUST"])
 trustHeader:Click()
 
+-- The sentence under that header quotes the box that fills the group, so it is
+-- the longest line of the panel in French. Measured at 500 px, the narrowest the
+-- grip drags to: it folds inside the panel rather than running past its right
+-- edge, and its row grows to hold the lines it folded into.
+do
+    local keptSize = SanctuaryDB.uiSize
+    SanctuaryDB.uiSize = { 500, 700 }
+    ns.refreshUI()
+    findRow(allowedPanel, ns.L["WL_SOURCE_TRUST"]):Click()
+    local trustHint = findRow(allowedPanel, ns.L["WL_TRUST_HINT"])
+    check(trustHint ~= nil, "unfolding writes the trust condition under the header")
+    check(trustHint.label.__wordWrap ~= false
+        and (trustHint.label:GetWidth() or 0) > 0
+        and trustHint.label:GetWidth() <= allowedPanel:GetWidth(),
+        "the condition folds inside the panel at 500 px")
+    check(trustHint:GetHeight() >= (trustHint.label:GetStringHeight() or 0),
+        "and its row takes the room the folded lines need")
+    findRow(allowedPanel, ns.L["WL_SOURCE_TRUST"]):Click()
+    SanctuaryDB.uiSize = keptSize
+    ns.refreshUI()
+end
+
 ns.removeAllowed("handy-testrealm")
 ns.removeAllowed("trusty-testrealm")
 ns.refreshUI()
