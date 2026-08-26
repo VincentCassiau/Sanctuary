@@ -319,6 +319,18 @@ local function newLabel(parent, text, size, color, justify, name)
     return label
 end
 
+-- A colour escape carried INSIDE a string is the one thing `SetTextColor` cannot
+-- reach: the client paints `|cffff9933(experimental)|r` in its own colour
+-- whatever the FontString was set to. One label on the screen carries one --
+-- "Enhanced filtering in instances (experimental)", decision 170b -- and greyed
+-- out it kept that word lit, the brightest thing on a row that had gone out. The
+-- escape is dropped rather than swapped for the grey: what is left takes the
+-- colour of the row, and there is still only one place that decides what a
+-- greyed control looks like.
+local function uncoloured(text)
+    return (text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
+end
+
 -- The label of a box or a dot is part of the control, not a caption beside it:
 -- "cliquer le texte d'une case a cocher doit cocher/decocher" (decision 135).
 -- Every interface a person has used works that way, and an 18 px square is a
@@ -410,7 +422,11 @@ local function newCheck(parent, name, text, tooltip, get, set)
     frame.mark:SetSize(10, 10)
     frame.mark:SetColorTexture(unpack(C.checkOn))
 
-    frame.label = newLabel(parent, text, FONT_BODY, C.soft)
+    -- Kept, because the text a row DRAWS is not always the text it was given: a
+    -- greyed row draws it without its colour escapes, and the lit row has to be
+    -- able to put them back.
+    frame.labelText = text or ""
+    frame.label = newLabel(parent, frame.labelText, FONT_BODY, C.soft)
     frame.label:SetPoint("LEFT", frame, "RIGHT", 8, 0)
 
     -- Bounded to what its column leaves it, a label FOLDS instead of running
@@ -453,6 +469,10 @@ local function newCheck(parent, name, text, tooltip, get, set)
             -- in the one section that is meant to have gone out.
             self.mark:SetColorTexture(unpack(self.witness and C.disabled or C.checkOn))
         end
+        -- The colour of a greyed row has to reach ALL of its label, escapes
+        -- included, or the row is grey with one word still lit. Dropping them is
+        -- what puts the colour below back in charge of the whole line.
+        self.label:SetText(self.enabled and self.labelText or uncoloured(self.labelText))
         self.label:SetTextColor(unpack(self.enabled and C.soft or C.disabled))
         applyBackdrop(self, C.checkBg, self.enabled and C.border or C.disabled)
         -- Rule 4: greyed dims as well as greys. The label is a child of the

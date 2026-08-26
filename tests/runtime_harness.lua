@@ -7486,9 +7486,11 @@ do
     -- no second string beside the box any more. Set on the right of the row it
     -- read as a word belonging to the edge of the window rather than to the box
     -- it qualifies. Decision 170b paints it, and only it: the label keeps its
-    -- words and the mention takes the orange -- in BOTH locales and in every
-    -- mode, because a label with two colours depending on where you came from
-    -- is not one label.
+    -- words and the mention takes the orange, in BOTH locales and from one key,
+    -- because a label with two spellings depending on the language is not one
+    -- label. What is asserted here is the STRING. What a greyed row draws of it
+    -- is section A.6's business: the escape goes out with the rest of the
+    -- colour, and the string it came from is still this one.
     equal(frenchLocale.FILTER_STRICT_GROUP_INVITE_SYSTEM,
         "Filtrage renforc\195\169 en instance |cffff9933(exp\195\169rimental)|r",
         "the label carries the mention itself, in French, and paints it")
@@ -10828,6 +10830,16 @@ do
     -- out with the dialog (decision 170c).
     equal(strict:GetAlpha(), 0.8, "and dims it as a control, not as a witness")
     equal(markColour(strict), litMark, "leaving its mark the blue of every other box")
+    -- Decision 172, and this is the ONLY state it is about: the mention carries
+    -- its own colour inside the string (decision 170b), and `SetTextColor` cannot
+    -- reach inside an escape -- so a greyed row kept "(experimental)" orange, the
+    -- brightest thing left on a line that had gone out. The escape is dropped, so
+    -- the grey the row is drawn in covers the whole label, words and mention
+    -- alike. Every other state of this box is lit, and asserted so above and
+    -- below.
+    equal(strict.label:GetText(),
+        (ns.L["FILTER_STRICT_GROUP_INVITE_SYSTEM"]:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")),
+        "and the mention takes the grey of its line instead of staying orange")
     rawset(GameTooltip, "__lastText", nil)
     strict:GetScript("OnEnter")(strict)
     equal(rawget(GameTooltip, "__lastText"), ns.L["TIP_STRICT_GROUP_INVITE_SYSTEM"],
@@ -10844,6 +10856,8 @@ do
 
     _G.SanctuaryFilter_groupInvite:Click()
     equal(strict.enabled, true, "ticking the parent again gives the child back")
+    equal(strict.label:GetText(), ns.L["FILTER_STRICT_GROUP_INVITE_SYSTEM"],
+        "with the orange of its mention")
 
     -- In "Everything" there is no parent on screen: the preset blocks group
     -- invitations by definition, so the box answers to question 1 alone.
