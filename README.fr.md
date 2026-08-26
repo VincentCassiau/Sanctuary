@@ -48,7 +48,7 @@ Tapez `/sanc` ou `/sanctuary` pour ouvrir la fenetre de configuration.
 
 L'ecran principal pose cinq questions : qui peut vous contacter, ce que Sanctuary bloque, s'il faut masquer le spam des canaux publics, ce que Sanctuary vous dit dans le chat, et vos listes. Le Journal garde la trace de tout ce qui a ete bloque.
 
-Le filtrage renforce en instance est une option de la deuxieme question. Quand WoW verrouille le chat, les add-ons ne peuvent plus lire les messages systeme : avec cette case cochee et tant que vous etes en groupe ou en instance, Sanctuary masque tous les messages systeme, pas seulement les invitations -- le jeu ne permet pas de les distinguer. Rien ne s'affiche dans le chat ; le mode debug en garde la trace. Laissez l'option decochee sauf si vous recevez quand meme des invitations indesirables en donjon, raid ou match JcJ.
+Le filtrage renforce en instance (experimental) est une case a part sur l'ecran principal, presente dans les deux modes. Quand WoW verrouille le chat (combats de boss d'instance, cles mythiques, matchs JcJ), les add-ons ne peuvent plus lire les messages systeme. En activant cette option, tant que vous etes en groupe ou en instance, Sanctuary masque tous les messages systeme, pas seulement les invitations -- le jeu ne permet pas de les distinguer. Ne l'activez que si des invitations de groupe indesirables vous parviennent encore en donjon, en raid ou en match JcJ.
 
 ## Fonctionnement de la whitelist
 

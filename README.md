@@ -48,7 +48,7 @@ Type `/sanc` or `/sanctuary` to open the configuration window.
 
 The main screen asks five questions: who can contact you, what Sanctuary blocks, whether to hide the spam of the public channels, what Sanctuary tells you in chat, and your lists. The Journal keeps a trace of everything that was blocked.
 
-Enhanced filtering in instances is an option of the second question. While WoW locks the chat down, add-ons can no longer read system messages, so with this box ticked and while you are grouped or in an instance Sanctuary hides every system message, not only invitations -- the game does not let it tell them apart. Nothing is shown in chat; debug mode keeps a trace. Leave it off unless unwanted invites still reach you during dungeons, raids, or PvP matches.
+Enhanced filtering in instances (experimental) is a box of its own on the main screen, and it is there in both modes. When WoW locks the chat down (instance boss fights, Mythic+ keys, PvP matches), add-ons can no longer read system messages. With this option on, while you are grouped or in an instance, Sanctuary hides every system message, not only invitations -- the game does not let it tell them apart. Turn it on only if unwanted group invitations still reach you in a dungeon, raid, or PvP match.
 
 ## How the whitelist works
 
