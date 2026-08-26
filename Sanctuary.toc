@@ -1,0 +1,18 @@
+## Interface: 120100, 120007
+## Title: Sanctuary
+## Notes: Anti-harassment protection
+## Notes-frFR: Protection anti-harcelement
+## Author: Zephos
+## Version: 1.0.0
+## X-Sanctuary-Build: 20260827-1
+## X-Game-Client: Retail only
+## IconTexture: Interface\AddOns\Sanctuary\media\logo
+## Category: Chat
+## Category-frFR: Discussion
+## SavedVariables: SanctuaryDB
+## SavedVariablesPerCharacter: SanctuaryCharDB
+## DefaultState: enabled
+
+Locales.lua
+Sanctuary.lua
+SanctuaryUI.lua

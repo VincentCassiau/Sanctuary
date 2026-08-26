@@ -1,0 +1,17 @@
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor files
+*.swp
+*.swo
+*~
+*.bak
+*.orig
+
+# Local project-only working notes
+internal_docs/
+
+# Local diagnostic build output (never published)
+dist/
