@@ -1,7 +1,7 @@
 -- ============================================================================
 -- Sanctuary — WoW Anti-Harassment Addon
 -- Two modes: only the people you know, or everyone except the ones you block.
--- Version: 1.0.0 | Interface: 120100, 120007 (Midnight)
+-- Version: 1.0.0 | Build: 20260827-1 | Interface: 120100, 120007 (Midnight)
 -- ============================================================================
 
 -- ============================================================================
@@ -19,7 +19,7 @@ local VERSION = "1.0.0"
 -- and nothing else: it is printed verbatim in every report, and a report can be
 -- handed to a third party, so the identifier must not leak what is being
 -- investigated or which internal item it belongs to.
-local BUILD_ID = "20260820-8"
+local BUILD_ID = "20260827-1"
 
 local PREFIX = "|cFF66CCFF[Sanctuary]|r "
 local COLOR_ON = "|cFF00FF00"

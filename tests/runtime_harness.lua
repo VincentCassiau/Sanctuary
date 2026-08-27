@@ -134,9 +134,25 @@ function C_FriendList.GetFriendInfoByIndex(index)
 end
 function C_FriendList.ShowFriends() end
 C_GuildInfo = { GuildRoster = function() end }
+-- The build the fake client answers is read off the real manifest, never
+-- typed here: a copy of the number would agree with a stale code constant
+-- and let the two drift apart unnoticed, which is what happened on 27/08.
+local function manifestField(field)
+    local here = (debug.getinfo(1, "S").source or ""):match("^@(.*)[/\\]") or "."
+    local root = here:match("^(.*)[/\\]tests$") or "."
+    local handle = io.open(root .. "/Sanctuary.toc", "r")
+    if not handle then return nil end
+    local value
+    for line in handle:lines() do
+        value = value or line:match("^##%s*" .. field:gsub("%-", "%%-") .. ":%s*(.-)%s*$")
+    end
+    handle:close()
+    return value
+end
+
 local addonMetadata = {
     Version = "1.0.0",
-    ["X-Sanctuary-Build"] = "20260820-8",
+    ["X-Sanctuary-Build"] = manifestField("X-Sanctuary-Build") or "unread",
     Interface = "120007",
 }
 C_AddOns = {
@@ -993,12 +1009,12 @@ ns.captureDebugSnapshot()
 equal(#SanctuaryDB.debugLog, 1, "debug snapshot captured")
 equal(SanctuaryDB.debugLog[1].cat, "SNAPSHOT", "debug snapshot category")
 equal(SanctuaryDB.debugLog[1].data.version, "1.0.0", "debug snapshot version")
-equal(SanctuaryDB.debugLog[1].data.build, "20260820-8", "debug snapshot reports the diagnostic build id")
+equal(SanctuaryDB.debugLog[1].data.build, ns.BUILD_ID, "debug snapshot reports the diagnostic build id")
 equal(SanctuaryDB.debugLog[1].data.clientVersion, "12.0.7", "debug snapshot reports the client version")
 equal(SanctuaryDB.debugLog[1].data.clientBuild, "62119", "debug snapshot reports the client build")
 equal(SanctuaryDB.debugLog[1].data.clientInterface, 120007, "debug snapshot reports the client interface number")
 equal(SanctuaryDB.debugLog[1].data.addonMetaVersion, "1.0.0", "debug snapshot reports the loaded addon version metadata")
-equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, "20260820-8", "debug snapshot reports the loaded addon build metadata")
+equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, ns.BUILD_ID, "debug snapshot reports the loaded addon build metadata")
 equal(SanctuaryDB.debugLog[1].data.addonMetaInterface, "120007", "debug snapshot reports the loaded addon interface metadata")
 check(SanctuaryDB.debugLog[1].data.chatLockdownKnown, "debug snapshot reports a readable chat messaging lockdown state")
 check(not SanctuaryDB.debugLog[1].data.chatLockdown, "debug snapshot reports chat messaging lockdown off")
@@ -3079,7 +3095,7 @@ fire("PLAYER_LOGOUT")
 local manifest = SanctuaryDB.reportManifest
 check(type(manifest) == "table", "logging out stamps a manifest into the settings file")
 equal(manifest.trigger, "logout", "the manifest says what wrote it")
-equal(manifest.build, "20260820-8", "the manifest carries the build id")
+equal(manifest.build, ns.BUILD_ID, "the manifest carries the build id")
 equal(manifest.version, ns.VERSION, "the manifest carries the addon version")
 check(manifest.savedAt ~= nil and manifest.savedAt ~= "", "the manifest is dated")
 -- The log is the record and nothing clears it on its own. When it was last
@@ -3105,7 +3121,7 @@ SanctuaryDB.debugEnabled = true
 ns.resetDebugLog()
 ns.captureDebugSnapshot("export")
 local summary = ns.buildDebugSummaryText()
-check(summary:find("20260820-8", 1, true) ~= nil, "the summary names the build")
+check(summary:find(ns.BUILD_ID, 1, true) ~= nil, "the summary names the build")
 check(summary:find("Version: " .. ns.VERSION, 1, true) ~= nil, "the summary names the version")
 check(summary:find("ChatFilterApi:", 1, true) ~= nil, "the summary reports the filter API")
 check(summary:find("ChatFrames:", 1, true) ~= nil, "the summary reports the observed chat frames")
@@ -9383,6 +9399,23 @@ do
     check(declared ~= nil, "and it declares an icon for the AddOns list")
     equal(declared, drawn,
         "the AddOns list and the minimap name the same asset")
+
+    -- Same manifest, two more fields: the version and the build the code prints
+    -- in the About tab and in every debug report have to be the ones the .toc
+    -- declares, or the AddOns list and a user report would name two different
+    -- builds. The 27/08 release bumped the .toc and not the code, and nothing
+    -- here said so.
+    local tocVersion, tocBuild
+    local manifestAgain = io.open(repoRoot .. "/Sanctuary.toc", "r")
+    if manifestAgain then
+        for line in manifestAgain:lines() do
+            tocVersion = tocVersion or line:match("^##%s*Version:%s*(.-)%s*$")
+            tocBuild = tocBuild or line:match("^##%s*X%-Sanctuary%-Build:%s*(.-)%s*$")
+        end
+        manifestAgain:close()
+    end
+    equal(ns.VERSION, tocVersion, "the code's version is the .toc's version")
+    equal(ns.BUILD_ID, tocBuild, "the code's build is the .toc's build")
 
     -- Surface three: the file itself. The client's path is turned back into a
     -- path on disk -- the add-on folder IS `Sanctuary`, and the extension is the
