@@ -3276,6 +3276,16 @@ logBlock = function(blockType, sourceName, message, guid, keyword, options)
         cleanName = n
         sourceRealm = r
     end
+    -- A sender of the player's own realm is handed over bare -- a mail, a
+    -- whisper from the same realm -- and the entry then records the realm it
+    -- was written on, as every other entry does: "Falönir" next to
+    -- "Whalex-Hyjal" in the Journal told the reader less than the add-on knew
+    -- (Vincent, 03/09/2026). A character name only: an account name carries a
+    -- space or a "#" and has no realm to be given, a redacted one is not a name.
+    if sourceRealm == "" and sourceText and charRealm and charRealm ~= ""
+        and not sourceText:find("[%s#<]") and normalizeCharacterKey(sourceText) then
+        sourceRealm = charRealm
+    end
 
     -- The first arrival dates the entry. For a hidden repeat that is the copy
     -- the person actually read, which is what makes the range on screen say

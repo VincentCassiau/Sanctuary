@@ -13488,7 +13488,7 @@ now = now + 5
 reloaded.logBlock("channel", "Namesake", "same words twice", nil, nil)
 equal(#SanctuaryDB.log, 1, "a bare pseudo folds into one entry on its own realm")
 equal(SanctuaryDB.log[1].count, 2, "counted twice")
-equal(SanctuaryDB.log[1].realm, "", "and stored bare, the way the game hands it over")
+equal(SanctuaryDB.log[1].realm, "TestRealm", "and stored with the realm it was written on")
 
 local ownRealm = GetNormalizedRealmName
 function GetNormalizedRealmName() return "OtherRealm" end
