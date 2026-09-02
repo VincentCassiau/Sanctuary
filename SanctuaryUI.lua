@@ -130,11 +130,13 @@ local MIN_FRAME_WIDTH, MAX_FRAME_WIDTH = 500, 900
 --
 -- Recalculated after the visual pass of 25/08 (decisions 162-163), and this time
 -- it is the number the screen actually MEASURES rather than one with room to
--- spare in it: 24 px of air on each side of the four rules puts 96 px on, the
+-- spare in it: 24 px of air on each side of the rules puts their gaps on, the
 -- margin the screen used to keep for itself takes 18 off, and the tester row
--- stops at the bottom edge of its field for another 8. The screen that asked for
--- 740 asks for 776, and a floor above what the screen needs is exactly the empty
--- band under "Tester un pseudo" that constat 162d is about.
+-- stops at the bottom edge of its field for another 8. A floor above what the
+-- screen needs is exactly the empty band under "Tester un pseudo" that constat
+-- 162d is about. 1.1.0 inserted question 3 -- the mailbox, folded -- which is a
+-- title row, a row of cards and a rule, and the screen that asked for 776 asks
+-- for 906.
 --
 -- Only the OTHER screens are floored at it: the home screen is measured at every
 -- refresh and opens at whatever it comes to on the client it is running on, so
@@ -143,11 +145,14 @@ local MIN_FRAME_WIDTH, MAX_FRAME_WIDTH = 500, 900
 --
 -- What the window GETS is the screen's to decide, never this number: a Retail
 -- client at the default UI scale measures 768 units, which leaves 748 px of
--- window for 840 asked, so the home screen still scrolls there and its bar says
--- so (decision 134 -- "on a jamais parle de rendre la page d'accueil non
--- scrollable"). The other screens are shorter than the window they are given and
--- do not scroll.
-local MIN_HEIGHT, MAX_HEIGHT = 776, 900
+-- window, so the home screen still scrolls there and its bar says so (decision
+-- 134 -- "on a jamais parle de rendre la page d'accueil non scrollable"). The
+-- other screens are shorter than the window they are given and do not scroll.
+--
+-- The ceiling keeps the same headroom over the floor it always had. It is not
+-- the last word either: since 1.1.0 the window may open up to nine tenths of a
+-- large screen, so this is the floor of that ceiling and not a cap.
+local MIN_HEIGHT, MAX_HEIGHT = 906, 1030
 -- The smallest window the grip may drag to, which is NOT the height above. The
 -- content scrolls (decision 3), so a person may make the window smaller than
 -- what is in it; and a floor set at the height the window OPENS at is a floor
@@ -1506,7 +1511,7 @@ local function buildProtectionTab(parent)
     -- the interface. Four of them, one per join, made here and placed by the
     -- refresh -- which is the only pass that knows where a question ends.
     protection.rules = {}
-    for index = 1, 4 do
+    for index = 1, 5 do
         local rule = parent:CreateTexture(nil, "ARTWORK")
         rule:SetHeight(1)
         rule:SetColorTexture(unpack(C.rule))
@@ -1633,11 +1638,142 @@ local function buildProtectionTab(parent)
         function() return filterStored("autoTrust") == true end,
         function(value) setFilter("autoTrust", value) end)
 
-    -- Question 3 ------------------------------------------------------------
+    -- Question 3 -- the mailbox ---------------------------------------------
+    -- Named for what it IS and never for its rank: `SanctuaryQ3_yes` and
+    -- `SanctuaryQ3_no` are the anti-spam's two cards, which is question 4 from
+    -- here on. A name carrying a number has to be rewritten, in the file and in
+    -- everything that reads it, the day a question is inserted above it.
+    protection.mailNumber = newLabel(parent, "3", FONT_BODY, C.accent)
+    protection.mailTitle = newLabel(parent, L["MAIL_Q_TITLE"], FONT_TITLE, C.ink)
+    protection.mailTitle:SetPoint("TOPLEFT", protection.mailNumber, "TOPRIGHT", 10, 4)
+    protection.mailKeep = newCard(parent, "SanctuaryMail_keep",
+        L["MAIL_KEEP_TITLE"], L["MAIL_KEEP_DESC"], cardWidth,
+        function() return ns.getMailMode() == "keep" end,
+        function() ns.setMailMode("keep") end)
+    protection.mailDelete = newCard(parent, "SanctuaryMail_delete",
+        L["MAIL_DELETE_TITLE"], L["MAIL_DELETE_DESC"], cardWidth,
+        function() return ns.getMailMode() == "delete" end,
+        function() ns.setMailMode("delete") end)
+
+    -- The two details of "Le supprimer", on screen only once it is picked. They
+    -- live in a frame of their own, like the two columns of "I choose" and for
+    -- the same reason: what is inside is laid out from the WIDTH, and a resize
+    -- runs the width pass without running the refresh.
+    local mailDetails = CreateFrame("Frame", "SanctuaryMailDetails", parent)
+    mailDetails:SetSize(width, 1)
+    protection.mailDetails = mailDetails
+    protection.mailGroups = {}
+    local MAIL_GROUPS = {
+        {
+            key = "attach", labelKey = "MAIL_ATTACH_LABEL", prefix = "SanctuaryMailAttach_",
+            get = ns.getMailAttachments,
+            rows = {
+                { value = "keep",   labelKey = "MAIL_ATTACH_KEEP" },
+                { value = "return", labelKey = "MAIL_ATTACH_RETURN" },
+                { value = "delete", labelKey = "MAIL_ATTACH_DELETE" },
+            },
+        },
+        {
+            key = "icon", labelKey = "MAIL_ICON_LABEL", prefix = "SanctuaryMailIcon_",
+            get = ns.getMailIcon,
+            rows = {
+                { value = "normal",         labelKey = "MAIL_ICON_NORMAL" },
+                { value = "hideIfFiltered", labelKey = "MAIL_ICON_FILTERED" },
+                { value = "never",          labelKey = "MAIL_ICON_NEVER" },
+            },
+        },
+    }
+    for _, group in ipairs(MAIL_GROUPS) do
+        local entry = {
+            label = newLabel(mailDetails, L[group.labelKey], FONT_BODY, C.dim,
+                nil, "SanctuaryMail" .. group.key .. "Label"),
+            radios = {},
+            order = {},
+        }
+        for _, row in ipairs(group.rows) do
+            local value, isAttachments = row.value, group.key == "attach"
+            local radio = newRadio(mailDetails, group.prefix .. value, L[row.labelKey], nil,
+                function() return group.get() == value end,
+                function()
+                    -- Destroying what is inside a letter cannot be undone, so
+                    -- that one answer is written by the dialog and never by the
+                    -- click. Every ticking asks again: the question is worth
+                    -- asking twice, and it is asked once a gesture, not once a
+                    -- session.
+                    if isAttachments and value == "delete" then
+                        StaticPopup_Show("SANCTUARY_MAIL_DELETE_ATTACHMENTS")
+                    elseif isAttachments then
+                        ns.setMailAttachments(value)
+                    else
+                        ns.setMailIcon(value)
+                        -- Back to "Normale" without a relog: the game's own
+                        -- handler is what puts the icon back.
+                        if ns.refreshMailIcon then ns.refreshMailIcon() end
+                    end
+                end)
+            entry.radios[value] = radio
+            entry.order[#entry.order + 1] = radio
+        end
+        protection.mailGroups[group.key] = entry
+    end
+    -- Not a state note: nothing here is greyed out or unavailable. It says what
+    -- the game makes unavoidable, so it wears `C.dim` and not the orange the two
+    -- state notes wear.
+    protection.mailNote = newLabel(mailDetails, L["MAIL_NOTE"], FONT_BODY, C.dim,
+        nil, "SanctuaryMailNote")
+
+    -- Laid out from the width and never at a fixed x. Left to right, wrapping
+    -- when the next dot would not fit, which is what the validated mock-up
+    -- draws -- and what keeps the whole home screen inside a large screen: one
+    -- dot to a line, the two groups cost 88 px more.
+    local MAIL_RADIO_GAP, MAIL_RADIO_INDENT, MAIL_RADIO_ROW = 18, 16, 22
+    function protection.layoutMail(innerWidth)
+        local y = 0
+        for _, key in ipairs({ "attach", "icon" }) do
+            local group = protection.mailGroups[key]
+            group.label:ClearAllPoints()
+            group.label:SetPoint("TOPLEFT", mailDetails, "TOPLEFT", 0, y)
+            y = y - 26
+            local room = math.max(80, innerWidth - MAIL_RADIO_INDENT)
+            local x = 0
+            for _, radio in ipairs(group.order) do
+                local label = radio.label
+                -- One line each: these are three short answers side by side, not
+                -- a sentence. Bounded all the same -- the longest of them is
+                -- wider than a narrow window on its own.
+                label:SetWordWrap(false)
+                local textWidth = math.min(room - (HOME.checkSize + 8),
+                    label:GetStringWidth() or 0)
+                label:SetWidth(math.max(1, textWidth))
+                local needed = HOME.checkSize + 8 + textWidth
+                if x > 0 and x + needed > room then
+                    x = 0
+                    y = y - MAIL_RADIO_ROW
+                end
+                radio:ClearAllPoints()
+                radio:SetPoint("TOPLEFT", mailDetails, "TOPLEFT",
+                    MAIL_RADIO_INDENT + x, y)
+                label:ClearAllPoints()
+                label:SetPoint("LEFT", radio, "RIGHT", 8, 0)
+                x = x + needed + MAIL_RADIO_GAP
+            end
+            y = y - MAIL_RADIO_ROW - 8
+        end
+        protection.mailNote:SetWidth(innerWidth)
+        protection.mailNote:ClearAllPoints()
+        protection.mailNote:SetPoint("TOPLEFT", mailDetails, "TOPLEFT", 0, y)
+        y = y - math.max(NOTE_LINE, protection.mailNote:GetStringHeight() or NOTE_LINE)
+        protection.mailHeight = -y
+        mailDetails:SetSize(innerWidth, protection.mailHeight)
+        return protection.mailHeight
+    end
+    protection.layoutMail(width)
+
+    -- Question 4 ------------------------------------------------------------
     -- The same two cards every other question is made of (decision 131: "si on
     -- met des designs différents selon les étapes on s'y perd"), with the
     -- window and the note underneath them.
-    protection.q3Number = newLabel(parent, "3", FONT_BODY, C.accent)
+    protection.q3Number = newLabel(parent, "4", FONT_BODY, C.accent)
     protection.q3Title = newLabel(parent, L["ANTISPAM_Q_TITLE"], FONT_TITLE, C.ink)
     protection.q3Title:SetPoint("TOPLEFT", protection.q3Number, "TOPRIGHT", 10, 4)
     protection.q3Yes = newCard(parent, "SanctuaryQ3_yes",
@@ -1799,10 +1935,12 @@ local function buildProtectionTab(parent)
     end
     protection.layoutChoose(width)
 
-    -- Question 4 ------------------------------------------------------------
+    -- Question 5 ------------------------------------------------------------
     -- Same two pieces as the questions above. The title rides on the number, so
-    -- the refresh only ever moves one of the two.
-    protection.q4Number = newLabel(parent, "4", FONT_BODY, C.accent)
+    -- the refresh only ever moves one of the two. The keys keep their names:
+    -- what moved is the rank the screen prints, and renaming twenty locale keys
+    -- and six references to say the same thing buys nothing.
+    protection.q4Number = newLabel(parent, "5", FONT_BODY, C.accent)
     protection.q4Title = newLabel(parent, L["Q4_TITLE"], FONT_TITLE, C.ink)
     protection.q4Title:SetPoint("TOPLEFT", protection.q4Number, "TOPRIGHT", 10, 4)
     local thirdWidth = (width - HOME.gutter * 2) / 3
@@ -1820,8 +1958,8 @@ local function buildProtectionTab(parent)
         protection.q4[row.key] = card
     end
 
-    -- Question 5 ------------------------------------------------------------
-    protection.q5Number = newLabel(parent, "5", FONT_BODY, C.accent)
+    -- Question 6 ------------------------------------------------------------
+    protection.q5Number = newLabel(parent, "6", FONT_BODY, C.accent)
     protection.q5Title = newLabel(parent, L["Q5_TITLE"], FONT_TITLE, C.ink)
     protection.q5Title:SetPoint("TOPLEFT", protection.q5Number, "TOPRIGHT", 10, 4)
 
@@ -1991,14 +2129,20 @@ applyTabWidth.protection = function()
     protection.rowHeight = {
         q1 = sizeCardRow({ protection.q1Strangers, protection.q1Blocked }, cardWidth),
         q2 = sizeCardRow({ protection.q2All, protection.q2Custom }, cardWidth),
+        mail = sizeCardRow({ protection.mailKeep, protection.mailDelete }, cardWidth),
         q3 = sizeCardRow({ protection.q3Yes, protection.q3No }, cardWidth),
         q4 = sizeCardRow({ protection.q4.silent, protection.q4.minimal,
             protection.q4.verbose }, (width - HOME.gutter * 2) / 3),
     }
-    -- The notes under questions 2 and 3 are sentences, not labels: they wrap, so
-    -- they have to be told the width they wrap at.
+    -- The notes under questions 2 and 4, and the one under question 3, are
+    -- sentences and not labels: they wrap, so they have to be told the width
+    -- they wrap at.
     protection.q2Note:SetWidth(width)
     protection.q3Note:SetWidth(width)
+    -- The two groups of dots under "Le supprimer", their note included:
+    -- `layoutMail` shares the width between them and answers the height the
+    -- block needs, which the refresh below reads.
+    protection.layoutMail(width)
     -- A tile's two lines are bounded by what the count and the chevron leave
     -- them, so the tile is widened and re-fitted in one go. The counts are the
     -- ones the last refresh wrote, which is what a resize needs: the lists do
@@ -2224,7 +2368,38 @@ refreshTab.protection = function()
     if not blockedOnly then placeTrust() end
     separator()
 
-    -- Question 3 -- the anti-spam of the public channels.
+    -- Question 3 -- the mailbox.
+    --
+    -- Alive in both modes, and deliberately: the always-blocked list and the
+    -- patterns reach a letter whatever question 1 answers, so there is nothing
+    -- to grey out here.
+    stepRow(protection.mailNumber)
+    place(protection.mailKeep)
+    protection.mailDelete:ClearAllPoints()
+    protection.mailDelete:SetPoint("TOPLEFT", protection.mailKeep, "TOPRIGHT", HOME.gutter, 0)
+    protection.mailKeep:Refresh()
+    protection.mailDelete:Refresh()
+    y = y - protection.rowHeight.mail
+
+    -- The details, folded away until the mailbox is being emptied -- which is
+    -- the state a fresh settings file opens on, and what keeps the home screen
+    -- close to the length it had.
+    if ns.getMailMode() == "delete" then
+        protection.mailDetails:Show()
+        for _, key in ipairs({ "attach", "icon" }) do
+            for _, radio in ipairs(protection.mailGroups[key].order) do
+                radio:Refresh()
+            end
+        end
+        y = y - 10
+        place(protection.mailDetails)
+        y = y - protection.mailHeight
+    else
+        protection.mailDetails:Hide()
+    end
+    separator()
+
+    -- Question 4 -- the anti-spam of the public channels.
     --
     -- Greyed out, never removed, and the settings underneath are not touched:
     -- somebody who filters every channel has nothing left for this to hide, and
@@ -3914,6 +4089,27 @@ StaticPopupDialogs["SANCTUARY_CLEAR_LOG"] = {
         -- leave entries nobody can reach still collecting occurrences.
         ns.clearJournal()
         ns.printSuccess(L["LOG_CLEARED"])
+        if ns.refreshUI then ns.refreshUI() end
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- The one answer on this screen that destroys something. It is written by the
+-- dialog and never by the click, so nothing is lost by a hand that slipped, and
+-- the dialog says what "aussi" costs: what is inside the letter goes with it.
+--
+-- `OnCancel` writes nothing at all: the answer that was there before is still
+-- there, and the refresh puts the dot back where it belongs.
+StaticPopupDialogs["SANCTUARY_MAIL_DELETE_ATTACHMENTS"] = {
+    text = L["MAIL_DELETE_CONFIRM"],
+    button1 = L["MAIL_DELETE_OK"],
+    button2 = L["MAIL_DELETE_CANCEL"],
+    showAlert = true,
+    OnAccept = function()
+        ns.setMailAttachments("delete")
+        if ns.refreshUI then ns.refreshUI() end
+    end,
+    OnCancel = function()
         if ns.refreshUI then ns.refreshUI() end
     end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,

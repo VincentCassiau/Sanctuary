@@ -105,7 +105,26 @@ L["TIP_CHANNEL_KEYWORDS"] = "Blocks messages in channels when the sender's name 
 L["TIP_CHANNEL_ALL"] = "Blocks EVERY message in channels from people who are not allowed.\nWarning: this makes public channels silent."
 L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Experimental: enable it only if unwanted group invitations still reach you in a dungeon, raid, or PvP match.\n\nWhen WoW locks the chat down (instance boss fights, Mythic+ keys, PvP matches), add-ons can no longer read system messages. With this option on, while you are grouped or in an instance, Sanctuary hides EVERY system message, not only invitations: the game does not let it tell them apart."
 
--- Question 3 -- the anti-spam of the public channels
+-- Question 3 -- the mailbox
+L["MAIL_Q_TITLE"] = "And your mail?"
+L["MAIL_KEEP_TITLE"] = "Leave it"
+L["MAIL_KEEP_DESC"] = "Your mailbox stays exactly as it is."
+L["MAIL_DELETE_TITLE"] = "Delete it"
+L["MAIL_DELETE_DESC"] = "Mail from a filtered person is gone when you open the mailbox, unread."
+L["MAIL_ATTACH_LABEL"] = "If it has items or money in it"
+L["MAIL_ATTACH_KEEP"] = "Leave it"
+L["MAIL_ATTACH_RETURN"] = "Send it back"
+L["MAIL_ATTACH_DELETE"] = "Delete it too"
+L["MAIL_ICON_LABEL"] = "Mail icon on the minimap"
+L["MAIL_ICON_NORMAL"] = "Normal"
+L["MAIL_ICON_FILTERED"] = "Hidden when everything waiting is filtered"
+L["MAIL_ICON_NEVER"] = "Never"
+L["MAIL_NOTE"] = "Mail arrives before Sanctuary can do anything. It is deleted when you open the mailbox. Mail that did not come from a player is never touched."
+L["MAIL_DELETE_CONFIRM"] = "Deleting mail with items or money in it destroys what is inside. Nothing can be recovered. When the game does not allow it, the mail goes back to its sender."
+L["MAIL_DELETE_OK"] = "OK"
+L["MAIL_DELETE_CANCEL"] = "Cancel"
+
+-- Question 4 -- the anti-spam of the public channels
 L["ANTISPAM_Q_TITLE"] = "Should Sanctuary deal with spam in the public channels?"
 L["ANTISPAM_YES_TITLE"] = "Yes, hide the repeats"
 L["ANTISPAM_YES_DESC"] = "The same message from a stranger appears only once."
@@ -122,7 +141,7 @@ L["ANTISPAM_D_4H"] = "4 hours"
 L["ANTISPAM_D_12H"] = "12 hours"
 L["ANTISPAM_D_24H"] = "24 hours"
 
--- Question 4 -- what Sanctuary tells you
+-- Question 5 -- what Sanctuary tells you
 L["Q4_TITLE"] = "What does Sanctuary tell you in chat?"
 L["Q4_SILENT_TITLE"] = "Nothing"
 L["Q4_SILENT_DESC"] = "Complete silence. The Journal keeps the record."
@@ -131,7 +150,7 @@ L["Q4_MINIMAL_DESC"] = "Every 5 minutes, and only if something new was blocked."
 L["Q4_VERBOSE_TITLE"] = "Every block"
 L["Q4_VERBOSE_DESC"] = "One line as it happens."
 
--- Question 5 -- your lists
+-- Question 6 -- your lists
 L["Q5_TITLE"] = "Your lists"
 L["TILE_ALLOWED"] = "Always allowed"
 L["TILE_BLOCKED"] = "Always blocked"
@@ -388,7 +407,26 @@ L["TIP_CHANNEL_KEYWORDS"] = "Bloque les messages dans les canaux si le pseudo de
 L["TIP_CHANNEL_ALL"] = "Bloque TOUS les messages dans les canaux des joueurs non autoris\195\169s.\nAttention : cela rend les canaux publics silencieux."
 L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Exp\195\169rimental : \195\160 activer seulement si des invitations de groupe ind\195\169sirables vous parviennent encore en donjon, en raid ou en match JcJ.\n\nQuand WoW verrouille le chat (combats de boss d'instance, cl\195\169s mythiques, matchs JcJ), les add-ons ne peuvent plus lire les messages syst\195\168me. En activant cette option, tant que vous \195\170tes en groupe ou en instance, Sanctuary masque TOUS les messages syst\195\168me, pas seulement les invitations : le jeu ne permet pas de les distinguer."
 
--- Question 3 -- the anti-spam of the public channels
+-- Question 3 -- the mailbox
+L["MAIL_Q_TITLE"] = "Et le courrier ?"
+L["MAIL_KEEP_TITLE"] = "Le laisser"
+L["MAIL_KEEP_DESC"] = "Votre bo\195\174te aux lettres reste telle quelle."
+L["MAIL_DELETE_TITLE"] = "Le supprimer"
+L["MAIL_DELETE_DESC"] = "Le courrier d'une personne filtr\195\169e dispara\195\174t \195\160 l'ouverture de la bo\195\174te, sans \195\170tre lu."
+L["MAIL_ATTACH_LABEL"] = "S'il contient des objets ou de l'argent"
+L["MAIL_ATTACH_KEEP"] = "Le laisser"
+L["MAIL_ATTACH_RETURN"] = "Le renvoyer"
+L["MAIL_ATTACH_DELETE"] = "Le supprimer aussi"
+L["MAIL_ICON_LABEL"] = "Ic\195\180ne de courrier sur la minicarte"
+L["MAIL_ICON_NORMAL"] = "Normale"
+L["MAIL_ICON_FILTERED"] = "Masqu\195\169e si tout ce qui attend est filtr\195\169"
+L["MAIL_ICON_NEVER"] = "Jamais"
+L["MAIL_NOTE"] = "Le courrier arrive avant que Sanctuary puisse agir. Il est supprim\195\169 \195\160 l'ouverture de la bo\195\174te aux lettres. Un courrier qui ne vient pas d'un joueur n'est jamais touch\195\169."
+L["MAIL_DELETE_CONFIRM"] = "Supprimer aussi les courriers avec objets ou argent d\195\169truit leur contenu. Rien ne pourra \195\170tre r\195\169cup\195\169r\195\169. Quand le jeu l'interdit, le courrier repart chez son exp\195\169diteur."
+L["MAIL_DELETE_OK"] = "OK"
+L["MAIL_DELETE_CANCEL"] = "Annuler"
+
+-- Question 4 -- the anti-spam of the public channels
 L["ANTISPAM_Q_TITLE"] = "Sanctuary doit-il s'occuper du spam des canaux publics ?"
 L["ANTISPAM_YES_TITLE"] = "Oui, masquer les r\195\169p\195\169titions"
 L["ANTISPAM_YES_DESC"] = "Un m\195\170me message d'un inconnu n'appara\195\174t qu'une fois."
@@ -405,7 +443,7 @@ L["ANTISPAM_D_4H"] = "4 heures"
 L["ANTISPAM_D_12H"] = "12 heures"
 L["ANTISPAM_D_24H"] = "24 heures"
 
--- Question 4 -- what Sanctuary tells you
+-- Question 5 -- what Sanctuary tells you
 L["Q4_TITLE"] = "Que vous dit Sanctuary dans le chat ?"
 L["Q4_SILENT_TITLE"] = "Rien"
 L["Q4_SILENT_DESC"] = "Silence total. Le Journal garde la trace."
@@ -414,7 +452,7 @@ L["Q4_MINIMAL_DESC"] = "Toutes les 5 minutes, seulement s'il y a eu de nouveaux 
 L["Q4_VERBOSE_TITLE"] = "Chaque blocage"
 L["Q4_VERBOSE_DESC"] = "Une ligne au moment o\195\185 il a lieu."
 
--- Question 5 -- your lists
+-- Question 6 -- your lists
 L["Q5_TITLE"] = "Vos listes"
 L["TILE_ALLOWED"] = "Toujours autoris\195\169s"
 L["TILE_BLOCKED"] = "Toujours bloqu\195\169s"

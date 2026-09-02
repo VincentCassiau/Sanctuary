@@ -7283,6 +7283,8 @@ local KNOWN_IDENTICAL = {
     -- The Journal's badge and its time range: a count, a dash and the word
     -- SPAM, which French borrows unchanged.
     LOGS_SPAM_BADGE = true, LOGS_TIME_RANGE = true,
+    -- The accept button of the mailbox dialog. "OK" in both languages.
+    MAIL_DELETE_OK = true,
 }
 local unexpected = {}
 for _, key in ipairs(untranslated) do
@@ -7337,8 +7339,8 @@ do
     local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
         definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
 
-    equal(#englishOrder, 233, "the default locale defines 233 keys")
-    equal(#frenchOrder, 233, "and the French block defines 233")
+    equal(#englishOrder, 250, "the default locale defines 250 keys")
+    equal(#frenchOrder, 250, "and the French block defines 250")
     equal(#englishDupes, 0,
         "no key is defined twice in the default locale ("
             .. table.concat(englishDupes, ", ") .. ")")
@@ -7830,7 +7832,7 @@ do
     _G["SanctuaryTab_protection"]:Click()
     ns.refreshUI()
     local content = _G.SanctuaryTabContent_protection
-    -- Four joins between five questions, so four rules.
+    -- Five joins between six questions, so five rules.
     local found = {}
     for _, child in ipairs(content.__children or {}) do
         if child.__kind == "Texture" and child:GetHeight() == 1
@@ -7838,7 +7840,7 @@ do
             found[#found + 1] = child
         end
     end
-    equal(#found, 4, "four rules, one between each pair of questions")
+    equal(#found, 5, "five rules, one between each pair of questions")
     for _, rule in ipairs(found) do
         equal(rule:GetWidth(), _G.SanctuaryMainFrame:GetWidth() - 36,
             "each one runs the whole column, padding aside")
@@ -8608,6 +8610,117 @@ local function readShippedTexture(relative, side, said)
 end
 
 -- ---------------------------------------------------------------------------
+-- Question 3: the mailbox
+-- ---------------------------------------------------------------------------
+
+do
+
+local keptMode = ns.getMailMode()
+local keptAttachments = ns.getMailAttachments()
+local keptSize = SanctuaryDB.uiSize
+local details = _G.SanctuaryMailDetails
+local keep, remove = _G.SanctuaryMail_keep, _G.SanctuaryMail_delete
+check(keep ~= nil and remove ~= nil, "question 3 offers the same two cards as the others")
+check(details ~= nil, "with its details in a block of their own")
+
+-- The anti-spam kept its own names: they say what the cards are, not where they
+-- sit, and renaming them would cost twenty locale keys to say the same thing.
+check(_G.SanctuaryQ3_yes ~= nil and _G.SanctuaryQ3_no ~= nil,
+    "the anti-spam's cards keep the names they have always had")
+check(_G.SanctuaryQ4_silent ~= nil, "and so do the notification cards")
+
+-- Folded by default: the two cards and nothing else. What the home screen grows
+-- by is one row of cards, its title and its rule.
+ns.setMailMode("keep")
+ns.refreshUI()
+equal(details:IsShown(), false, "left alone, question 3 shows its two cards and nothing more")
+local foldedHeight = _G.SanctuaryContentScroll:GetScrollChild():GetHeight()
+
+remove:Click()
+equal(ns.getMailMode(), "delete", "the second card sets the mailbox to be emptied")
+equal(details:IsShown(), true, "and unfolds the two answers that go with it")
+check(_G.SanctuaryContentScroll:GetScrollChild():GetHeight() > foldedHeight,
+    "the screen grows for them")
+-- The questions under it move down with the fold rather than being written over.
+do
+    local _, _, _, _, mailY = _G.SanctuaryMailDetails:GetPoint()
+    local _, _, _, _, antiSpamY = _G.SanctuaryQ3_yes:GetPoint()
+    check((antiSpamY or 0) < (mailY or 0) - details:GetHeight(),
+        "and question 4 sits under the whole of it")
+end
+keep:Click()
+equal(details:IsShown(), false, "the first card folds it away again")
+equal(_G.SanctuaryContentScroll:GetScrollChild():GetHeight(), foldedHeight,
+    "and the screen goes back to the length it had")
+
+-- Alive in the open mode too, and never a greyed-out witness: the blocked list
+-- and the patterns reach a letter whatever question 1 answers.
+do
+    local keptScope = SanctuaryDB.filters.scope
+    SanctuaryDB.filters.scope = "blockedOnly"
+    ns.refreshUI()
+    equal(keep.enabled, true, "'everyone except the people I block' leaves question 3 live")
+    equal(remove.enabled, true, "on both of its cards")
+    SanctuaryDB.filters.scope = keptScope
+    ns.refreshUI()
+end
+
+-- The one answer that destroys something is written by the dialog and never by
+-- the click.
+remove:Click()
+ns.setMailAttachments("keep")
+ns.refreshUI()
+popup.shown = false
+_G.SanctuaryMailAttach_delete:Click()
+equal(ns.getMailAttachments(), "keep", "clicking 'delete it too' writes nothing on its own")
+equal(popup.shown, true, "it asks first")
+equal(popup.which, "SANCTUARY_MAIL_DELETE_ATTACHMENTS", "in a dialog of its own")
+local mailDialog = StaticPopupDialogs.SANCTUARY_MAIL_DELETE_ATTACHMENTS
+equal(mailDialog.showAlert, true, "drawn as the warning it is")
+mailDialog.OnCancel()
+equal(ns.getMailAttachments(), "keep", "saying no leaves the answer that was there")
+equal(_G.SanctuaryMailAttach_keep.mark:IsShown(), true, "and the dot goes back where it was")
+popup.shown = false
+_G.SanctuaryMailAttach_delete:Click()
+equal(popup.shown, true, "a second try asks again rather than remembering the first")
+mailDialog.OnAccept()
+equal(ns.getMailAttachments(), "delete", "and saying yes is what writes it")
+
+-- The other two answers are ordinary: they write on the click.
+_G.SanctuaryMailAttach_return:Click()
+equal(ns.getMailAttachments(), "return", "sending it back needs no dialog")
+_G.SanctuaryMailIcon_never:Click()
+equal(ns.getMailIcon(), "never", "and neither does the icon")
+_G.SanctuaryMailIcon_normal:Click()
+equal(ns.getMailIcon(), "normal", "either way round")
+
+-- At the narrowest the grip goes to, every dot and its label stay inside the
+-- screen. They are laid out left to right and wrap when the next one would not
+-- fit, which is what the mock-up draws.
+SanctuaryDB.uiSize = { 500, 0 }
+ns.refreshUI()
+do
+    local room = _G.SanctuaryMailDetails:GetWidth()
+    equal(room, 464, "at 500 px the block has the same 464 px the rest of the screen has")
+    for _, name in ipairs({ "SanctuaryMailAttach_keep", "SanctuaryMailAttach_return",
+        "SanctuaryMailAttach_delete", "SanctuaryMailIcon_normal",
+        "SanctuaryMailIcon_hideIfFiltered", "SanctuaryMailIcon_never" }) do
+        local dot = _G[name]
+        local _, _, _, x = dot:GetPoint()
+        local right = (x or 0) + (dot:GetWidth() or 0) + 8 + (dot.label:GetWidth() or 0)
+        check(right <= room, name .. " ends inside the screen (" .. right .. " of " .. room .. ")")
+    end
+end
+SanctuaryDB.uiSize = keptSize
+
+ns.setMailAttachments(keptAttachments)
+ns.setMailMode(keptMode)
+ns.refreshUI()
+
+end
+
+assertModelAtRest()
+-- ---------------------------------------------------------------------------
 -- Question 3: the anti-spam of the public channels
 -- ---------------------------------------------------------------------------
 
@@ -8739,10 +8852,10 @@ do
         end
     end
     walk(protectionContent)
-    for _, number in ipairs({ "1", "2", "3", "4", "5" }) do
+    for _, number in ipairs({ "1", "2", "3", "4", "5", "6" }) do
         check(seen[number], "the screen numbers a question " .. number)
     end
-    check(not seen["6"], "and stops at five")
+    check(not seen["7"], "and stops at six")
 
     local previousY
     local ordered = {
@@ -10675,7 +10788,7 @@ local aboutHeight = mainFrame:GetHeight()
 _G["SanctuaryTab_protection"]:Click()
 local protectionHeight = mainFrame:GetHeight()
 check(protectionHeight >= aboutHeight, "the tallest screen is at least as tall as the shortest")
-check(protectionHeight <= 900 + 40 + 30 + 16, "and the fitted height stays within its bounds")
+check(protectionHeight <= 1030 + 40 + 30 + 16, "and the fitted height stays within its bounds")
 
 -- "I choose" unfolds two columns of boxes into the middle of the screen: the
 -- window grows for them, and where it cannot -- a size the person dragged it to
@@ -11236,7 +11349,7 @@ end
 -- And the fitted mode is really back: the height follows the screen again, and
 -- the width goes back to the one the window is designed at.
 _G["SanctuaryTab_about"]:Click()
-equal(mainFrame:GetHeight(), 776 + 40 + 30 + 16, "the shortest screen is back to its fitted height")
+equal(mainFrame:GetHeight(), 906 + 40 + 30 + 16, "the shortest screen is back to its fitted height")
 equal(mainFrame:GetWidth(), 780, "and to the design width")
 local shortestFitted = mainFrame:GetHeight()
 -- Every screen opens in the same window: the height the window asks for is the
@@ -11975,17 +12088,23 @@ do
     equal(scroll.bar:IsShown(), false, "and there is nothing to scroll")
 
     -- The room a large screen buys, taken. The design's ceiling stops the window
-    -- at 986 units; up to nine tenths of the screen carries "I choose" unfolded,
-    -- which is the tallest the home screen ever is.
+    -- at 1116 units; up to nine tenths of the screen carries "I choose" unfolded
+    -- WITH question 3 unfolded under it, which is the tallest the home screen
+    -- ever is.
     UIParent.GetHeight = function() return 1440 end
     SanctuaryDB.filters.preset = "custom"
+    local keptMailMode = ns.getMailMode()
+    ns.setMailMode("delete")
     ns.refreshUI()
-    check(mainFrame:GetHeight() > 986,
+    check(mainFrame:GetHeight() > 1030 + 86,
         "a screen with room to spare opens the window past the design ceiling ("
             .. tostring(mainFrame:GetHeight()) .. ")")
     check((scroll:GetScrollChild():GetHeight() or 0) <= (scroll:GetHeight() or 0),
-        "and the unfolded home screen is in it whole")
+        "and the whole home screen, both folds open, is in it ("
+            .. tostring(scroll:GetScrollChild():GetHeight()) .. " in "
+            .. tostring(scroll:GetHeight()) .. ")")
     equal(scroll.bar:IsShown(), false, "with nothing left under the fold")
+    ns.setMailMode(keptMailMode)
     SanctuaryDB.filters.preset = "all"
 
     -- A size the person dragged to is theirs: the share of the screen is what
@@ -12015,7 +12134,7 @@ do
     _G["SanctuaryTab_protection"]:Click()
     ns.refreshUI()
     local asked = mainFrame:GetHeight()
-    check(asked >= 776 + 40 + 30 + 16,
+    check(asked >= 906 + 40 + 30 + 16,
         "with no screen to fit, the window is as tall as the home screen asked ("
             .. tostring(asked) .. ")")
     for _, answer in ipairs({ "nil", 0, -100, "tall" }) do
