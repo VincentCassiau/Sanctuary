@@ -995,8 +995,22 @@ local function newDropdown(parent, name, width, rows, get, set)
         applyBackdrop(option, C.tile, C.tile)
         option.label = newLabel(option, row.text, FONT_BODY, C.soft)
         option.label:SetPoint("LEFT", option, "LEFT", 8, 0)
-        option:SetScript("OnEnter", function(self) applyBackdrop(self, C.accentBg, C.accent) end)
-        option:SetScript("OnLeave", function(self) applyBackdrop(self, C.tile, C.tile) end)
+        -- A row may carry a sentence (`row.tip`): the channel modes used to be
+        -- three dots with one each, and a menu that dropped them would be
+        -- three choices nobody can read about. Shown on the row, and repeated
+        -- on the closed field for the row it names.
+        option:SetScript("OnEnter", function(self)
+            applyBackdrop(self, C.accentBg, C.accent)
+            if row.tip then
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText(row.tip, 1, 1, 1, 1, true)
+                GameTooltip:Show()
+            end
+        end)
+        option:SetScript("OnLeave", function(self)
+            applyBackdrop(self, C.tile, C.tile)
+            if row.tip then GameTooltip:Hide() end
+        end)
         option:SetScript("OnClick", function()
             closeOpenDropdown()
             set(row.value)
@@ -1004,6 +1018,27 @@ local function newDropdown(parent, name, width, rows, get, set)
             if ns.refreshUI then ns.refreshUI() end
         end)
         field.rows[index] = option
+    end
+
+    field:SetScript("OnEnter", function(self)
+        if not self.enabled then return end
+        local current = get()
+        for _, row in ipairs(rows) do
+            if row.value == current and row.tip then
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText(row.tip, 1, 1, 1, 1, true)
+                GameTooltip:Show()
+            end
+        end
+    end)
+    field:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    -- The field, its list and its rows are one width: a menu narrower than its
+    -- longest row cuts that row, and the width is only known at layout time.
+    function field:SetMenuWidth(menuWidth)
+        self:SetWidth(menuWidth)
+        list:SetWidth(menuWidth)
+        for _, option in ipairs(self.rows) do option:SetWidth(menuWidth - 8) end
     end
 
     -- Drawn from the model like every other component here: the field shows what
@@ -1880,7 +1915,6 @@ local function buildProtectionTab(parent)
     -- cannot prove the fold is paid for in height.
     protection.channelsLabel = newLabel(choose, L["CHANNELS_LABEL"], FONT_BODY, C.soft,
         nil, "SanctuaryChannelsLabel")
-    protection.channelRadios = {}
     -- Written out rather than built from the mode name: a key that only exists
     -- as a concatenation cannot be found by searching for it, and an unreachable
     -- translation is one nobody will ever notice is missing.
@@ -1889,13 +1923,16 @@ local function buildProtectionTab(parent)
         { mode = "keywords", labelKey = "CHANNEL_KEYWORDS", tipKey = "TIP_CHANNEL_KEYWORDS" },
         { mode = "all", labelKey = "CHANNEL_ALL", tipKey = "TIP_CHANNEL_ALL" },
     }
-    for _, row in ipairs(CHANNEL_ROWS) do
-        local mode = row.mode
-        local radio = newRadio(choose, "SanctuaryChannel_" .. mode, L[row.labelKey], L[row.tipKey],
-            function() return (filterStored("channelMode") or "none") == mode end,
-            function() setFilter("channelMode", mode) end)
-        protection.channelRadios[mode] = radio
+    -- One menu rather than three dots (Vincent, 03/09/2026): the column keeps
+    -- two rows where it had four, and each choice keeps its sentence, on the
+    -- row of the open list and on the closed field.
+    local channelRows = {}
+    for index, row in ipairs(CHANNEL_ROWS) do
+        channelRows[index] = { value = row.mode, text = L[row.labelKey], tip = L[row.tipKey] }
     end
+    protection.channelMode = newDropdown(choose, "SanctuaryChannelMode", 220, channelRows,
+        function() return filterStored("channelMode") or "none" end,
+        function(value) setFilter("channelMode", value) end)
 
     -- Laid out from a width rather than at a fixed one: the window resizes on
     -- both axes now, and the two columns are the only thing on this screen that
@@ -1939,15 +1976,13 @@ local function buildProtectionTab(parent)
         protection.channelsLabel:ClearAllPoints()
         protection.channelsLabel:SetPoint("TOPLEFT", choose, "TOPLEFT", colX[2], colY[2] - 6)
         colY[2] = colY[2] - 28
-        for _, row in ipairs(CHANNEL_ROWS) do
-            local radio = protection.channelRadios[row.mode]
-            radio:ClearAllPoints()
-            radio:SetPoint("TOPLEFT", choose, "TOPLEFT", colX[2] + 16, colY[2])
-            -- A channel row is indented by 16, so it has 16 px less to write in
-            -- than a box of the same column.
-            colY[2] = colY[2] - math.max(22,
-                radio:FitLabel(protection.checkLabelWidth - 16) + (22 - HOME.checkSize))
-        end
+        -- Under its label, indented by the 16 px the dots had, and as wide as
+        -- the column leaves it: the longest choice is the English "Filter
+        -- everything, except my allowed names".
+        protection.channelMode:ClearAllPoints()
+        protection.channelMode:SetPoint("TOPLEFT", choose, "TOPLEFT", colX[2] + 16, colY[2])
+        protection.channelMode:SetMenuWidth(colWidth - 16)
+        colY[2] = colY[2] - 30
 
         protection.chooseHeight = -math.min(colY[1], colY[2])
         choose:SetSize(innerWidth, protection.chooseHeight)
@@ -2253,10 +2288,7 @@ refreshTab.protection = function()
         check:SetEnabledState(not blockedOnly)
         check:Refresh()
     end
-    for _, radio in pairs(protection.channelRadios) do
-        radio:SetEnabledState(not blockedOnly)
-        radio:Refresh()
-    end
+    protection.channelMode:SetEnabledState(not blockedOnly)
     protection.channelsLabel:SetTextColor(unpack(blockedOnly and C.disabled or C.soft))
     protection.q2Title:SetTextColor(unpack(blockedOnly and C.disabled or C.ink))
     protection.q2Number:SetTextColor(unpack(blockedOnly and C.disabled or C.accent))
