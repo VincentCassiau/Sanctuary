@@ -983,6 +983,12 @@ local function writeMail(field, allowed, value)
     local stored = SanctuaryDB and SanctuaryDB.mail
     if type(stored) ~= "table" or not allowed[value] then return end
     stored[field] = value
+    -- The minimap icon is drawn from all three answers at once, so it is put
+    -- back on the spot here rather than from the one interface dot that happened
+    -- to carry the call. Saying "leave my mail alone" and keeping a hidden icon
+    -- until the next letter arrives is the state this closes. `refreshMailIcon`
+    -- replays the game's own handler and never shows the icon by hand.
+    if ns.refreshMailIcon then ns.refreshMailIcon() end
 end
 
 function ns.getMailMode() return readMail("mode", MAIL_MODES, "keep") end
@@ -5700,6 +5706,9 @@ function ns.setEnabled(enabled)
     local newState = isEnabled()
     debugLog("TOGGLE", { enabled = newState })
     refreshInviteSoundMuteState()
+    -- The minimap icon reads this switch too: at OFF it is the game's again,
+    -- straight away, like every other window Sanctuary was holding down.
+    if ns.refreshMailIcon then ns.refreshMailIcon() end
 
     if newState then
         printSuccess(L["SANCTUARY_ENABLED"])

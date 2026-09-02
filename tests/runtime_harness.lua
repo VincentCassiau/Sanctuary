@@ -6872,8 +6872,8 @@ ns.setMailIcon("normal")
 mailWaitsFrom("Nuisance-TestRealm")
 equal(mailbox.icon.shown, true, "on the normal setting the icon behaves as the game draws it")
 
-local layoutsBefore = mailbox.icon.layouts
 ns.setMailIcon("never")
+local layoutsBefore = mailbox.icon.layouts
 mailWaitsFrom("Guildmate-TestRealm")
 equal(mailbox.icon.shown, false, "on 'never' the icon goes, even for a letter from a guild mate")
 equal(mailbox.icon.layouts, layoutsBefore + 1, "and the row it sat in is laid out again")
@@ -6907,18 +6907,26 @@ ns.invalidateWhitelist()
 mailWaitsFrom()
 equal(mailbox.icon.shown, false, "no mail waiting, no icon, and nothing for us to do")
 
--- With the mailbox left alone the icon is none of our business.
-SanctuaryDB.mail.mode = "keep"
+-- The icon is drawn from the mail answers AND from the master switch, so every
+-- one of them puts it back the moment it changes. Waiting for the next letter to
+-- arrive left the person who had just said "leave my mail alone" without an
+-- icon until a relog.
 mailWaitsFrom("Nuisance-TestRealm")
-equal(mailbox.icon.shown, true, "with the mailbox left alone the icon is the game's business")
-SanctuaryDB.mail.mode = "delete"
+ns.setMailMode("keep")
+equal(mailbox.icon.shown, true, "'leave my mail alone' hands the icon straight back")
+ns.setMailMode("delete")
+equal(mailbox.icon.shown, false, "and taking that answer back hides it again")
+
+local enabledBeforeIcon = SanctuaryCharDB.overrides.enabled
+ns.setEnabled(false)
+equal(mailbox.icon.shown, true, "switching the protection off hands it back too")
+SanctuaryCharDB.overrides.enabled = enabledBeforeIcon
+ns.refreshMailIcon()
+equal(mailbox.icon.shown, false, "and switched back on it is hidden again")
 
 -- And back to "Normale" without a relog: Blizzard's own handler is replayed,
 -- so what draws the icon stays the game's.
-mailWaitsFrom("Nuisance-TestRealm")
-equal(mailbox.icon.shown, false, "hidden again")
 ns.setMailIcon("normal")
-ns.refreshMailIcon()
 equal(mailbox.icon.shown, true, "and the icon comes back the moment the answer changes")
 mailbox.senders = {}
 

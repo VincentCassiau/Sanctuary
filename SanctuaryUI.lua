@@ -1702,15 +1702,17 @@ local function buildProtectionTab(parent)
                     -- click. Every ticking asks again: the question is worth
                     -- asking twice, and it is asked once a gesture, not once a
                     -- session.
+                    --
+                    -- Nothing here replays the minimap icon: the setting does it
+                    -- itself, whichever of the three answers changed and whoever
+                    -- changed it. A dot that carried that call was a dot the
+                    -- other two paths did not have.
                     if isAttachments and value == "delete" then
                         StaticPopup_Show("SANCTUARY_MAIL_DELETE_ATTACHMENTS")
                     elseif isAttachments then
                         ns.setMailAttachments(value)
                     else
                         ns.setMailIcon(value)
-                        -- Back to "Normale" without a relog: the game's own
-                        -- handler is what puts the icon back.
-                        if ns.refreshMailIcon then ns.refreshMailIcon() end
                     end
                 end)
             entry.radios[value] = radio
