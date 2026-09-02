@@ -6890,6 +6890,19 @@ equal(mailbox.icon.shown, true, "one letter you would want and the icon stays")
 mailWaitsFrom("Nuisance-TestRealm", "Nuisance-TestRealm", "Nuisance-TestRealm")
 equal(mailbox.icon.shown, true, "at three names the game has stopped counting, so the icon stays")
 
+-- A sender who is not a player goes through the very gate the scan uses. The
+-- pattern below is the auction house's own first word: without that gate the
+-- name is put to the lists like anybody's, the icon disappears, and the person
+-- is not told they have mail from an auction house or an NPC -- while the
+-- mailbox itself, quite rightly, was never touched.
+local keywordsBeforeIcon = SanctuaryDB.keywords
+SanctuaryDB.keywords = { "hotel" }
+ns.invalidateWhitelist()
+mailWaitsFrom("Hotel des ventes")
+equal(mailbox.icon.shown, true, "a sender who is not a player never takes the icon away")
+SanctuaryDB.keywords = keywordsBeforeIcon
+ns.invalidateWhitelist()
+
 -- Nothing waiting, and nothing to hide.
 mailWaitsFrom()
 equal(mailbox.icon.shown, false, "no mail waiting, no icon, and nothing for us to do")

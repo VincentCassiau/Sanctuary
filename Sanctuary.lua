@@ -6249,6 +6249,25 @@ local function clearRow(row)
     if expire and expire.Hide then expire:Hide() end
 end
 
+-- The one thing a bare name can say on its own: does it look like a character,
+-- or like the game writing to you? A character name is a single word, with a
+-- realm behind a dash at most -- "Hotel des ventes", "The Postmaster" and every
+-- quest giver carry a space in front of that dash, and a player cannot.
+--
+-- The scan asks the game itself as well, which is a far better answer than any
+-- shape; the minimap icon has nothing else to go on, since
+-- `GetLatestThreeSenders` hands over three strings and no header at all. Both go
+-- through here, so the icon can never call filtered a letter the scan would not
+-- touch: an auction house that happens to carry a blocked pattern in its name
+-- used to take the icon off the screen while the mailbox itself was left alone.
+local function isPlayerSenderName(sender)
+    if splitCharacterName(sender) == nil then return false end
+    local clean = stripWoWFormatting(sender)
+    if not clean then return false end
+    clean = clean:gsub("^[%s%-]+", ""):gsub("[%s%-]+$", "")
+    return clean:match("^[^%-]*"):match("%s") == nil
+end
+
 -- Is this a letter from a player? Asked FIRST, before any name reaches any
 -- list. "Y'a pas que l'HV, y'a plein de PNJ qui peuvent envoyer des choses"
 -- (Vincent, 02/09/2026): an auction house whose name happens to carry a blocked
@@ -6284,7 +6303,7 @@ function ns.classifyInboxMail(index)
     if not sender or sender == "" or not canReply then info.class = "system" return info end
     -- Returned to you, or sent by you: your own things, coming home.
     if wasReturned or ns.isSelf(sender) then info.class = "own" return info end
-    if splitCharacterName(sender) == nil then info.class = "unnamed" return info end
+    if not isPlayerSenderName(sender) then info.class = "unnamed" return info end
 
     info.fromPlayer = true
     if info.codAmount > 0 then info.class = "cod"
@@ -6479,7 +6498,14 @@ local function applyMailIcon(frame)
             local names = { GetLatestThreeSenders() }
             senders = #names
             for _, name in ipairs(names) do
-                if (ns.decideMail(name)) then filtered = filtered + 1 end
+                -- The scan's own gate first, on everything a bare name allows:
+                -- what did not come from a player is never filtered, so an
+                -- auction house or a letter from yourself leaves the icon where
+                -- the game drew it. Only then is the name put to the lists.
+                if isPlayerSenderName(name) and not ns.isSelf(name)
+                    and (ns.decideMail(name)) then
+                    filtered = filtered + 1
+                end
             end
             -- One or two names, and every one of them filtered. At three the
             -- API has stopped counting: three names can mean three senders or
