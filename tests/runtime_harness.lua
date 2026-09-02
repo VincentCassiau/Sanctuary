@@ -7384,8 +7384,8 @@ do
     local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
         definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
 
-    equal(#englishOrder, 250, "the default locale defines 250 keys")
-    equal(#frenchOrder, 250, "and the French block defines 250")
+    equal(#englishOrder, 251, "the default locale defines 251 keys")
+    equal(#frenchOrder, 251, "and the French block defines 251")
     equal(#englishDupes, 0,
         "no key is defined twice in the default locale ("
             .. table.concat(englishDupes, ", ") .. ")")
@@ -7444,13 +7444,29 @@ assertModelAtRest()
 -- themselves should not have to learn a vocabulary. And "passer" was banned for
 -- being untrue -- a name is never "let through", it is simply not blocked.
 local BANNED_WORDS = { "whitelist", "blacklist", " passe" }
+-- " passe" is banned in ONE sense, the one the rule above names: a name is never
+-- "let through". "passer pour", to be mistaken for something, is a different
+-- verb, and it is the word Vincent wrote himself about the minimap icon
+-- (decision 20). The exception is that phrase and nothing wider: "un nom qui
+-- passe" is still a failure here.
+local function carriesBanned(text, word)
+    local at = 1
+    while true do
+        local found = text:find(word, at, true)
+        if not found then return false end
+        if not (word == " passe" and text:find("^ passer pour ", found)) then
+            return true
+        end
+        at = found + 1
+    end
+end
 local offenders = {}
 for _, locale in ipairs({ defaultLocale, frenchLocale }) do
     for key, value in pairs(locale) do
         if type(value) == "string" then
             local lowered = value:lower()
             for _, word in ipairs(BANNED_WORDS) do
-                if lowered:find(word, 1, true) then
+                if carriesBanned(lowered, word) then
                     offenders[#offenders + 1] = key .. " (" .. word .. ")"
                 end
             end
@@ -7460,6 +7476,12 @@ end
 table.sort(offenders)
 equal(#offenders, 0,
     "no visible string carries a banned word (" .. table.concat(offenders, ", ") .. ")")
+-- The exception is narrow, and this is what keeps it narrow: only the phrase is
+-- let by, the sense the rule bans still fails.
+equal(carriesBanned("un nom qui passe", " passe"), true,
+    "a name that 'passes' is still a banned word")
+equal(carriesBanned("peut donc passer pour un courrier", " passe"), false,
+    "and being mistaken for something is not")
 
 assertModelAtRest()
 -- ---------------------------------------------------------------------------
@@ -8662,6 +8684,7 @@ do
 
 local keptMode = ns.getMailMode()
 local keptAttachments = ns.getMailAttachments()
+local keptIcon = ns.getMailIcon()
 local keptSize = SanctuaryDB.uiSize
 local details = _G.SanctuaryMailDetails
 local keep, remove = _G.SanctuaryMail_keep, _G.SanctuaryMail_delete
@@ -8739,6 +8762,47 @@ equal(ns.getMailIcon(), "never", "and neither does the icon")
 _G.SanctuaryMailIcon_normal:Click()
 equal(ns.getMailIcon(), "normal", "either way round")
 
+-- The middle answer is the one thing on this screen the game cannot be sure of,
+-- and the sentence saying so hangs on it alone. Outside the mailbox WoW gives
+-- three sender NAMES and nothing else, so an NPC named in a single word reads
+-- like anyone else and takes the icon with it; inside the mailbox the game
+-- answers, and that mail is never touched. Vincent keeps the setting as it is
+-- and has it say what it does instead (decisions 19 to 21). The other two
+-- answers promise nothing they cannot keep, so they explain nothing.
+do
+    -- A row with nothing to say has no OnEnter at all, so the hover is asked for
+    -- rather than called: what is compared is the sentence that came up, and a
+    -- row that stopped saying anything reads as nil instead of a traceback.
+    local function hoverText(frame)
+        rawset(GameTooltip, "__lastText", nil)
+        local enter = frame:GetScript("OnEnter")
+        if enter then enter(frame) end
+        local text = rawget(GameTooltip, "__lastText")
+        local leave = frame:GetScript("OnLeave")
+        if leave then leave(frame) end
+        return text
+    end
+    local uncertain = _G.SanctuaryMailIcon_hideIfFiltered
+    equal(hoverText(uncertain), ns.L["TIP_MAIL_ICON_FILTERED"],
+        "the icon answer the game cannot be sure of says so under the pointer")
+    equal(hoverText(uncertain.labelHit), ns.L["TIP_MAIL_ICON_FILTERED"],
+        "and so do the words beside it")
+    equal(hoverText(_G.SanctuaryMailIcon_normal), nil,
+        "'Normal' is certain, and answers nothing on hover")
+    equal(hoverText(_G.SanctuaryMailIcon_never), nil, "so is 'Never'")
+
+    -- Vincent's own sentence, to the letter (decisions 20 and 21).
+    equal(frenchLocale.TIP_MAIL_ICON_FILTERED,
+        "L'ic\195\180ne de courrier pr\195\168s de la minicarte se fie aux noms des "
+        .. "exp\195\169diteurs. Un courrier de PNJ peut donc passer pour un courrier "
+        .. "\195\160 filtrer. \195\128 l'ouverture de la bo\195\174te aux lettres, il "
+        .. "sera reconnu comme venant d'un PNJ et ne sera pas supprim\195\169.",
+        "the French sentence is the one Vincent validated")
+    check((defaultLocale.TIP_MAIL_ICON_FILTERED or ""):find(
+        "it is recognized as coming from an NPC and is not deleted", 1, true) ~= nil,
+        "and the default locale makes the mailbox the same promise")
+end
+
 -- At the narrowest the grip goes to, every dot and its label stay inside the
 -- screen. They are laid out left to right and wrap when the next one would not
 -- fit, which is what the mock-up draws.
@@ -8759,6 +8823,7 @@ end
 SanctuaryDB.uiSize = keptSize
 
 ns.setMailAttachments(keptAttachments)
+ns.setMailIcon(keptIcon)
 ns.setMailMode(keptMode)
 ns.refreshUI()
 

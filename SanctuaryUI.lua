@@ -1686,7 +1686,16 @@ local function buildProtectionTab(parent)
             get = ns.getMailIcon,
             rows = {
                 { value = "normal",         labelKey = "MAIL_ICON_NORMAL" },
-                { value = "hideIfFiltered", labelKey = "MAIL_ICON_FILTERED" },
+                -- The only answer on this screen the game cannot make certain,
+                -- so it is the only one carrying a sentence. Outside the
+                -- mailbox WoW hands over three sender NAMES and nothing else --
+                -- no `canReply`, no header -- so an NPC whose name is one word
+                -- reads like anyone else and takes the icon away with it. The
+                -- mailbox itself is not concerned: there the game answers, and
+                -- that mail is never touched. Vincent keeps the setting as it
+                -- is and says so here (decisions 19 to 21).
+                { value = "hideIfFiltered", labelKey = "MAIL_ICON_FILTERED",
+                    tipKey = "TIP_MAIL_ICON_FILTERED" },
                 { value = "never",          labelKey = "MAIL_ICON_NEVER" },
             },
         },
@@ -1700,7 +1709,8 @@ local function buildProtectionTab(parent)
         }
         for _, row in ipairs(group.rows) do
             local value, isAttachments = row.value, group.key == "attach"
-            local radio = newRadio(mailDetails, group.prefix .. value, L[row.labelKey], nil,
+            local radio = newRadio(mailDetails, group.prefix .. value, L[row.labelKey],
+                row.tipKey and L[row.tipKey],
                 function() return group.get() == value end,
                 function()
                     -- Destroying what is inside a letter cannot be undone, so
