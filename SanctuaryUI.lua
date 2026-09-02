@@ -4394,11 +4394,15 @@ local function applyHeight(height)
     if manualSize then
         -- A settings file written before the bounds existed -- or before the
         -- width was ever applied -- can carry anything at all, so this is
-        -- clamped exactly like the width, and to the bounds the GRIP has: a
-        -- remembered size is where a person left the grip, and clamping it to
-        -- the opening height would undo the drag on the next opening.
-        frameHeight = manualSize[2] or GRIP_MIN_FRAME_HEIGHT
-        frameHeight = math.min(MAX_FRAME_HEIGHT, math.max(GRIP_MIN_FRAME_HEIGHT, frameHeight))
+        -- clamped exactly like the width, and to `heightBounds`, which is the
+        -- travel the GRIP is given: a remembered size is where a person left the
+        -- grip, and any other ceiling here undoes the drag. Held to the design's
+        -- 1116 while the grip went to nine tenths of the screen, letting go of a
+        -- large window wrote the size and the refresh that followed pulled it
+        -- straight back up.
+        local minHeight, maxHeight = heightBounds()
+        frameHeight = manualSize[2] or minHeight
+        frameHeight = math.min(maxHeight, math.max(minHeight, frameHeight))
     else
         frameHeight = math.min(needed + CONTENT_TOP + CONTENT_BOTTOM, heightCeiling())
     end

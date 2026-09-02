@@ -12158,6 +12158,23 @@ do
     mainFrame:Hide()
     mainFrame:Show()
     equal(mainFrame:GetHeight(), 890, "a remembered height is not stretched by the share")
+    -- Theirs up to the GRIP's ceiling, which is the share of the screen -- not
+    -- the design's 1116. Held to the design's, letting go of a window dragged
+    -- taller than that wrote the size, and the refresh that followed pulled the
+    -- window back up on its own, by more the larger the screen.
+    SanctuaryDB.uiSize = { 500, 1250 }
+    mainFrame:Hide()
+    mainFrame:Show()
+    equal(mainFrame:GetHeight(), 1250,
+        "a height dragged past the design ceiling comes back exactly where it was left")
+    -- And a settings file that carries anything at all still comes back inside
+    -- the bounds the grip is given.
+    local _, _, _, gripCeiling = mainFrame:GetResizeBounds()
+    SanctuaryDB.uiSize = { 500, 10000 }
+    mainFrame:Hide()
+    mainFrame:Show()
+    equal(mainFrame:GetHeight(), gripCeiling,
+        "while an absurd remembered height is brought back to the grip's own ceiling")
     SanctuaryDB.uiSize = nil
     mainFrame:Hide()
     mainFrame:Show()
