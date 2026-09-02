@@ -932,14 +932,20 @@ local DROPDOWN_ROW_HEIGHT = 22
 --
 -- It replaces the four stacked bars of 1.0.0, which Vincent read as crooked on
 -- his client -- "comme si c'etait de l'aliasing" (02/09/2026).
-local CARET_SIZE = 8
-local CARET_TEXTURE = "Interface\\AddOns\\Sanctuary\\media\\caret.tga"
+--
+-- Its two constants sit INSIDE the function and not beside it. Lua caps a chunk
+-- at 200 locals, this file runs a few short of that, and a chunk over the cap
+-- does not compile -- which is the add-on not loading at all. So a constant one
+-- function reads is declared where it is read, and anything new at file level
+-- is checked with `luac -p -l` before it is written.
 local function newCaret(parent, color)
+    local SIZE = 8
+    local TEXTURE = "Interface\\AddOns\\Sanctuary\\media\\caret.tga"
     local caret = CreateFrame("Frame", nil, parent)
-    caret:SetSize(CARET_SIZE, CARET_SIZE)
+    caret:SetSize(SIZE, SIZE)
     local arrow = caret:CreateTexture(nil, "OVERLAY")
     arrow:SetAllPoints(caret)
-    arrow:SetTexture(CARET_TEXTURE)
+    arrow:SetTexture(TEXTURE)
     arrow:SetVertexColor(unpack(color))
     caret.arrow = arrow
     -- The field greys its arrow with the rest of itself, and the tint is the
@@ -4293,11 +4299,10 @@ end
 -- client measures is 691 -- shorter than the 748 the window already opens at
 -- there -- so reading "up to 90 %" literally would shrink the window on the most
 -- common screen of all. It is a ceiling to grow towards, not a size to impose.
-local SCREEN_SHARE = 0.90
 local function heightCeiling()
     local available = UIParent and UIParent.GetHeight and UIParent:GetHeight()
     if type(available) ~= "number" or available <= 0 then return MAX_FRAME_HEIGHT end
-    return math.max(MAX_FRAME_HEIGHT, math.floor(available * SCREEN_SHARE))
+    return math.max(MAX_FRAME_HEIGHT, math.floor(available * 0.90))
 end
 
 -- What the grip is allowed to do, in height. The screen brings the CEILING down
