@@ -6770,6 +6770,12 @@ equal(rowShown(1) or rowShown(2) or rowShown(3), false,
     "and all three rows emptied at once, so nothing readable is left behind")
 MailFrame_OnEvent()
 equal(#mailbox.commands, 1, "a redraw while the client is still working orders nothing")
+-- And gives nothing back. A box still as full as it was is what the two-strike
+-- guard reads as a refusal -- but while the command is in flight it is simply a
+-- box that has not been emptied yet, and counting a strike there put the sender
+-- and the subject back on screen for as long as the mailbox stayed open.
+equal(rowShown(1) or rowSubject(1) ~= "", false,
+    "and puts nothing of the letter on its way out back on screen")
 now = now + 5
 serverAnswersMail()
 equal(#mailbox.commands, 2, "the answer lets the next one go")
@@ -6780,6 +6786,24 @@ serverAnswersMail()
 equal(#mailbox.inbox, 0, "the box empties itself, one letter at a time")
 equal(#mailbox.commands, 3, "with one command each and not one more")
 equal(#SanctuaryDB.log, 3, "and one Journal entry a letter")
+
+-- Three letters a redraw cannot tell them apart by: same sender, same subject,
+-- nothing in any of them. They are set aside by identity, so a strike counted on
+-- one is a strike counted on all three -- and none of them may be counted while
+-- the client is still working, or two of the three stay in the box.
+armMailFixture()
+now = now + 5
+openMailbox({
+    { sender = "Nuisance-TestRealm", subject = "same" },
+    { sender = "Nuisance-TestRealm", subject = "same" },
+    { sender = "Nuisance-TestRealm", subject = "same" },
+})
+MailFrame_OnEvent()
+serverAnswersMail()
+MailFrame_OnEvent()
+serverAnswersMail()
+serverAnswersMail()
+equal(#mailbox.inbox, 0, "three letters nothing tells apart all go, one an answer")
 
 -- M6 -- a server that acknowledges and removes nothing. Without this the pass
 -- would order the same letter away for as long as the box stayed open.

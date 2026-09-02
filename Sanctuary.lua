@@ -6347,16 +6347,27 @@ function ns.mailScanInbox()
     if type(GetInboxNumItems) ~= "function" then return end
 
     local total = GetInboxNumItems() or 0
+    local pending = (C_Mail and C_Mail.IsCommandPending and C_Mail.IsCommandPending())
+        and true or false
 
     -- Two strikes and the mail is left alone. A command that left the box
     -- exactly as full as it was is a command the server did not carry out, and
     -- reissuing it on every redraw would be a loop with no way out. Set aside by
     -- identity, for as long as the box stays open, and MAIL_CLOSED forgets it.
-    if mail.sentTo and mail.sentAt and total >= mail.sentAt then
-        mail.skipped[mail.sentTo] = true
-        debugLog("MAIL", { action = "SET_ASIDE", count = total })
+    --
+    -- Counted only where the command has LANDED. Blizzard redraws the list while
+    -- one is still in flight -- the pointer crossing a row is enough -- and the
+    -- box is of course still as full then. Counting there set the letter aside
+    -- while it was on its way out, so the pass stopped emptying its row and the
+    -- sender and the subject came back on screen: a visible trace of something
+    -- Sanctuary was in the middle of blocking.
+    if not pending then
+        if mail.sentTo and mail.sentAt and total >= mail.sentAt then
+            mail.skipped[mail.sentTo] = true
+            debugLog("MAIL", { action = "SET_ASIDE", count = total })
+        end
+        mail.sentTo, mail.sentAt = nil, nil
     end
-    mail.sentTo, mail.sentAt = nil, nil
 
     local page = (InboxFrame and tonumber(InboxFrame.pageNum)) or 1
     local first, acting, kept = nil, 0, 0
@@ -6390,7 +6401,7 @@ function ns.mailScanInbox()
     -- One command per pass, and only when the last one has landed. The client
     -- takes them one at a time; the answer fires MAIL_INBOX_UPDATE, this hook
     -- runs again, and the next letter goes.
-    if C_Mail and C_Mail.IsCommandPending and C_Mail.IsCommandPending() then
+    if pending then
         debugLog("MAIL", { action = "WAIT", index = first.index })
         return
     end
