@@ -1666,6 +1666,7 @@ local function buildProtectionTab(parent)
     local MAIL_GROUPS = {
         {
             key = "attach", labelKey = "MAIL_ATTACH_LABEL", prefix = "SanctuaryMailAttach_",
+            labelName = "SanctuaryMailAttachLabel",
             get = ns.getMailAttachments,
             rows = {
                 { value = "keep",   labelKey = "MAIL_ATTACH_KEEP" },
@@ -1675,6 +1676,7 @@ local function buildProtectionTab(parent)
         },
         {
             key = "icon", labelKey = "MAIL_ICON_LABEL", prefix = "SanctuaryMailIcon_",
+            labelName = "SanctuaryMailIconLabel",
             get = ns.getMailIcon,
             rows = {
                 { value = "normal",         labelKey = "MAIL_ICON_NORMAL" },
@@ -1686,7 +1688,7 @@ local function buildProtectionTab(parent)
     for _, group in ipairs(MAIL_GROUPS) do
         local entry = {
             label = newLabel(mailDetails, L[group.labelKey], FONT_BODY, C.dim,
-                nil, "SanctuaryMail" .. group.key .. "Label"),
+                nil, group.labelName),
             radios = {},
             order = {},
         }
@@ -2384,13 +2386,13 @@ refreshTab.protection = function()
     -- The details, folded away until the mailbox is being emptied -- which is
     -- the state a fresh settings file opens on, and what keeps the home screen
     -- close to the length it had.
+    for _, key in ipairs({ "attach", "icon" }) do
+        for _, radio in ipairs(protection.mailGroups[key].order) do
+            radio:Refresh()
+        end
+    end
     if ns.getMailMode() == "delete" then
         protection.mailDetails:Show()
-        for _, key in ipairs({ "attach", "icon" }) do
-            for _, radio in ipairs(protection.mailGroups[key].order) do
-                radio:Refresh()
-            end
-        end
         y = y - 10
         place(protection.mailDetails)
         y = y - protection.mailHeight
