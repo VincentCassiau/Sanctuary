@@ -72,6 +72,12 @@ local ACCOUNT_DEFAULTS = {
         strictGroupInviteSystemMessages = false,
     },
 
+    -- What the load line has already announced. Empty on purpose, and it must
+    -- stay empty: a `version` written here would be filled into every existing
+    -- file by fillMissingDefaults, and the one update that has to announce
+    -- itself -- the first load of a new build over an old file -- never would.
+    changelog = {},
+
     -- Question 3 of the home screen, and a block of its own rather than a line
     -- of `filters`: it decides nothing about who is filtered. It only asks
     -- whether a repeat of a message that was going to show anyway is worth
@@ -7227,8 +7233,62 @@ local function needsSchemaReset(store)
     return stored == nil or stored < 2
 end
 
+-- The changelog, printed right under the load line. It shows at every load for
+-- a day after the first login that follows an update, one line per point, and
+-- then stops on its own. No window, no sound, no popup: an update is worth two
+-- lines of chat and not an interruption.
+do
+
+-- Spelt out one key a line, never built from the version number: a key that
+-- only exists as a concatenation cannot be searched for, and an unreachable
+-- translation is one nobody will ever notice is missing.
+local CHANGELOG_LINES = {
+    "CHANGELOG_1_1_0_MAIL",
+    "CHANGELOG_1_1_0_SAY_YELL",
+}
+
+local CHANGELOG_WINDOW = 86400
+
+function ns.announceChangelog(freshInstall)
+    local state = SanctuaryDB and SanctuaryDB.changelog
+    if not state then return end
+
+    -- An install announces nothing: this build is not new to anybody here.
+    if freshInstall then
+        state.version = VERSION
+        return
+    end
+
+    if state.version ~= VERSION then
+        state.version = VERSION
+        state.firstAt = time()
+    end
+
+    local firstAt = tonumber(state.firstAt)
+    if not firstAt then return end
+    local nowSeconds = time()
+    -- A clock put back leaves a stamp in the future, and the window would then
+    -- stay shut for as long as the difference. Pulled back to now rather than
+    -- dropped: the lines have not been read yet.
+    if firstAt > nowSeconds then
+        firstAt = nowSeconds
+        state.firstAt = firstAt
+    end
+    if nowSeconds - firstAt >= CHANGELOG_WINDOW then return end
+
+    for _, key in ipairs(CHANGELOG_LINES) do
+        printMsg(COLOR_ON .. L[key] .. COLOR_RESET)
+    end
+end
+
+end
+
 function handlers.ADDON_LOADED(addonName)
     if addonName ~= ADDON_NAME then return end
+
+    -- Read before the file is built, and the whole changelog turns on it: an
+    -- install has nothing to announce, an update has.
+    local freshInstall = SanctuaryDB == nil
 
     -- Initialize SavedVariables
     if not SanctuaryDB then
@@ -7278,6 +7338,8 @@ function handlers.ADDON_LOADED(addonName)
     else
         printMsg(COLOR_OFF .. L["ADDON_LOADED_INACTIVE"] .. COLOR_RESET)
     end
+
+    ns.announceChangelog(freshInstall)
 
     -- A mute survives /reload and relogging, so one left behind by a previous
     -- session would still be silencing the game's panel sounds right now. No

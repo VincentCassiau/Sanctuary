@@ -4901,6 +4901,9 @@ ns.resetDebugLog()
 
 -- C17 -- one line at load, and only one.
 resetModelState()
+-- The changelog prints under that line for a day after an update, and this case
+-- is about the load line alone: this build is stamped as already announced.
+SanctuaryDB.changelog = { version = ns.VERSION }
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
 equal(#chatMessages, 1, "loading prints exactly one line")
@@ -4914,6 +4917,95 @@ equal(#chatMessages, 1, "still exactly one when the protection is off")
 check(chatMessages[1]:find(ns.L["ADDON_LOADED_INACTIVE"], 1, true) ~= nil,
     "and it says so")
 SanctuaryCharDB.overrides.enabled = asFound.loadLineOverride
+
+-- C17b -- the changelog, under the load line, for a day after an update.
+--
+-- It lives in the migration zone on purpose: every case here is a load read on
+-- a settings file of a given age, and the two saved tables are already
+-- substitutes that the end of the zone throws away.
+do
+
+local DAY = 86400
+local clockAsFound = now
+
+-- An install announces nothing: this build is not new to anybody here. Both
+-- saved tables absent is what the add-on reads as an install.
+SanctuaryDB, SanctuaryCharDB = nil, nil
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 1, "a fresh install prints the load line and nothing under it")
+equal(SanctuaryDB.changelog.version, ns.VERSION,
+    "and records this build as already announced")
+-- The mutation this case exists for: a `version` written into the defaults
+-- would be filled into every 1.0.0 file, and the one update that has to speak
+-- would be silent.
+equal(next(ns.ACCOUNT_DEFAULTS.changelog), nil,
+    "the defaults stamp no version, so an update is still an update")
+
+-- A file written by the previous build: the update speaks, once the load line
+-- has.
+SanctuaryDB.changelog = {}
+chatMessages = {}
+playedSounds = {}
+popup.shown = false
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 3, "a file from the previous build gets the changelog")
+check(chatMessages[1]:find(ns.L["ADDON_LOADED_ACTIVE"], 1, true) ~= nil,
+    "the load line still comes first")
+check(chatMessages[2]:find(ns.L["CHANGELOG_1_1_0_MAIL"], 1, true) ~= nil,
+    "then one line per point")
+check(chatMessages[3]:find(ns.L["CHANGELOG_1_1_0_SAY_YELL"], 1, true) ~= nil,
+    "in the order they are written")
+equal(#playedSounds, 0, "an update is worth two lines of chat and no sound")
+equal(popup.shown, false, "and no window")
+local openedAt = SanctuaryDB.changelog.firstAt
+check(type(openedAt) == "number", "the window opens at the first load that follows")
+
+-- Still inside the day, then past it.
+now = now + 3600
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 3, "an hour later the lines are still there")
+equal(SanctuaryDB.changelog.firstAt, openedAt, "and the window has not moved")
+now = clockAsFound + DAY + 3600
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 1, "a day later it stops on its own")
+
+-- The next update reopens a window of its own.
+SanctuaryDB.changelog.version = "1.0.9"
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 3, "the next build announces itself in turn")
+check(SanctuaryDB.changelog.firstAt > openedAt, "on a window of its own")
+
+-- A clock put back leaves a stamp in the future, and the window would stay shut
+-- for as long as the difference.
+SanctuaryDB.changelog.firstAt = time() + 10 * DAY
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 3, "a clock put back does not swallow the lines")
+
+-- Turned off, the add-on says so and still says what changed.
+SanctuaryDB.changelog = {}
+SanctuaryCharDB.overrides.enabled = false
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 3, "an add-on switched off announces the update all the same")
+check(chatMessages[1]:find(ns.L["ADDON_LOADED_INACTIVE"], 1, true) ~= nil,
+    "under its own load line")
+
+-- A schema 1 file is rebuilt from the defaults rather than completed, and a
+-- rebuild is still an update: the person is running a build they never ran.
+SanctuaryDB = { schemaVersion = 1 }
+SanctuaryCharDB = nil
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 3, "a file the schema reset rebuilt announces the update")
+
+now = clockAsFound
+
+end
 
 -- C18 -- the anti-spam setting, and the one question the interface asks.
 do
@@ -6756,8 +6848,8 @@ do
     local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
         definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
 
-    equal(#englishOrder, 228, "the default locale defines 228 keys")
-    equal(#frenchOrder, 228, "and the French block defines 228")
+    equal(#englishOrder, 230, "the default locale defines 230 keys")
+    equal(#frenchOrder, 230, "and the French block defines 230")
     equal(#englishDupes, 0,
         "no key is defined twice in the default locale ("
             .. table.concat(englishDupes, ", ") .. ")")
