@@ -537,6 +537,109 @@ function CreateFrame(frameType, name, parent, template)
     return frame
 end
 
+-- The mailbox, as Retail hands it over.
+--
+-- `GetInboxHeaderInfo` answers its FIFTEEN values in Blizzard's own order, and
+-- that is the point of the fixture: a path that reads the wrong slot -- money
+-- where the item count is, `canReply` where `wasReturned` is -- is exactly the
+-- fault a stub with four fields cannot show. The commands are recorded rather
+-- than executed, and the server answers when a test says it does.
+local mailbox = { inbox = {}, commands = {}, pending = false, shown = false,
+    target = nil, updates = 0 }
+
+function GetInboxNumItems() return #mailbox.inbox end
+
+function GetInboxHeaderInfo(index)
+    local item = mailbox.inbox[index]
+    if not item then return nil end
+    return item.packageIcon, item.stationeryIcon, item.sender, item.subject,
+        item.money or 0, item.codAmount or 0, item.daysLeft or 30, item.itemCount,
+        item.wasRead, item.wasReturned, item.textCreated,
+        item.canReply ~= false, item.isGM, item.firstItemQuantity, item.firstItemLink
+end
+
+-- The client's own answer to "may this one be deleted rather than returned". Its
+-- rule is written nowhere, so the add-on reads it: here it is a field of the
+-- fixture, which is what lets a test play both answers.
+function InboxItemCanDelete(index)
+    local item = mailbox.inbox[index]
+    return item ~= nil and item.canDelete ~= false
+end
+
+local function recordMailCommand(op, index)
+    mailbox.commands[#mailbox.commands + 1] = { op = op, index = index,
+        subject = mailbox.inbox[index] and mailbox.inbox[index].subject }
+    mailbox.pending = true
+    mailbox.target = mailbox.inbox[index]
+end
+function DeleteInboxItem(index) recordMailCommand("delete", index) end
+function ReturnInboxItem(index) recordMailCommand("return", index) end
+
+C_Mail = {
+    IsCommandPending = function() return mailbox.pending end,
+    GetCraftingOrderMailInfo = function(index)
+        local item = mailbox.inbox[index]
+        return item and item.craftingOrder or nil
+    end,
+}
+
+MailFrame = { IsShown = function() return mailbox.shown end }
+InboxFrame = { pageNum = 1 }
+
+do
+    local function mailWidget()
+        return {
+            __shown = true,
+            Show = function(self) self.__shown = true end,
+            Hide = function(self) self.__shown = false end,
+            IsShown = function(self) return self.__shown end,
+            SetText = function(self, text) self.__text = text end,
+            GetText = function(self) return self.__text end,
+        }
+    end
+    for row = 1, 7 do
+        _G["MailItem" .. row .. "Button"] = mailWidget()
+        _G["MailItem" .. row .. "Sender"] = mailWidget()
+        _G["MailItem" .. row .. "Subject"] = mailWidget()
+        _G["MailItem" .. row .. "ExpireTime"] = mailWidget()
+    end
+end
+
+-- Blizzard's redraw, cut down to what the add-on hangs off: it fills the seven
+-- rows of the page and empties the ones it does not use. It is called on every
+-- MAIL_INBOX_UPDATE and again whenever the pointer crosses a row, which is the
+-- whole reason the hook has to be idempotent.
+function InboxFrame_Update()
+    mailbox.updates = mailbox.updates + 1
+    for row = 1, 7 do
+        local item = mailbox.inbox[(InboxFrame.pageNum - 1) * 7 + row]
+        local button = _G["MailItem" .. row .. "Button"]
+        local expire = _G["MailItem" .. row .. "ExpireTime"]
+        if item then button:Show() else button:Hide() end
+        if item then expire:Show() else expire:Hide() end
+        _G["MailItem" .. row .. "Sender"]:SetText(item and item.sender or "")
+        _G["MailItem" .. row .. "Subject"]:SetText(item and item.subject or "")
+    end
+end
+
+function MailFrame_OnEvent()
+    InboxFrame_Update()
+end
+
+-- The server answers. `refuse` plays the other case: the command is acknowledged
+-- and the mailbox comes back exactly as full as it was, which is what the
+-- add-on's two-strike guard exists for.
+local function serverAnswersMail(refuse)
+    mailbox.pending = false
+    if not refuse and mailbox.target then
+        for i, item in ipairs(mailbox.inbox) do
+            if item == mailbox.target then table.remove(mailbox.inbox, i) break end
+        end
+    end
+    mailbox.target = nil
+    MailFrame_OnEvent()
+end
+
 SlashCmdList = {}
 function geterrorhandler()
     return function(message) error(message, 0) end
@@ -791,6 +894,9 @@ for _, event in ipairs({
     -- Who is allowed: guild, group, friends, Battle.net friends.
     "GROUP_ROSTER_UPDATE", "GUILD_ROSTER_UPDATE", "PLAYER_GUILD_UPDATE",
     "FRIENDLIST_UPDATE", "BN_FRIEND_INFO_CHANGED", "BN_FRIEND_LIST_SIZE_CHANGED",
+    -- The mailbox. MAIL_INBOX_UPDATE is deliberately absent: the pass is a
+    -- post-hook on Blizzard's own redraw, so it can never run before it.
+    "MAIL_CLOSED", "MAIL_FAILED",
     -- Every chat event that carries a message, one line per event so that
     -- dropping one is a line removed rather than a table quietly shrinking.
     "CHAT_MSG_WHISPER", "CHAT_MSG_SAY", "CHAT_MSG_YELL", "CHAT_MSG_EMOTE",
@@ -6418,6 +6524,296 @@ SanctuaryDB.debugEnabled = asFound.selfWhisperDebug
 
 assertModelAtRest()
 -- ===========================================================================
+-- SECTION: the mailbox
+-- ===========================================================================
+
+-- The one thing Sanctuary cannot refuse at the door: the game has already
+-- delivered the letter when the box is opened. So this section is about what
+-- happens at the opening -- who is touched, who is never touched whatever the
+-- lists say, and at what pace.
+do
+
+asFound.mailMode = SanctuaryDB.mail.mode
+asFound.mailAttachments = SanctuaryDB.mail.attachments
+asFound.mailIcon = SanctuaryDB.mail.minimapIcon
+asFound.mailNotifications = SanctuaryDB.notifications.mode
+asFound.mailLogging = SanctuaryDB.logging.enabled
+
+-- Out of the box nothing is touched. Deleting somebody's mail is the one thing
+-- here that cannot be undone, so all three answers default to "change nothing",
+-- and the two mutations the cases below rest on are pinned right here.
+equal(ns.ACCOUNT_DEFAULTS.mail.mode, "keep",
+    "a fresh settings file leaves the mailbox exactly as it is")
+equal(ns.ACCOUNT_DEFAULTS.mail.attachments, "keep",
+    "and never touches a letter with something in it")
+equal(ns.ACCOUNT_DEFAULTS.mail.minimapIcon, "normal",
+    "and the minimap icon behaves as the game draws it")
+-- A value no card on screen offers reads as the default rather than as itself.
+SanctuaryDB.mail.mode = "shred"
+equal(ns.getMailMode(), "keep", "a mode nothing can have written answers the default")
+SanctuaryDB.mail.attachments = "burn"
+equal(ns.getMailAttachments(), "keep", "and so does an answer for what is inside")
+SanctuaryDB.mail.minimapIcon = "sometimes"
+equal(ns.getMailIcon(), "normal", "and so does one for the icon")
+
+local function armMailFixture()
+    resetModelState()
+    guildMembers = { "Guildmate-TestRealm" }
+    inGuild = true
+    ns.addBlocked("Nuisance-TestRealm")
+    ns.invalidateWhitelist()
+    SanctuaryDB.mail.mode = "delete"
+    SanctuaryDB.mail.attachments = "keep"
+    SanctuaryDB.mail.minimapIcon = "normal"
+    SanctuaryDB.logging.enabled = true
+    SanctuaryDB.log = {}
+    SanctuaryCharDB.sessionStats = { blockedCount = 0, blockedByType = {} }
+    mailbox.commands = {}
+    mailbox.pending = false
+    mailbox.target = nil
+    mailbox.shown = true
+    InboxFrame.pageNum = 1
+    ns.resetMailScan()
+end
+
+-- Opening the box is Blizzard drawing its list, and the add-on's pass is hung
+-- off that redraw -- never off MAIL_INBOX_UPDATE, which could reach us first.
+local function openMailbox(items)
+    mailbox.inbox = items
+    mailbox.commands = {}
+    mailbox.pending = false
+    mailbox.target = nil
+    ns.resetMailScan()
+    MailFrame_OnEvent()
+end
+
+local function rowShown(row) return _G["MailItem" .. row .. "Button"]:IsShown() end
+local function rowSubject(row) return _G["MailItem" .. row .. "Subject"]:GetText() end
+local function orderedOps()
+    local out = {}
+    for _, command in ipairs(mailbox.commands) do out[#out + 1] = command.op end
+    return table.concat(out, ",")
+end
+
+-- M1 -- a letter with nothing in it, and the three answers the lists give.
+armMailFixture()
+SanctuaryDB.notifications.mode = "verbose"
+chatMessages = {}
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "you are nothing" } })
+equal(orderedOps(), "delete", "a blocked player's letter is deleted")
+equal(rowShown(1), false, "and its row goes in the same pass, before the server answers")
+equal(rowSubject(1), "", "with nothing left of it to read")
+equal(#SanctuaryDB.log, 1, "the Journal keeps one entry")
+equal(SanctuaryDB.log[1].type, "mail", "typed as a mail")
+equal(SanctuaryDB.log[1].msg, "you are nothing", "with the subject as what was said")
+equal(ns.getLogEntryDisplayType(SanctuaryDB.log[1]), ns.L["LOG_TYPE_MAIL"],
+    "and shown under its own name")
+equal(SanctuaryCharDB.sessionStats.blockedByType.mail, 1, "the session counter moves")
+check(chatMessages[#chatMessages]:find("mail", 1, true) ~= nil,
+    "and the verbose mode says a mail was blocked")
+SanctuaryDB.notifications.mode = asFound.mailNotifications
+
+now = now + 5
+openMailbox({ { sender = "Stranger-TestRealm", subject = "hey" } })
+equal(orderedOps(), "delete", "a stranger's letter goes the same way")
+
+now = now + 5
+openMailbox({ { sender = "Guildmate-TestRealm", subject = "raid tonight" } })
+equal(orderedOps(), "", "a guild mate's letter is left alone")
+equal(rowShown(1), true, "and stays where it is")
+
+-- "Les bloques seulement": nobody else is filtered here either.
+now = now + 5
+SanctuaryDB.filters.scope = "blockedOnly"
+openMailbox({
+    { sender = "Stranger-TestRealm", subject = "hey" },
+    { sender = "Nuisance-TestRealm", subject = "again" },
+})
+equal(orderedOps(), "delete", "in the open scope only the blocked name's letter goes")
+equal(mailbox.commands[1].subject, "again", "and it is that one")
+equal(rowShown(1), true, "the stranger's letter is untouched")
+equal(rowShown(2), false, "the blocked one is not")
+
+-- M2 -- "Le laisser" means nothing is decided at all, not even for a blocked
+-- name: the always-blocked list beats every gate, so the mode has to be read
+-- above the decision and not inside it.
+armMailFixture()
+SanctuaryDB.mail.mode = "keep"
+now = now + 5
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "the worst thing anyone wrote" } })
+equal(orderedOps(), "", "with the mailbox left alone, not even a blocked name's letter moves")
+equal(#SanctuaryDB.log, 0, "and nothing is written down")
+equal(rowShown(1), true, "the letter is where it was")
+
+-- M3 -- money or an item in it: the person's own answer, and it is asked before
+-- anything is ordered.
+armMailFixture()
+SanctuaryDB.debugEnabled = true
+ns.resetDebugLog()
+now = now + 5
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "with a gift", money = 100 } })
+equal(orderedOps(), "", "'leave it' orders nothing")
+equal(#SanctuaryDB.log, 0, "and writes nothing down: nothing was blocked")
+equal(rowShown(1), true, "the letter stays readable in the box")
+equal(lastDebug("MAIL", "SCAN") and lastDebug("MAIL", "SCAN").data.kept, 1,
+    "the debug log is the only place that says one was kept")
+SanctuaryDB.debugEnabled = false
+ns.resetDebugLog()
+
+now = now + 5
+ns.setMailAttachments("return")
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "with a gift", money = 100 } })
+equal(orderedOps(), "return", "'send it back' returns it, and never deletes it")
+
+now = now + 5
+ns.setMailAttachments("delete")
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "with an item", itemCount = 1 } })
+equal(orderedOps(), "delete", "'delete it too' deletes what the game lets it delete")
+
+-- And the game has the last word. This is exactly the rule Blizzard's own
+-- button follows, down to whether its label reads Delete or Return.
+now = now + 5
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "with an item",
+    itemCount = 1, canDelete = false } })
+equal(orderedOps(), "return", "and returns what the game refuses to let it delete")
+
+now = now + 5
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "pay up",
+    codAmount = 500, itemCount = 1, canDelete = false } })
+equal(ns.planInboxMail(1).class, "cod", "a cash-on-delivery letter is named as one")
+equal(orderedOps(), "return", "and follows the same rule, with no branch of its own")
+
+-- M4 -- the grid, which is read BEFORE any name reaches any list. A letter that
+-- did not come from a player is never touched, whatever the answers say.
+armMailFixture()
+ns.setMailAttachments("delete")
+-- The pattern names the auction house's own first word. Take the `canReply`
+-- test out and this letter is deleted: that is what the case is here to catch.
+SanctuaryDB.keywords = { "hotel" }
+ns.invalidateWhitelist()
+now = now + 5
+openMailbox({
+    { sender = "Blizzard", subject = "your ticket", isGM = true, money = 500 },
+    { sender = "Crafter-TestRealm", subject = "your order", craftingOrder = { id = 4 } },
+    { sender = "Hotel des ventes", subject = "sold", canReply = false, money = 900 },
+    { subject = "quest reward", itemCount = 1 },
+    { sender = "Nuisance-TestRealm", subject = "came back", wasReturned = true },
+    { sender = "Victim-TestRealm", subject = "my own things", itemCount = 1 },
+    { sender = "-", subject = "nothing usable in that name" },
+})
+equal(orderedOps(), "", "not one letter that did not come from a player is touched")
+equal(#SanctuaryDB.log, 0, "and none of them is written down")
+for row = 1, 7 do
+    equal(rowShown(row), true, "row " .. row .. " is still on screen")
+end
+local GRID = { "gm", "craftingOrder", "system", "system", "own", "own", "unnamed" }
+for index, class in ipairs(GRID) do
+    equal(ns.classifyInboxMail(index).class, class,
+        "letter " .. index .. " is read as " .. class)
+end
+
+-- M5 -- one command a redraw, and every row that is going emptied at once.
+armMailFixture()
+now = now + 5
+openMailbox({
+    { sender = "Nuisance-TestRealm", subject = "one" },
+    { sender = "Nuisance-TestRealm", subject = "two" },
+    { sender = "Nuisance-TestRealm", subject = "three" },
+})
+equal(#mailbox.commands, 1, "three letters to remove, one command")
+equal(rowShown(1) or rowShown(2) or rowShown(3), false,
+    "and all three rows emptied at once, so nothing readable is left behind")
+MailFrame_OnEvent()
+equal(#mailbox.commands, 1, "a redraw while the client is still working orders nothing")
+now = now + 5
+serverAnswersMail()
+equal(#mailbox.commands, 2, "the answer lets the next one go")
+now = now + 5
+serverAnswersMail()
+now = now + 5
+serverAnswersMail()
+equal(#mailbox.inbox, 0, "the box empties itself, one letter at a time")
+equal(#mailbox.commands, 3, "with one command each and not one more")
+equal(#SanctuaryDB.log, 3, "and one Journal entry a letter")
+
+-- M6 -- a server that acknowledges and removes nothing. Without this the pass
+-- would order the same letter away for as long as the box stayed open.
+armMailFixture()
+now = now + 5
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "stubborn" } })
+equal(#mailbox.commands, 1, "the letter is ordered away")
+now = now + 5
+serverAnswersMail(true)
+equal(#mailbox.commands, 1, "a mailbox that came back as full is not asked twice")
+equal(rowShown(1), true, "and the letter is shown again rather than hidden on a lie")
+MailFrame_OnEvent()
+equal(#mailbox.commands, 1, "however many times the list is redrawn")
+fire("MAIL_CLOSED")
+MailFrame_OnEvent()
+equal(#mailbox.commands, 2, "closing the mailbox gives it another chance")
+
+-- A command the game refused outright. Written down, and nothing else: there is
+-- no second attempt and no fallback, and a letter Sanctuary could not remove is
+-- a letter the person still has.
+SanctuaryDB.debugEnabled = true
+ns.resetDebugLog()
+local orderedBeforeFailure = #mailbox.commands
+fire("MAIL_FAILED")
+equal(#mailbox.commands, orderedBeforeFailure, "a refused command is never sent again")
+check(lastDebug("MAIL", "FAILED") ~= nil, "the log is the whole of what happens")
+SanctuaryDB.debugEnabled = false
+ns.resetDebugLog()
+
+-- M7 -- nothing to scan.
+armMailFixture()
+mailbox.inbox = { { sender = "Nuisance-TestRealm", subject = "waiting" } }
+mailbox.shown = false
+MailFrame_OnEvent()
+equal(#mailbox.commands, 0, "a mailbox nobody opened is not scanned")
+mailbox.shown = true
+asFound.mailAddonEnabled = SanctuaryCharDB.overrides.enabled
+SanctuaryCharDB.overrides.enabled = false
+MailFrame_OnEvent()
+equal(#mailbox.commands, 0, "and neither is one while Sanctuary is switched off")
+SanctuaryCharDB.overrides.enabled = asFound.mailAddonEnabled
+MailFrame_OnEvent()
+equal(#mailbox.commands, 1, "switched back on, the very same redraw acts")
+
+-- M8 -- the button in the Diagnostics tab reads the box and orders nothing. It
+-- is the only way to answer, from a log, what the grid made of a real mailbox.
+armMailFixture()
+mailbox.inbox = {
+    { sender = "Nuisance-TestRealm", subject = "one" },
+    { sender = "Hotel des ventes", subject = "sold", canReply = false },
+}
+local mailReport = ns.runDiagnosticById("mail_scan")
+equal(mailReport.failed, nil, "the mailbox diagnostic runs")
+equal(#mailbox.commands, 0, "and orders nothing at all")
+check(mailReport.text:find("class=text", 1, true) ~= nil,
+    "it says what the grid made of each letter")
+check(mailReport.text:find("class=system", 1, true) ~= nil,
+    "the ones that never came from a player included")
+check(mailReport.text:find("would=delete", 1, true) ~= nil,
+    "and what Sanctuary would do with them")
+
+mailbox.inbox = {}
+mailbox.commands = {}
+mailbox.shown = false
+mailbox.pending = false
+mailbox.target = nil
+ns.resetMailScan()
+InboxFrame_Update()
+resetModelState()
+SanctuaryDB.mail.mode = asFound.mailMode
+SanctuaryDB.mail.attachments = asFound.mailAttachments
+SanctuaryDB.mail.minimapIcon = asFound.mailIcon
+SanctuaryDB.notifications.mode = asFound.mailNotifications
+SanctuaryDB.logging.enabled = asFound.mailLogging
+
+end
+
+assertModelAtRest()
+-- ===========================================================================
 -- SECTION UI: the interface file, under a widget mock
 -- ===========================================================================
 
@@ -6852,8 +7248,8 @@ do
     local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
         definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
 
-    equal(#englishOrder, 230, "the default locale defines 230 keys")
-    equal(#frenchOrder, 230, "and the French block defines 230")
+    equal(#englishOrder, 233, "the default locale defines 233 keys")
+    equal(#frenchOrder, 233, "and the French block defines 233")
     equal(#englishDupes, 0,
         "no key is defined twice in the default locale ("
             .. table.concat(englishDupes, ", ") .. ")")
@@ -9979,7 +10375,7 @@ equal(resultText and resultText:GetText(), ns.L["DIAG_RESULT_EMPTY"],
 -- branches on the data it is testing cannot notice that data disappearing.
 local SENSITIVE_DIAGNOSTIC_ID = "sim_bnetfriend"
 local MANUAL_DIAGNOSTIC_IDS = { "diag_sound_open", "diag_sound_invite" }
-local SKIPPED_DIAGNOSTIC_ID = "sim_channel_spam"
+local SKIPPED_DIAGNOSTIC_IDS = { "sim_channel_spam", "mail_scan" }
 local BULK_DIAGNOSTIC_IDS = { "sim_invite", "sim_bnet", "diag_chat",
     "diag_chat_lockdown", "diag_popup_invite", "diag_popup_duel", "diag_popup_guild",
     "diag_popup_list" }
@@ -9997,13 +10393,16 @@ equal(manualCount, #MANUAL_DIAGNOSTIC_IDS, "exactly two are marked as run-them-b
 for _, id in ipairs(MANUAL_DIAGNOSTIC_IDS) do
     equal(ns.getDiagnosticEntry(id).manual, true, id .. " is one of them")
 end
-equal(skippedCount, 1, "exactly one is kept out of the batch without being a manual one")
-equal(ns.getDiagnosticEntry(SKIPPED_DIAGNOSTIC_ID).skipBulk, true,
-    "and it is " .. SKIPPED_DIAGNOSTIC_ID .. ", the one that prints into the chat")
-equal(ns.getDiagnosticEntry(SKIPPED_DIAGNOSTIC_ID).manual, nil,
-    "which is not a manual one: its tooltip has something else to say")
-equal(#ns.DIAGNOSTIC_CATALOG, #BULK_DIAGNOSTIC_IDS + #MANUAL_DIAGNOSTIC_IDS + 2,
-    "the catalogue is the bulk set plus those four")
+equal(skippedCount, #SKIPPED_DIAGNOSTIC_IDS,
+    "two are kept out of the batch without being manual ones")
+for _, id in ipairs(SKIPPED_DIAGNOSTIC_IDS) do
+    equal(ns.getDiagnosticEntry(id).skipBulk, true, id .. " is one of them")
+    equal(ns.getDiagnosticEntry(id).manual, nil,
+        "and not a manual one: " .. id .. " has a tooltip of its own to show")
+end
+equal(#ns.DIAGNOSTIC_CATALOG,
+    #BULK_DIAGNOSTIC_IDS + #MANUAL_DIAGNOSTIC_IDS + #SKIPPED_DIAGNOSTIC_IDS + 1,
+    "the catalogue is the bulk set plus those five")
 
 -- Being kept out of the batch must not rewrite what the button says on hover:
 -- "run this one on its own, and listen" is true of the two sounds and false of
@@ -10040,8 +10439,10 @@ for _, id in ipairs(MANUAL_DIAGNOSTIC_IDS) do
     equal(shown:find(ns.L[ns.getDiagnosticEntry(id).labelKey], 1, true), nil,
         "nor " .. id .. ", which has to be heard on its own")
 end
-equal(shown:find(ns.L[ns.getDiagnosticEntry(SKIPPED_DIAGNOSTIC_ID).labelKey], 1, true), nil,
-    "nor " .. SKIPPED_DIAGNOSTIC_ID .. ", whose answer is printed into the chat")
+for _, id in ipairs(SKIPPED_DIAGNOSTIC_IDS) do
+    equal(shown:find(ns.L[ns.getDiagnosticEntry(id).labelKey], 1, true), nil,
+        "nor " .. id .. ", which is kept out of the batch for a reason of its own")
+end
 
 -- Step C.1 of the session promises nothing on screen and nothing in the ear
 -- while the batch runs, and the tester reads the chat right after it. The spam

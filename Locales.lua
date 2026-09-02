@@ -232,6 +232,7 @@ L["LOG_TYPE_YELL"] = "Yell"
 L["LOG_TYPE_EMOTE"] = "Emote"
 L["LOG_TYPE_CHANNEL"] = "Channel"
 L["LOG_TYPE_GROUP"] = "Group"
+L["LOG_TYPE_MAIL"] = "Mail"
 
 -- Copy window and journal export
 L["EXPORT_INSTRUCTIONS"] = "Ctrl+A then Ctrl+C to copy"
@@ -298,11 +299,13 @@ L["DIAG_POPUP_INVITE"] = "Group invitation window"
 L["DIAG_POPUP_DUEL"] = "Duel window"
 L["DIAG_POPUP_GUILD"] = "Guild invitation window"
 L["DIAG_POPUP_LIST"] = "List the game windows"
+L["DIAG_MAIL_SCAN"] = "Scan the mailbox"
 L["DIAG_ARG_NAME"] = "name"
 L["DIAG_ARG_NAME_OR_INDEX"] = "name or no."
 L["DIAG_ARG_FILTER"] = "filter"
 L["DIAG_TIP_SOUND"] = "Turn the volume up: this one is checked by ear."
 L["DIAG_TIP_POPUP"] = "Watch the screen. Do not run while a real request is pending."
+L["DIAG_TIP_MAIL_SCAN"] = "Run this one with a mailbox open. It deletes nothing. It says what Sanctuary would do with each mail."
 
 -- ============================================================================
 -- French overrides (frFR)
@@ -506,6 +509,7 @@ L["LOG_TYPE_YELL"] = "Crier"
 L["LOG_TYPE_EMOTE"] = "\195\137mote"
 L["LOG_TYPE_CHANNEL"] = "Canal"
 L["LOG_TYPE_GROUP"] = "Groupe"
+L["LOG_TYPE_MAIL"] = "Courrier"
 
 -- Copy window and journal export
 L["EXPORT_INSTRUCTIONS"] = "Ctrl+A puis Ctrl+C pour copier"
@@ -572,10 +576,12 @@ L["DIAG_POPUP_INVITE"] = "Fen\195\170tre d'invitation de groupe"
 L["DIAG_POPUP_DUEL"] = "Fen\195\170tre de duel"
 L["DIAG_POPUP_GUILD"] = "Fen\195\170tre d'invitation de guilde"
 L["DIAG_POPUP_LIST"] = "Lister les fen\195\170tres du jeu"
+L["DIAG_MAIL_SCAN"] = "Analyser la bo\195\174te aux lettres"
 L["DIAG_ARG_NAME"] = "nom"
 L["DIAG_ARG_NAME_OR_INDEX"] = "pseudo ou n\194\176"
 L["DIAG_ARG_FILTER"] = "filtre"
 L["DIAG_TIP_SOUND"] = "Montez le volume : cette v\195\169rification se fait \195\160 l'oreille."
 L["DIAG_TIP_POPUP"] = "Regardez l'\195\169cran. \195\128 ne pas lancer si une vraie demande est en attente."
+L["DIAG_TIP_MAIL_SCAN"] = "\195\128 lancer devant une bo\195\174te aux lettres ouverte. Ne supprime rien. Dit ce que Sanctuary ferait de chaque courrier."
 
 end -- frFR
