@@ -1700,18 +1700,25 @@ local function buildProtectionTab(parent)
     local CHECK_ROWS = {
         { key = "groupInvite", labelKey = "FILTER_GROUP_INVITE", tipKey = "TIP_GROUP_INVITE", col = 1 },
         { key = "whisper",     labelKey = "FILTER_WHISPER",      tipKey = "TIP_WHISPER",      col = 1 },
-        { key = "say",         labelKey = "FILTER_SAY",          tipKey = "TIP_SAY",          col = 1 },
-        { key = "yell",        labelKey = "FILTER_YELL",         tipKey = "TIP_YELL",         col = 1 },
+        -- One box, two engine keys: "si on en cache un on veut forcement cacher
+        -- l'autre". The reading key is `say`; the load-time alignment in
+        -- Sanctuary.lua keeps the pair from ever disagreeing, so reading one is
+        -- reading both. The Journal still tells a /say from a /yell.
+        { key = "say", keys = { "say", "yell" }, name = "SanctuaryFilter_sayYell",
+          labelKey = "FILTER_SAY_YELL", tipKey = "TIP_SAY_YELL", col = 1 },
         { key = "emote",       labelKey = "FILTER_EMOTE",        tipKey = "TIP_EMOTE",        col = 1 },
         { key = "duel",        labelKey = "FILTER_DUEL",         tipKey = "TIP_DUEL",         col = 2 },
         { key = "trade",       labelKey = "FILTER_TRADE",        tipKey = "TIP_TRADE",        col = 2 },
         { key = "guildInvite", labelKey = "FILTER_GUILD_INVITE", tipKey = "TIP_GUILD_INVITE", col = 2 },
     }
     for _, row in ipairs(CHECK_ROWS) do
-        local check = newCheck(choose, "SanctuaryFilter_" .. row.key,
+        local written = row.keys or { row.key }
+        local check = newCheck(choose, row.name or ("SanctuaryFilter_" .. row.key),
             L[row.labelKey], L[row.tipKey],
             function() return filterStored(row.key) == true end,
-            function(value) setFilter(row.key, value) end)
+            function(value)
+                for _, key in ipairs(written) do setFilter(key, value) end
+            end)
         protection.checks[row.key] = check
     end
 

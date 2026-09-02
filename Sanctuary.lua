@@ -7239,6 +7239,18 @@ function handlers.ADDON_LOADED(addonName)
         fillMissingDefaults(SanctuaryDB, ACCOUNT_DEFAULTS)
     end
 
+    -- /say and /yell are one box on screen since 1.1.0 -- "si on en cache un on
+    -- veut forcement cacher l'autre". A file written before that can hold two
+    -- different values; the box would then show one and the engine would apply
+    -- the other. Aligned on the ticked one, once, without a schema bump: the
+    -- pair is settled from here on, and a file where they already agree is left
+    -- exactly as it was.
+    local filters = SanctuaryDB.filters
+    if filters and filters.say ~= filters.yell then
+        local blocked = (filters.say or filters.yell) and true or false
+        filters.say, filters.yell = blocked, blocked
+    end
+
     if not SanctuaryCharDB then
         SanctuaryCharDB = deepCopy(CHARACTER_DEFAULTS)
     elseif needsSchemaReset(SanctuaryCharDB) then

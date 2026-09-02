@@ -1630,10 +1630,6 @@ filtered = chatFilters.CHAT_MSG_SAY(nil, "CHAT_MSG_SAY", "hello", "Victim-OtherR
 check(filtered, "same-name sender from another realm is not treated as self")
 SanctuaryDB.filters.say = false
 
-SanctuaryDB.filters.yell = true
-check(chatFilters.CHAT_MSG_YELL(nil, "CHAT_MSG_YELL", "hello", "Unknown"), "yell filter blocks unknown")
-SanctuaryDB.filters.yell = false
-
 SanctuaryDB.filters.emote = true
 check(chatFilters.CHAT_MSG_TEXT_EMOTE(nil, "CHAT_MSG_TEXT_EMOTE", "waves", "Unknown"), "text emote filter blocks unknown")
 SanctuaryDB.filters.emote = false
@@ -5019,6 +5015,33 @@ SanctuaryDB.antiSpam.intervalSeconds = 300
 
 end
 
+-- C18b -- /say and /yell are one box, so the two stored values are one value.
+-- A file written before 1.1.0 can hold them apart; the box would then show one
+-- and the engine would apply the other. The load settles them on the ticked
+-- one, once, and leaves a file where they already agree exactly as it was.
+do
+
+resetModelState()
+equal(ns.ACCOUNT_DEFAULTS.filters.say, false, "a fresh file blocks neither /say")
+equal(ns.ACCOUNT_DEFAULTS.filters.yell, false, "nor /yell")
+
+local ALIGNMENTS = {
+    { say = true,  yell = false, settled = true,  said = "the ticked one wins over the unticked" },
+    { say = false, yell = true,  settled = true,  said = "whichever of the two carried it" },
+    { say = true,  yell = true,  settled = true,  said = "a file that already agrees on true is left alone" },
+    { say = false, yell = false, settled = false, said = "and one that agrees on false too" },
+}
+for _, case in ipairs(ALIGNMENTS) do
+    SanctuaryDB.filters.say, SanctuaryDB.filters.yell = case.say, case.yell
+    fire("ADDON_LOADED", "Sanctuary")
+    equal(SanctuaryDB.filters.say, case.settled, case.said)
+    equal(SanctuaryDB.filters.yell, case.settled, "on both keys")
+end
+
+resetModelState()
+
+end
+
 SanctuaryDB, SanctuaryCharDB = realSavedVariables, realCharSavedVariables
 -- Loading again rebuilds what the add-on keeps in its own memory from the
 -- tables that are back. It is idempotent on a v2 file, which C15 proves a few
@@ -6693,7 +6716,7 @@ assertModelAtRest()
 -- ---------------------------------------------------------------------------
 
 -- The check above it asks "is every key the code writes as L[\"NAME\"] translated",
--- which is 147 keys of 230: the other 83 are reached by a computed name
+-- which is 147 keys of 228: the other 81 are reached by a computed name
 -- (L[row.labelKey]) and were never submitted to it. And French is an OVERRIDE
 -- block -- a key missing from it renders in English, readably, so nobody reports
 -- it and it drifts.
@@ -6733,8 +6756,8 @@ do
     local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
         definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
 
-    equal(#englishOrder, 230, "the default locale defines 230 keys")
-    equal(#frenchOrder, 230, "and the French block defines 230")
+    equal(#englishOrder, 228, "the default locale defines 228 keys")
+    equal(#frenchOrder, 228, "and the French block defines 228")
     equal(#englishDupes, 0,
         "no key is defined twice in the default locale ("
             .. table.concat(englishDupes, ", ") .. ")")
@@ -7026,8 +7049,8 @@ end
 -- count is asserted too.
 local CHECKS = {
     "SanctuaryStrictCheck", "SanctuaryAutoTrust",
-    "SanctuaryFilter_groupInvite", "SanctuaryFilter_whisper", "SanctuaryFilter_say",
-    "SanctuaryFilter_yell", "SanctuaryFilter_emote", "SanctuaryFilter_duel",
+    "SanctuaryFilter_groupInvite", "SanctuaryFilter_whisper", "SanctuaryFilter_sayYell",
+    "SanctuaryFilter_emote", "SanctuaryFilter_duel",
     "SanctuaryFilter_trade", "SanctuaryFilter_guildInvite",
     "SanctuaryJournalEnable", "SanctuaryJournalShowMessages",
     "SanctuaryDebugCheck", "SanctuaryMinimapCheck",
@@ -7046,10 +7069,10 @@ end
 
 -- The unticked state is the one that had nothing to show. A box whose fill and
 -- border are only applied when it is ticked reads as an empty label.
-_G.SanctuaryFilter_say.get = function() return false end
-_G.SanctuaryFilter_say:Refresh()
-equal(_G.SanctuaryFilter_say.mark:IsShown(), false, "an unticked box shows no mark")
-check(sameColor(_G.SanctuaryFilter_say.__backdropColor, CHECK_BG),
+_G.SanctuaryFilter_trade.get = function() return false end
+_G.SanctuaryFilter_trade:Refresh()
+equal(_G.SanctuaryFilter_trade.mark:IsShown(), false, "an unticked box shows no mark")
+check(sameColor(_G.SanctuaryFilter_trade.__backdropColor, CHECK_BG),
     "and is still a drawn box, which is the whole of the defect")
 
 -- The radios are round: three discs and a circular mask, never a backdrop.
@@ -7072,9 +7095,9 @@ _G.SanctuaryChannel_none:Click()
 -- An 18 px square is a small target and every interface a person has used lets
 -- them hit the words instead.
 do
-    -- `say` is the box the block above rewired to answer false for ever; `yell`
-    -- is untouched and reads its own stored value.
-    local box = _G.SanctuaryFilter_yell
+    -- `trade` is the box the block above rewired to answer false for ever;
+    -- `emote` is untouched and reads its own stored value.
+    local box = _G.SanctuaryFilter_emote
     local hit = box.labelHit
     check(hit ~= nil, "a checkbox's label is a target of its own")
     equal(hit:GetParent(), box, "belonging to the box, so it hides with it")
@@ -7089,15 +7112,15 @@ do
         equal(corner, "BOTTOMRIGHT", "and to their bottom-right")
         equal(other, box.label, "so it stops where the text stops")
     end
-    local before = SanctuaryDB.filters.yell
+    local before = SanctuaryDB.filters.emote
     hit:Click()
-    equal(SanctuaryDB.filters.yell, not before, "clicking the words works the box")
+    equal(SanctuaryDB.filters.emote, not before, "clicking the words works the box")
     hit:Click()
-    equal(SanctuaryDB.filters.yell, before, "and works it back")
+    equal(SanctuaryDB.filters.emote, before, "and works it back")
     -- A disabled box refuses the words exactly as it refuses the square.
     box:SetEnabledState(false)
     hit:Click()
-    equal(SanctuaryDB.filters.yell, before, "a greyed box ignores its label too")
+    equal(SanctuaryDB.filters.emote, before, "a greyed box ignores its label too")
     box:SetEnabledState(true)
 
     local radio = _G.SanctuaryChannel_keywords
@@ -7761,6 +7784,26 @@ _G.SanctuaryFilter_whisper:Click()
 equal(SanctuaryDB.filters.whisper, not storedWhisper, "a box writes its own key")
 _G.SanctuaryFilter_whisper:Click()
 equal(SanctuaryDB.filters.whisper, storedWhisper, "and writes it back")
+-- One box for two keys since 1.1.0: "si on en cache un on veut forcement cacher
+-- l'autre". The engine keeps the two apart -- the Journal still says which of
+-- the two a line was -- so what has to be proven here is that ONE click arms
+-- both of them, all the way down to the two chat filters.
+do
+    local storedSay, storedYell = SanctuaryDB.filters.say, SanctuaryDB.filters.yell
+    SanctuaryDB.filters.say, SanctuaryDB.filters.yell = false, false
+    _G.SanctuaryFilter_sayYell:Click()
+    equal(SanctuaryDB.filters.say, true, "one box ticks /say")
+    equal(SanctuaryDB.filters.yell, true, "and /yell with it")
+    check(chatFilters.CHAT_MSG_SAY(nil, "CHAT_MSG_SAY", "hello", "Unknown"),
+        "so a stranger's /say is hidden")
+    check(chatFilters.CHAT_MSG_YELL(nil, "CHAT_MSG_YELL", "hello", "Unknown"),
+        "and their /yell too")
+    _G.SanctuaryFilter_sayYell:Click()
+    equal(SanctuaryDB.filters.say, false, "unticking clears /say")
+    equal(SanctuaryDB.filters.yell, false, "and /yell with it")
+    SanctuaryDB.filters.say, SanctuaryDB.filters.yell = storedSay, storedYell
+end
+
 _G.SanctuaryChannel_all:Click()
 equal(SanctuaryDB.filters.channelMode, "all", "a channel radio writes the channel mode")
 _G.SanctuaryChannel_none:Click()
@@ -7844,8 +7887,7 @@ do
     local SWEEP = {
         { name = "SanctuaryFilter_groupInvite", room = 194, column = 220 },
         { name = "SanctuaryFilter_whisper",     room = 194, column = 220 },
-        { name = "SanctuaryFilter_say",         room = 194, column = 220 },
-        { name = "SanctuaryFilter_yell",        room = 194, column = 220 },
+        { name = "SanctuaryFilter_sayYell",     room = 194, column = 220 },
         { name = "SanctuaryFilter_emote",       room = 194, column = 220 },
         { name = "SanctuaryFilter_duel",        room = 194, column = 220 },
         { name = "SanctuaryFilter_trade",       room = 194, column = 220 },
