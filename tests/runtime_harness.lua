@@ -6903,6 +6903,19 @@ equal(mailbox.icon.shown, true, "a sender who is not a player never takes the ic
 SanctuaryDB.keywords = keywordsBeforeIcon
 ns.invalidateWhitelist()
 
+-- The other side of that same gate, and the one thing sharing it does not
+-- promise. A letter this blocked name had returned to them is their own thing
+-- coming home, and the box reads that in the header and orders nothing. The
+-- icon is handed the name and nothing else, so it goes anyway. Hiding the icon
+-- over a letter the box will not touch is the trade Vincent took knowingly
+-- (decision 19), and the tooltip on that answer is where it is said.
+now = now + 5
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "came back",
+    wasReturned = true } })
+equal(orderedOps(), "", "a blocked name's letter coming back to them is left where it is")
+mailWaitsFrom("Nuisance-TestRealm")
+equal(mailbox.icon.shown, false, "and the icon goes all the same, on the bare name")
+
 -- Nothing waiting, and nothing to hide.
 mailWaitsFrom()
 equal(mailbox.icon.shown, false, "no mail waiting, no icon, and nothing for us to do")

@@ -6263,12 +6263,17 @@ end
 -- realm behind a dash at most -- "Hotel des ventes", "The Postmaster" and every
 -- quest giver carry a space in front of that dash, and a player cannot.
 --
--- The scan asks the game itself as well, which is a far better answer than any
--- shape; the minimap icon has nothing else to go on, since
--- `GetLatestThreeSenders` hands over three strings and no header at all. Both go
--- through here, so the icon can never call filtered a letter the scan would not
--- touch: an auction house that happens to carry a blocked pattern in its name
--- used to take the icon off the screen while the mailbox itself was left alone.
+-- This is the one gate the two paths share, and it earns its place on both: an
+-- auction house whose name happens to carry a blocked pattern used to take the
+-- icon off the screen while the mailbox itself was left alone. Sharing it does
+-- not make the two agree. The scan reads the header as well, which is a far
+-- better answer than any shape, and adds four gates the icon cannot have -- a
+-- Game Master, a crafting order, a letter returned or sent by yourself, a
+-- `canReply` the game says no to. The icon has none of them, since
+-- `GetLatestThreeSenders` hands over three strings and no header at all. So the
+-- icon can still go for a letter the mailbox will never touch. That is the
+-- trade Vincent took knowingly (decision 19, 02/09/2026), and the tooltip on
+-- that answer is where it is said out loud.
 local function isPlayerSenderName(sender)
     if splitCharacterName(sender) == nil then return false end
     local clean = stripWoWFormatting(sender)
