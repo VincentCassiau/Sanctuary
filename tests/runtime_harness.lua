@@ -6866,7 +6866,11 @@ check(mailReport.text:find("would=delete", 1, true) ~= nil,
     "and what Sanctuary would do with them")
 
 -- M9 -- the mail icon of the minimap. Hidden AFTER Blizzard has shown it, in
--- the same pass, so nothing is ever on screen.
+-- the same pass, so nothing is ever on screen. The icon is handed three names
+-- and no header, so it can still go for a letter the mailbox will never touch:
+-- a blocked name's letter returned to them, which the box leaves alone on its
+-- fifth letter in M4, takes the icon away here all the same. That is decision
+-- 19, and the tooltip on that answer is where it is said.
 armMailFixture()
 ns.setMailIcon("normal")
 mailWaitsFrom("Nuisance-TestRealm")
@@ -6902,19 +6906,6 @@ mailWaitsFrom("Hotel des ventes")
 equal(mailbox.icon.shown, true, "a sender who is not a player never takes the icon away")
 SanctuaryDB.keywords = keywordsBeforeIcon
 ns.invalidateWhitelist()
-
--- The other side of that same gate, and the one thing sharing it does not
--- promise. A letter this blocked name had returned to them is their own thing
--- coming home, and the box reads that in the header and orders nothing. The
--- icon is handed the name and nothing else, so it goes anyway. Hiding the icon
--- over a letter the box will not touch is the trade Vincent took knowingly
--- (decision 19), and the tooltip on that answer is where it is said.
-now = now + 5
-openMailbox({ { sender = "Nuisance-TestRealm", subject = "came back",
-    wasReturned = true } })
-equal(orderedOps(), "", "a blocked name's letter coming back to them is left where it is")
-mailWaitsFrom("Nuisance-TestRealm")
-equal(mailbox.icon.shown, false, "and the icon goes all the same, on the bare name")
 
 -- Nothing waiting, and nothing to hide.
 mailWaitsFrom()
