@@ -6617,6 +6617,10 @@ local function newWidget(kind, name, parent, template)
     function w:SetTexture(path) self.__texture = path end
     function w:GetTexture() return self.__texture end
     function w:SetTexCoord(...) self.__texCoord = { ... } end
+    -- Recorded for the same reason: the arrow of a duration field is one file
+    -- tinted rather than four rectangles filled, so the only trace its colour
+    -- leaves is this call.
+    function w:SetVertexColor(r, g, b, a) self.__vertexColor = { r, g, b, a or 1 } end
     function w:EnableMouse(value) self.__mouseEnabled = value and true or false end
     -- Kept as four numbers rather than a table: a colour is read back one
     -- component at a time, and "is this line green" is a check the panel's
@@ -8088,6 +8092,36 @@ do
 end
 
 assertModelAtRest()
+-- The contract a texture file has to meet for the client to draw it at all,
+-- read from the file's own header: uncompressed true-colour -- type 2, never
+-- the RLE variant every convert-to-TGA tool writes by default -- 32 bits a
+-- pixel with a real eight-bit alpha, written bottom-up, and a power of two on
+-- both sides. Two files ship with the add-on and both answer to it, so the rule
+-- is written once and asked twice; each caller reads the pixels afterwards for
+-- what only its own drawing has to be.
+local function readShippedTexture(relative, side, said)
+    local handle = io.open(repoRoot .. "/" .. relative, "rb")
+    check(handle ~= nil, said .. " is in the add-on folder (" .. relative .. ")")
+    if not handle then return nil end
+    local header = handle:read(18)
+    equal(#header, 18, said .. " has a TGA header")
+    equal(header:byte(2), 0, "with no colour map in " .. said)
+    equal(header:byte(3), 2, said .. " is uncompressed true-colour, not the RLE variant")
+    local width = header:byte(13) + header:byte(14) * 256
+    local height = header:byte(15) + header:byte(16) * 256
+    equal(width, side, said .. " is " .. side .. " px wide")
+    equal(height, side, "and " .. side .. " tall -- a power of two on both sides")
+    equal(header:byte(17), 32, said .. " is 32 bits a pixel, so there is room for an alpha")
+    equal(header:byte(18) % 16, 8, "and eight of them are the alpha")
+    -- Bit 5 of the descriptor is the origin. Zero is bottom-left, which is what
+    -- the client reads; the other way round is an upside-down drawing.
+    equal(math.floor(header:byte(18) / 32) % 2, 0, said .. " is written bottom-up")
+    local body = handle:read("a")
+    handle:close()
+    equal(#body, width * height * 4, "the pixels of " .. said .. " are all there")
+    return body, width, height
+end
+
 -- ---------------------------------------------------------------------------
 -- Question 3: the anti-spam of the public channels
 -- ---------------------------------------------------------------------------
@@ -8098,6 +8132,42 @@ local yes, no = _G.SanctuaryQ3_yes, _G.SanctuaryQ3_no
 local interval, list = _G.SanctuaryAntiSpamInterval, _G.SanctuaryAntiSpamIntervalList
 check(yes ~= nil and no ~= nil, "question 3 offers the same two cards as the others")
 check(interval ~= nil and list ~= nil, "with a window under them")
+
+-- The arrow in the field. Four rectangles stacked into a staircase read as
+-- crooked on Vincent's client, so it is one image now, white on transparency,
+-- and the colour is a tint over it.
+do
+    local caret = interval.caret
+    check(caret ~= nil and caret.arrow ~= nil, "the field carries an arrow")
+    equal(caret.bars, nil, "made of one texture and not of a stack of them")
+    local path = tostring(caret.arrow:GetTexture())
+    equal(path:sub(-15), "media\\caret.tga", "drawn from the add-on's own file (" .. path .. ")")
+    caret:SetCaretColor({ 1, 0, 0, 1 })
+    equal(table.concat(caret.arrow.__vertexColor or {}, ","), "1,0,0,1",
+        "and greying it out is a tint, not a redraw")
+
+    local body, width, height = readShippedTexture("media/caret.tga", 16, "the arrow")
+    if body then
+        -- A triangle pointing down: nothing at the very bottom row, a full base
+        -- at the top of the drawing. Read on the image's own rows -- the file is
+        -- written bottom-up, so its first row is the image's last.
+        local function alphaAt(col, row)
+            return body:byte(((height - 1 - row) * width + col) * 4 + 4)
+        end
+        local widest, widestRow = 0, nil
+        for row = 0, height - 1 do
+            local drawn = 0
+            for col = 0, width - 1 do
+                if alphaAt(col, row) > 0 then drawn = drawn + 1 end
+            end
+            if drawn > widest then widest, widestRow = drawn, row end
+        end
+        check(widest >= 10, "there is a triangle in it (" .. widest .. " px across)")
+        check(widestRow < height / 2, "with its base at the top (row " .. tostring(widestRow) .. ")")
+        equal(alphaAt(width / 2, height - 1), 0, "and its point above the bottom edge")
+    end
+    ns.refreshUI()
+end
 
 -- Out of the box: opted into, never out of, and five minutes.
 ns.setAntiSpamEnabled(false)
@@ -9555,27 +9625,9 @@ do
     -- path on disk -- the add-on folder IS `Sanctuary`, and the extension is the
     -- one we ship.
     local relative = tostring(declared):gsub("\\", "/")
-        :gsub("^Interface/AddOns/Sanctuary/", "")
-    local handle = io.open(repoRoot .. "/" .. relative .. ".tga", "rb")
-    check(handle ~= nil,
-        "and the file that path resolves to is in the add-on folder (" .. relative .. ".tga)")
-    if handle then
-        local header = handle:read(18)
-        equal(#header, 18, "it has a TGA header")
-        equal(header:byte(2), 0, "no colour map")
-        -- Type 2 is uncompressed true-colour. Type 10 is the RLE variant, which
-        -- is what every convert-to-TGA tool writes by default and what the
-        -- client does not read.
-        equal(header:byte(3), 2, "uncompressed true-colour, not the RLE variant")
-        local width = header:byte(13) + header:byte(14) * 256
-        local height = header:byte(15) + header:byte(16) * 256
-        equal(width, 64, "64 px wide")
-        equal(height, 64, "and 64 tall -- a power of two on both sides")
-        equal(header:byte(17), 32, "32 bits a pixel, so there is room for an alpha")
-        equal(header:byte(18) % 16, 8, "and eight of them are the alpha")
-        -- Bit 5 of the descriptor is the origin. Zero is bottom-left, which is
-        -- what the client reads; the other way round is an upside-down icon.
-        equal(math.floor(header:byte(18) / 32) % 2, 0, "written bottom-up")
+        :gsub("^Interface/AddOns/Sanctuary/", "") .. ".tga"
+    local body, width, height = readShippedTexture(relative, 64, "the logo")
+    if body then
         -- Really drawn, and really a DISC. Decision 163 recomposed the artwork:
         -- the night background fills the whole square as a disc and the shield
         -- sits on it at 74 %, because the shield alone -- detoured, on nothing --
@@ -9584,9 +9636,6 @@ do
         -- see-through": it is opaque from edge to edge through the middle, and
         -- clear at the four corners, which is the difference between a disc that
         -- fills the ring's hole and a square whose corners the ring cuts off.
-        local body = handle:read("a")
-        handle:close()
-        equal(#body, width * height * 4, "the pixels are all there")
         local function alphaAt(col, row) return body:byte((row * width + col) * 4 + 4) end
         local clear, opaque = 0, 0
         for row = 0, height - 1 do

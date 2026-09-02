@@ -922,28 +922,25 @@ local DROPDOWN_ROW_HEIGHT = 22
 -- locale, and a glyph nobody can render is not a translation problem to be
 -- fixed in one language.
 --
--- Four bars, each two pixels tall, 8 px wide down to 2: a staircase that reads
--- as a triangle at this size and depends on no font, no atlas and no file.
-local CARET_ROWS = 4
+-- So it is one image of our own: a triangle white on transparency, tinted by
+-- SetVertexColor so the file carries the shape and the code the colour.
+--
+-- It replaces the four stacked bars of 1.0.0, which Vincent read as crooked on
+-- his client -- "comme si c'etait de l'aliasing" (02/09/2026).
+local CARET_SIZE = 8
+local CARET_TEXTURE = "Interface\\AddOns\\Sanctuary\\media\\caret.tga"
 local function newCaret(parent, color)
     local caret = CreateFrame("Frame", nil, parent)
-    caret:SetSize(CARET_ROWS * 2, CARET_ROWS * 2)
-    caret.bars = {}
-    for index = 1, CARET_ROWS do
-        local bar = caret:CreateTexture(nil, "OVERLAY")
-        bar:SetSize((CARET_ROWS - index + 1) * 2, 2)
-        if index == 1 then
-            bar:SetPoint("TOP", caret, "TOP", 0, 0)
-        else
-            bar:SetPoint("TOP", caret.bars[index - 1], "BOTTOM", 0, 0)
-        end
-        bar:SetColorTexture(unpack(color))
-        caret.bars[index] = bar
-    end
-    -- One call for the four bars: the field greys its arrow with the rest of
-    -- itself, and a triangle half in one colour is worse than no triangle.
+    caret:SetSize(CARET_SIZE, CARET_SIZE)
+    local arrow = caret:CreateTexture(nil, "OVERLAY")
+    arrow:SetAllPoints(caret)
+    arrow:SetTexture(CARET_TEXTURE)
+    arrow:SetVertexColor(unpack(color))
+    caret.arrow = arrow
+    -- The field greys its arrow with the rest of itself, and the tint is the
+    -- only thing that changes: the drawing is the file's.
     function caret:SetCaretColor(newColor)
-        for _, bar in ipairs(self.bars) do bar:SetColorTexture(unpack(newColor)) end
+        self.arrow:SetVertexColor(unpack(newColor))
     end
     return caret
 end
