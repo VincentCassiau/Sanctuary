@@ -3144,6 +3144,20 @@ end
 -- hid pays neither -- it was never a block, only a copy of one that had already
 -- been shown -- and those two omissions are the whole of "no visible or audible
 -- trace" for it.
+-- The word the chat line uses for a block: the Journal's own label for the type,
+-- lower-cased, never the identifier the code goes by. "whisper", "groupInvite"
+-- and "mail" were printed as such since 1.0.0 (Vincent, 03/09/2026: « courrier
+-- de », not « mail de »). `%u` is ASCII, so the two accented capitals a French
+-- label can open on are folded by hand.
+local ACCENTED_LOWER = { ["\195\137"] = "\195\169", ["\195\128"] = "\195\160" }
+local function blockTypeLabel(blockType)
+    local label = ns.getLogEntryDisplayType and ns.getLogEntryDisplayType({ type = blockType })
+    if type(label) ~= "string" or label == "" then label = tostring(blockType) end
+    label = label:gsub("^%u", string.lower)
+    label = label:gsub("^(\195[\137\128])", ACCENTED_LOWER)
+    return label
+end
+
 local function accountForBlock(blockType, sourceText, maskedRepeat)
     if maskedRepeat then return end
     if SanctuaryCharDB then
@@ -3154,7 +3168,7 @@ local function accountForBlock(blockType, sourceText, maskedRepeat)
     end
     if SanctuaryDB.notifications.mode == "verbose" then
         printMsg(string.format(L["BLOCKED_VERBOSE"],
-            COLOR_HIGHLIGHT .. blockType .. COLOR_RESET,
+            COLOR_HIGHLIGHT .. blockTypeLabel(blockType) .. COLOR_RESET,
             COLOR_HIGHLIGHT .. (sourceText or "?") .. COLOR_RESET))
     end
 end

@@ -6659,8 +6659,17 @@ equal(SanctuaryDB.log[1].msg, "you are nothing", "with the subject as what was s
 equal(ns.getLogEntryDisplayType(SanctuaryDB.log[1]), ns.L["LOG_TYPE_MAIL"],
     "and shown under its own name")
 equal(SanctuaryCharDB.sessionStats.blockedByType.mail, 1, "the session counter moves")
-check(chatMessages[#chatMessages]:find("mail", 1, true) ~= nil,
-    "and the verbose mode says a mail was blocked")
+do
+    -- The Journal's own label for the type, lower-cased, in whichever language
+    -- is loaded: neither the identifier the code goes by nor the capital the
+    -- Journal column wears.
+    local line = chatMessages[#chatMessages]
+    local word = ns.L["LOG_TYPE_MAIL"]:gsub("^%u", string.lower)
+    check(line:find(word, 1, true) ~= nil and line:find("Nuisance-TestRealm", 1, true) ~= nil,
+        "and the verbose mode names the mail in words, with its sender")
+    check(line:find(ns.L["LOG_TYPE_MAIL"], 1, true) == nil and line:find("mail", 1, true) == nil
+        or word == "mail", "in lower case, as a word in a sentence")
+end
 SanctuaryDB.notifications.mode = asFound.mailNotifications
 
 now = now + 5
