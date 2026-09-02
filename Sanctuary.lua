@@ -6263,19 +6263,19 @@ end
 -- realm behind a dash at most -- "Hotel des ventes", "The Postmaster" and every
 -- quest giver carry a space in front of that dash, and a player cannot.
 --
--- This is the first gate on both paths, and it earns its place on both: an
--- auction house whose name happens to carry a blocked pattern used to take the
--- icon off the screen while the mailbox itself was left alone. It is not the
--- only thing they share: `ns.isSelf` and `ns.decideMail` are read by both, so a
--- letter you sent yourself is left alone on either side. Sharing does not make
--- the two agree. The scan reads the header as well, which is a far better
--- answer than any shape, and adds four gates the icon cannot have -- a Game
--- Master, a crafting order, a letter returned to you, a `canReply` the game
--- says no to. The icon has none of those, since `GetLatestThreeSenders` hands
--- over three strings and no header at all. So the icon can still go for a
--- letter the mailbox will never touch. That is the trade Vincent took knowingly
--- (decision 19, 02/09/2026), and the tooltip on that answer is where it is said
--- out loud.
+-- Both paths go through here, and it earns its place on both: an auction house
+-- whose name happens to carry a blocked pattern used to take the icon off the
+-- screen while the mailbox itself was left alone. It answers on shape alone, so
+-- it cannot promise more than shape: a one-word NPC name reads as a player
+-- here, and only `classifyInboxMail` -- which has the header, and `canReply`
+-- with it -- can tell the difference. `ns.isSelf` and `ns.decideMail` are read
+-- on both paths too, so a letter you sent yourself is left alone on either
+-- side. None of that makes the two agree: the scan reads the header and stops
+-- on a Game Master, a crafting order, a letter returned to you or a `canReply`
+-- the game says no to, while `GetLatestThreeSenders` hands the icon three
+-- strings and no header at all. So the icon can still go for a letter the
+-- mailbox will never touch. That is the trade Vincent took knowingly (decision
+-- 19, 02/09/2026), and the tooltip on that answer is where it is said out loud.
 local function isPlayerSenderName(sender)
     if splitCharacterName(sender) == nil then return false end
     local clean = stripWoWFormatting(sender)
@@ -6515,9 +6515,10 @@ local function applyMailIcon(frame)
             senders = #names
             for _, name in ipairs(names) do
                 -- The scan's own gate first, on everything a bare name allows:
-                -- what did not come from a player is never filtered, so an
-                -- auction house or a letter from yourself leaves the icon where
-                -- the game drew it. Only then is the name put to the lists.
+                -- a name that does not look like a character's is never
+                -- filtered, so an auction house or a letter from yourself
+                -- leaves the icon where the game drew it. A one-word NPC name
+                -- looks like one, and here there is no header to say otherwise.
                 if isPlayerSenderName(name) and not ns.isSelf(name)
                     and (ns.decideMail(name)) then
                     filtered = filtered + 1
