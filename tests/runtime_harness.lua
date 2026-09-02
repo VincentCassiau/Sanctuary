@@ -5081,7 +5081,7 @@ chatMessages = {}
 playedSounds = {}
 popup.shown = false
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 4, "a file from the previous build gets the title and one line per point")
+equal(#chatMessages, 5, "a file from the previous build gets the title and one line per point")
 check(chatMessages[1]:find(ns.L["ADDON_LOADED_ACTIVE"], 1, true) ~= nil,
     "the load line still comes first")
 check(chatMessages[2]:find(ns.L["CHANGELOG_1_1_0_TITLE"], 1, true) ~= nil,
@@ -5099,7 +5099,7 @@ check(type(openedAt) == "number", "the window opens at the first load that follo
 now = now + 3600
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 4, "an hour later the lines are still there")
+equal(#chatMessages, 5, "an hour later the lines are still there")
 equal(SanctuaryDB.changelog.firstAt, openedAt, "and the window has not moved")
 now = clockAsFound + DAY + 3600
 chatMessages = {}
@@ -5110,7 +5110,7 @@ equal(#chatMessages, 1, "a day later it stops on its own")
 SanctuaryDB.changelog.version = "1.0.9"
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 4, "the next build announces itself in turn")
+equal(#chatMessages, 5, "the next build announces itself in turn")
 check(SanctuaryDB.changelog.firstAt > openedAt, "on a window of its own")
 
 -- A clock put back leaves a stamp in the future, and the window would stay shut
@@ -5118,14 +5118,14 @@ check(SanctuaryDB.changelog.firstAt > openedAt, "on a window of its own")
 SanctuaryDB.changelog.firstAt = time() + 10 * DAY
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 4, "a clock put back does not swallow the lines")
+equal(#chatMessages, 5, "a clock put back does not swallow the lines")
 
 -- Turned off, the add-on says so and still says what changed.
 SanctuaryDB.changelog = {}
 SanctuaryCharDB.overrides.enabled = false
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 4, "an add-on switched off announces the update all the same")
+equal(#chatMessages, 5, "an add-on switched off announces the update all the same")
 check(chatMessages[1]:find(ns.L["ADDON_LOADED_INACTIVE"], 1, true) ~= nil,
     "under its own load line")
 
@@ -5135,7 +5135,7 @@ SanctuaryDB = { schemaVersion = 1 }
 SanctuaryCharDB = nil
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 4, "a file the schema reset rebuilt announces the update")
+equal(#chatMessages, 5, "a file the schema reset rebuilt announces the update")
 
 now = clockAsFound
 
@@ -7393,8 +7393,8 @@ do
     local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
         definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
 
-    equal(#englishOrder, 252, "the default locale defines 252 keys")
-    equal(#frenchOrder, 252, "and the French block defines 252")
+    equal(#englishOrder, 253, "the default locale defines 253 keys")
+    equal(#frenchOrder, 253, "and the French block defines 253")
     equal(#englishDupes, 0,
         "no key is defined twice in the default locale ("
             .. table.concat(englishDupes, ", ") .. ")")
@@ -7734,21 +7734,25 @@ equal(_G.SanctuaryFilter_trade.mark:IsShown(), false, "an unticked box shows no 
 check(sameColor(_G.SanctuaryFilter_trade.__backdropColor, CHECK_BG),
     "and is still a drawn box, which is the whole of the defect")
 
--- The radios are round: three discs and a circular mask, never a backdrop.
-for _, mode in ipairs({ "none", "keywords", "all" }) do
-    local radio = _G["SanctuaryChannel_" .. mode]
-    check(radio ~= nil and radio.rim ~= nil and radio.fill ~= nil and radio.mark ~= nil,
-        "the " .. mode .. " radio is drawn as a rim, a fill and a dot")
-    equal(radio.__backdropColor, nil, "and never as a square backdrop")
-    check(radio.mark.__mask ~= nil, "its dot is rounded by a mask")
-    equal(radio:GetWidth(), 18, "and it is the same 18 px as a checkbox")
+-- The channel modes are one menu, not three dots (Vincent, 03/09/2026): it
+-- names the stored mode, a row picks one, and every row keeps the sentence its
+-- dot used to carry.
+do
+    local menu = _G.SanctuaryChannelMode
+    check(menu ~= nil and menu.list ~= nil and #menu.rows == 3,
+        "the channel modes are one menu of three rows")
+    SanctuaryDB.filters.channelMode = "none"
+    menu:Refresh()
+    equal(menu.value:GetText(), ns.L["CHANNEL_NONE"], "closed, it names the stored mode")
+    menu.rows[2]:Click()
+    equal(SanctuaryDB.filters.channelMode, "keywords", "a row picks its mode")
+    equal(menu.value:GetText(), ns.L["CHANNEL_KEYWORDS"], "and the field says so at once")
+    for index, key in ipairs({ "TIP_CHANNEL_NONE", "TIP_CHANNEL_KEYWORDS", "TIP_CHANNEL_ALL" }) do
+        check(menu.rows[index]:GetScript("OnEnter") ~= nil, "row " .. index .. " answers on hover")
+    end
+    menu.rows[1]:Click()
+    equal(SanctuaryDB.filters.channelMode, "none", "and moves it back")
 end
-_G.SanctuaryChannel_keywords:Click()
-equal(_G.SanctuaryChannel_keywords.mark:IsShown(), true, "the picked channel shows its dot")
-equal(_G.SanctuaryChannel_none.mark:IsShown(), false, "and the others do not")
-check(sameColor(_G.SanctuaryChannel_keywords.rim.__colorTexture, { 0.4, 0.6, 1.0, 1.0 }),
-    "the picked radio's rim answers too")
-_G.SanctuaryChannel_none:Click()
 
 -- Decision 135: clicking the TEXT of a box or a dot works the box or the dot.
 -- An 18 px square is a small target and every interface a person has used lets
@@ -7781,13 +7785,6 @@ do
     hit:Click()
     equal(SanctuaryDB.filters.emote, before, "a greyed box ignores its label too")
     box:SetEnabledState(true)
-
-    local radio = _G.SanctuaryChannel_keywords
-    check(radio.labelHit ~= nil, "and a radio's label is a target as well")
-    radio.labelHit:Click()
-    equal(SanctuaryDB.filters.channelMode, "keywords", "clicking the words picks the dot")
-    _G.SanctuaryChannel_none.labelHit:Click()
-    equal(SanctuaryDB.filters.channelMode, "none", "and moves it to the next one")
 end
 
 -- The tab strip, decision 140: ONE bar the full width of the window, between the
@@ -8058,9 +8055,9 @@ do
     _G.SanctuaryFilter_duel:SetEnabledState(true)
     equal(_G.SanctuaryFilter_duel:GetAlpha(), 1, "and both come back")
     equal(_G.SanctuaryFilter_duel.label:GetAlpha(), 1, "together")
-    _G.SanctuaryChannel_all:SetEnabledState(false)
-    equal(_G.SanctuaryChannel_all:GetAlpha(), 0.8, "a greyed dot dims as well")
-    _G.SanctuaryChannel_all:SetEnabledState(true)
+    _G.SanctuaryChannelMode:SetEnabledState(false)
+    equal(_G.SanctuaryChannelMode:GetAlpha(), 0.8, "a greyed menu dims as well")
+    _G.SanctuaryChannelMode:SetEnabledState(true)
     SanctuaryDB.filters.channelMode = "none"
     ns.refreshUI()
 end
@@ -8463,9 +8460,9 @@ do
     SanctuaryDB.filters.say, SanctuaryDB.filters.yell = storedSay, storedYell
 end
 
-_G.SanctuaryChannel_all:Click()
-equal(SanctuaryDB.filters.channelMode, "all", "a channel radio writes the channel mode")
-_G.SanctuaryChannel_none:Click()
+_G.SanctuaryChannelMode.rows[3]:Click()
+equal(SanctuaryDB.filters.channelMode, "all", "a row of the channel menu writes the channel mode")
+_G.SanctuaryChannelMode.rows[1]:Click()
 equal(SanctuaryDB.filters.channelMode, "none", "and the first one writes it back")
 check(_G.SanctuaryStrictCheck:IsShown(), "the enhanced-instance box is visible in \"I choose\"")
 
@@ -8551,9 +8548,6 @@ do
         { name = "SanctuaryFilter_duel",        room = 194, column = 220 },
         { name = "SanctuaryFilter_trade",       room = 194, column = 220 },
         { name = "SanctuaryFilter_guildInvite", room = 194, column = 220 },
-        { name = "SanctuaryChannel_none",       room = 178, column = 204 },
-        { name = "SanctuaryChannel_keywords",   room = 178, column = 204 },
-        { name = "SanctuaryChannel_all",        room = 178, column = 204 },
         -- Indented under its parent in "I choose": 220 less the 26 px indent.
         { name = "SanctuaryStrictCheck",        room = 168, column = 194 },
         -- Never in a column: the whole inner width less its own box and gap.
@@ -8575,6 +8569,13 @@ do
         -- the whole point of the bound.
         check(label.__wordWrap ~= false, entry.name .. " folds rather than truncating")
     end
+
+    -- The channel menu is not a box with a label: it is bounded as a whole,
+    -- the column less the 16 px indent the dots had, field, list and rows alike.
+    local menu = _G.SanctuaryChannelMode
+    equal(menu:GetWidth(), 204, "the channel menu takes the column less its indent")
+    equal(menu.list:GetWidth(), 204, "and its list opens as wide as the field")
+    equal(menu.rows[3]:GetWidth(), 196, "each row inside the list's 4 px margins")
 
     -- Not vacuous. The longest label of the screen really is longer than the
     -- room it has, at the 5.14 px per character the session measured on the real
