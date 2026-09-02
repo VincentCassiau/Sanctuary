@@ -151,7 +151,7 @@ local function manifestField(field)
 end
 
 local addonMetadata = {
-    Version = "1.0.0",
+    Version = manifestField("Version") or "unread",
     ["X-Sanctuary-Build"] = manifestField("X-Sanctuary-Build") or "unread",
     Interface = "120007",
 }
@@ -803,7 +803,7 @@ for _, event in ipairs({
     check(eventFrames[event] ~= nil, "the add-on registers " .. event)
 end
 
-equal(ns.VERSION, "1.0.0", "version exported")
+equal(ns.VERSION, "1.1.0", "version exported")
 equal(#muted, 0, "no global sound files muted at rest")
 equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "party invite dialog sound suppressed while group filter active")
 equal(StaticPopupDialogs.DUEL_REQUESTED.sound, nil, "duel dialog sound suppressed while duel filter active")
@@ -1008,12 +1008,12 @@ SanctuaryDB.debugLog = {}
 ns.captureDebugSnapshot()
 equal(#SanctuaryDB.debugLog, 1, "debug snapshot captured")
 equal(SanctuaryDB.debugLog[1].cat, "SNAPSHOT", "debug snapshot category")
-equal(SanctuaryDB.debugLog[1].data.version, "1.0.0", "debug snapshot version")
+equal(SanctuaryDB.debugLog[1].data.version, ns.VERSION, "debug snapshot version")
 equal(SanctuaryDB.debugLog[1].data.build, ns.BUILD_ID, "debug snapshot reports the diagnostic build id")
 equal(SanctuaryDB.debugLog[1].data.clientVersion, "12.0.7", "debug snapshot reports the client version")
 equal(SanctuaryDB.debugLog[1].data.clientBuild, "62119", "debug snapshot reports the client build")
 equal(SanctuaryDB.debugLog[1].data.clientInterface, 120007, "debug snapshot reports the client interface number")
-equal(SanctuaryDB.debugLog[1].data.addonMetaVersion, "1.0.0", "debug snapshot reports the loaded addon version metadata")
+equal(SanctuaryDB.debugLog[1].data.addonMetaVersion, ns.VERSION, "debug snapshot reports the loaded addon version metadata")
 equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, ns.BUILD_ID, "debug snapshot reports the loaded addon build metadata")
 equal(SanctuaryDB.debugLog[1].data.addonMetaInterface, "120007", "debug snapshot reports the loaded addon interface metadata")
 check(SanctuaryDB.debugLog[1].data.chatLockdownKnown, "debug snapshot reports a readable chat messaging lockdown state")
