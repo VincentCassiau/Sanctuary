@@ -6223,7 +6223,8 @@ local PAGE_ROWS = 7
 
 -- What the last pass ordered, how full the box was when it did, which mail has
 -- been set aside for this opening, and whether the hook is in place.
-local mail = { skipped = {}, sentTo = nil, sentAt = nil, lastReport = nil, hooked = false }
+local mail = { skipped = {}, sentTo = nil, sentAt = nil, lastReport = nil,
+    hooked = false, iconHooked = false }
 
 -- A mail is named by what it IS, never by its index: the indexes are renumbered
 -- at every MAIL_INBOX_UPDATE, so an index kept from the last pass points at
@@ -6441,6 +6442,77 @@ function ns.installMailScan()
     hooksecurefunc("InboxFrame_Update", ns.mailScanInbox)
     debugLog("MAIL", { action = "HOOK_INSTALLED" })
     return true
+end
+
+-- The mail icon on the minimap. It carries no global name: it is
+-- `MinimapCluster.IndicatorFrame.MailFrame`, and Blizzard shows it from that
+-- frame's own OnEvent. So the guard is a post-hook on that script -- the icon is
+-- hidden AFTER Blizzard has shown it, inside the same pass, which is what keeps
+-- it off the screen instead of making it flash.
+local function mailIndicator()
+    local indicator = MinimapCluster and MinimapCluster.IndicatorFrame
+    return indicator and indicator.MailFrame or nil
+end
+
+-- Nothing is unregistered and nothing is re-anchored: Edit Mode and the minimap
+-- add-ons own where that frame sits. This only ever hides, or leaves alone.
+local function applyMailIcon(frame)
+    local mode = ns.getMailIcon()
+    local hasMail = type(HasNewMail) == "function" and HasNewMail() and true or false
+    local senders, filtered, hide = 0, 0, false
+
+    if isEnabled() and ns.getMailMode() == "delete" and hasMail and mode ~= "normal" then
+        if mode == "never" then
+            hide = true
+        elseif type(GetLatestThreeSenders) == "function" then
+            local names = { GetLatestThreeSenders() }
+            senders = #names
+            for _, name in ipairs(names) do
+                if (ns.decideMail(name)) then filtered = filtered + 1 end
+            end
+            -- One or two names, and every one of them filtered. At three the
+            -- API has stopped counting: three names can mean three senders or
+            -- thirty, so hiding there would be hiding without knowing, and
+            -- "masquer l'icone sans certitude" is exactly what Vincent refused.
+            hide = (senders == 1 or senders == 2) and filtered == senders
+        end
+    end
+
+    if hide and frame.Hide then
+        frame:Hide()
+        -- The indicator frame lays its children out in a row: taking one out
+        -- without a re-layout leaves a hole where the icon was.
+        local parent = frame.GetParent and frame:GetParent()
+        if parent and parent.Layout then parent:Layout() end
+    end
+
+    debugLog("MAIL_ICON", {
+        mode = mode, hasNewMail = hasMail, senders = senders,
+        filtered = filtered, hidden = hide,
+    })
+end
+
+function ns.installMailIconGuard()
+    local frame = mailIndicator()
+    if not frame or mail.iconHooked or not frame.HookScript then return frame end
+    mail.iconHooked = true
+    frame:HookScript("OnEvent", function(self, event)
+        -- The one event Blizzard shows the icon on. Ours runs after its handler.
+        if event ~= "UPDATE_PENDING_MAIL" then return end
+        applyMailIcon(self)
+    end)
+    return frame
+end
+
+-- Back to "Normale" without a relog. Blizzard's own handler is what puts the
+-- icon back, so it is replayed rather than the icon being shown by hand: what
+-- draws the icon stays the game's business.
+function ns.refreshMailIcon()
+    local frame = mailIndicator()
+    if not frame or not frame.GetScript then return end
+    local script = frame:GetScript("OnEvent")
+    if type(script) ~= "function" then return end
+    script(frame, "UPDATE_PENDING_MAIL")
 end
 
 -- What the button in the Diagnostics tab answers: one line a letter, and not one
@@ -7717,6 +7789,7 @@ function handlers.ADDON_LOADED(addonName)
     refreshInviteSoundMuteState()
     installGuildInviteFrameGuard()
     ns.installMailScan()
+    ns.installMailIconGuard()
 
     -- Said once the SavedVariables are in place, and idempotent: this is the
     -- other half of the same call in PLAYER_ENTERING_WORLD, which fires at
@@ -7757,15 +7830,16 @@ function handlers.PLAYER_ENTERING_WORLD()
     refreshGroupTracker()
     refreshInviteSoundMuteState()
     installGuildInviteFrameGuard()
-    -- All three are idempotent. Retrying registration here is what makes the
+    -- All four are idempotent. Retrying registration here is what makes the
     -- filter registry adapter meaningful: if no registration path resolved at
     -- load, ADDON_LOADED never fires again and the session would filter
-    -- nothing. The mailbox hook is retried for exactly that reason -- the frame
-    -- stops listening to ADDON_LOADED at the end of its own handler, and this
-    -- event fires at every loading screen.
+    -- nothing. The two mailbox hooks are retried for exactly that reason -- the
+    -- frame stops listening to ADDON_LOADED at the end of its own handler, and
+    -- this event fires at every loading screen.
     registerChatFilters()
     hookChatOutputDiagnostics()
     ns.installMailScan()
+    ns.installMailIconGuard()
 
     -- Request social data refresh. Both calls are pcall-wrapped because their
     -- availability/state varies during login and loading transitions.

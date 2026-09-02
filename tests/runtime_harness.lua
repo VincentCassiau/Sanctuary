@@ -566,14 +566,16 @@ function InboxItemCanDelete(index)
     return item ~= nil and item.canDelete ~= false
 end
 
-local function recordMailCommand(op, index)
-    mailbox.commands[#mailbox.commands + 1] = { op = op, index = index,
-        subject = mailbox.inbox[index] and mailbox.inbox[index].subject }
-    mailbox.pending = true
-    mailbox.target = mailbox.inbox[index]
+do
+    local function record(op, index)
+        mailbox.commands[#mailbox.commands + 1] = { op = op, index = index,
+            subject = mailbox.inbox[index] and mailbox.inbox[index].subject }
+        mailbox.pending = true
+        mailbox.target = mailbox.inbox[index]
+    end
+    function DeleteInboxItem(index) record("delete", index) end
+    function ReturnInboxItem(index) record("return", index) end
 end
-function DeleteInboxItem(index) recordMailCommand("delete", index) end
-function ReturnInboxItem(index) recordMailCommand("return", index) end
 
 C_Mail = {
     IsCommandPending = function() return mailbox.pending end,
@@ -626,18 +628,39 @@ function MailFrame_OnEvent()
     InboxFrame_Update()
 end
 
--- The server answers. `refuse` plays the other case: the command is acknowledged
--- and the mailbox comes back exactly as full as it was, which is what the
--- add-on's two-strike guard exists for.
-local function serverAnswersMail(refuse)
-    mailbox.pending = false
-    if not refuse and mailbox.target then
-        for i, item in ipairs(mailbox.inbox) do
-            if item == mailbox.target then table.remove(mailbox.inbox, i) break end
+-- The mail icon of the minimap. It has no global name, so the fixture is shaped
+-- like the real thing: a frame hanging off MinimapCluster.IndicatorFrame, with
+-- Blizzard's own OnEvent on it. The add-on hooks that script and runs after it,
+-- so what a test reads back is the state the pass ENDS on -- which is the whole
+-- claim: nothing is ever on screen, not even for a frame.
+mailbox.icon = { shown = false, layouts = 0 }
+mailbox.senders = {}
+function HasNewMail() return #mailbox.senders > 0 end
+function GetLatestThreeSenders() return unpackCompat(mailbox.senders) end
+
+do
+    local parent = { Layout = function() mailbox.icon.layouts = mailbox.icon.layouts + 1 end }
+    local frame = { __scripts = {} }
+    frame.Show = function() mailbox.icon.shown = true end
+    frame.Hide = function() mailbox.icon.shown = false end
+    frame.IsShown = function() return mailbox.icon.shown end
+    frame.GetParent = function() return parent end
+    frame.SetScript = function(self, script, callback) self.__scripts[script] = callback end
+    frame.GetScript = function(self, script) return self.__scripts[script] end
+    frame.HookScript = function(self, script, callback)
+        local original = self.__scripts[script]
+        self.__scripts[script] = function(...)
+            if original then original(...) end
+            callback(...)
         end
     end
-    mailbox.target = nil
-    MailFrame_OnEvent()
+    -- Blizzard's handler: the icon appears when there is mail waiting.
+    frame:SetScript("OnEvent", function(self, event)
+        if event ~= "UPDATE_PENDING_MAIL" then return end
+        if HasNewMail() then self:Show() else self:Hide() end
+    end)
+    mailbox.icon.frame = frame
+    MinimapCluster = { IndicatorFrame = { MailFrame = frame } }
 end
 
 SlashCmdList = {}
@@ -6587,6 +6610,28 @@ local function openMailbox(items)
     MailFrame_OnEvent()
 end
 
+-- The server answers. `refuse` plays the other case: the command is acknowledged
+-- and the mailbox comes back exactly as full as it was, which is what the
+-- add-on's two-strike guard exists for.
+local function serverAnswersMail(refuse)
+    mailbox.pending = false
+    if not refuse and mailbox.target then
+        for i, item in ipairs(mailbox.inbox) do
+            if item == mailbox.target then table.remove(mailbox.inbox, i) break end
+        end
+    end
+    mailbox.target = nil
+    MailFrame_OnEvent()
+end
+
+-- Mail arrives: the game fires its event, Blizzard's handler shows the icon, and
+-- the add-on's hook runs in the same pass.
+local function mailWaitsFrom(...)
+    mailbox.senders = { ... }
+    local frame = mailbox.icon.frame
+    frame:GetScript("OnEvent")(frame, "UPDATE_PENDING_MAIL")
+end
+
 local function rowShown(row) return _G["MailItem" .. row .. "Button"]:IsShown() end
 local function rowSubject(row) return _G["MailItem" .. row .. "Subject"]:GetText() end
 local function orderedOps()
@@ -6795,6 +6840,50 @@ check(mailReport.text:find("class=system", 1, true) ~= nil,
     "the ones that never came from a player included")
 check(mailReport.text:find("would=delete", 1, true) ~= nil,
     "and what Sanctuary would do with them")
+
+-- M9 -- the mail icon of the minimap. Hidden AFTER Blizzard has shown it, in
+-- the same pass, so nothing is ever on screen.
+armMailFixture()
+ns.setMailIcon("normal")
+mailWaitsFrom("Nuisance-TestRealm")
+equal(mailbox.icon.shown, true, "on the normal setting the icon behaves as the game draws it")
+
+local layoutsBefore = mailbox.icon.layouts
+ns.setMailIcon("never")
+mailWaitsFrom("Guildmate-TestRealm")
+equal(mailbox.icon.shown, false, "on 'never' the icon goes, even for a letter from a guild mate")
+equal(mailbox.icon.layouts, layoutsBefore + 1, "and the row it sat in is laid out again")
+
+ns.setMailIcon("hideIfFiltered")
+mailWaitsFrom("Nuisance-TestRealm")
+equal(mailbox.icon.shown, false, "one filtered sender and the icon goes")
+mailWaitsFrom("Nuisance-TestRealm", "Stranger-TestRealm")
+equal(mailbox.icon.shown, false, "two of them, in the scope that filters strangers, too")
+mailWaitsFrom("Nuisance-TestRealm", "Guildmate-TestRealm")
+equal(mailbox.icon.shown, true, "one letter you would want and the icon stays")
+-- Three names is where the game stops counting: three can mean three senders or
+-- thirty, and hiding there would be hiding without knowing.
+mailWaitsFrom("Nuisance-TestRealm", "Nuisance-TestRealm", "Nuisance-TestRealm")
+equal(mailbox.icon.shown, true, "at three names the game has stopped counting, so the icon stays")
+
+-- Nothing waiting, and nothing to hide.
+mailWaitsFrom()
+equal(mailbox.icon.shown, false, "no mail waiting, no icon, and nothing for us to do")
+
+-- With the mailbox left alone the icon is none of our business.
+SanctuaryDB.mail.mode = "keep"
+mailWaitsFrom("Nuisance-TestRealm")
+equal(mailbox.icon.shown, true, "with the mailbox left alone the icon is the game's business")
+SanctuaryDB.mail.mode = "delete"
+
+-- And back to "Normale" without a relog: Blizzard's own handler is replayed,
+-- so what draws the icon stays the game's.
+mailWaitsFrom("Nuisance-TestRealm")
+equal(mailbox.icon.shown, false, "hidden again")
+ns.setMailIcon("normal")
+ns.refreshMailIcon()
+equal(mailbox.icon.shown, true, "and the icon comes back the moment the answer changes")
+mailbox.senders = {}
 
 mailbox.inbox = {}
 mailbox.commands = {}
