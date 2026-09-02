@@ -7727,8 +7727,8 @@ local function needsSchemaReset(store)
 end
 
 -- The changelog, printed right under the load line. It shows at every load for
--- a day after the first login that follows an update, one line per point, and
--- then stops on its own. No window, no sound, no popup: an update is worth two
+-- a day after the first login that follows an update: a title line naming the
+-- version, then one line per point, nothing else, and then it stops on its own. No window, no sound, no popup: an update is worth two
 -- lines of chat and not an interruption.
 do
 
@@ -7736,6 +7736,7 @@ do
 -- only exists as a concatenation cannot be searched for, and an unreachable
 -- translation is one nobody will ever notice is missing.
 local CHANGELOG_LINES = {
+    "CHANGELOG_1_1_0_TITLE",
     "CHANGELOG_1_1_0_MAIL",
     "CHANGELOG_1_1_0_SAY_YELL",
 }

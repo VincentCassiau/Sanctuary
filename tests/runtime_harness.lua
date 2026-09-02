@@ -5078,12 +5078,14 @@ chatMessages = {}
 playedSounds = {}
 popup.shown = false
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 3, "a file from the previous build gets the changelog")
+equal(#chatMessages, 4, "a file from the previous build gets the title and one line per point")
 check(chatMessages[1]:find(ns.L["ADDON_LOADED_ACTIVE"], 1, true) ~= nil,
     "the load line still comes first")
-check(chatMessages[2]:find(ns.L["CHANGELOG_1_1_0_MAIL"], 1, true) ~= nil,
+check(chatMessages[2]:find(ns.L["CHANGELOG_1_1_0_TITLE"], 1, true) ~= nil,
+    "then the title line naming the version")
+check(chatMessages[3]:find(ns.L["CHANGELOG_1_1_0_MAIL"], 1, true) ~= nil,
     "then one line per point")
-check(chatMessages[3]:find(ns.L["CHANGELOG_1_1_0_SAY_YELL"], 1, true) ~= nil,
+check(chatMessages[4]:find(ns.L["CHANGELOG_1_1_0_SAY_YELL"], 1, true) ~= nil,
     "in the order they are written")
 equal(#playedSounds, 0, "an update is worth two lines of chat and no sound")
 equal(popup.shown, false, "and no window")
@@ -5094,7 +5096,7 @@ check(type(openedAt) == "number", "the window opens at the first load that follo
 now = now + 3600
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 3, "an hour later the lines are still there")
+equal(#chatMessages, 4, "an hour later the lines are still there")
 equal(SanctuaryDB.changelog.firstAt, openedAt, "and the window has not moved")
 now = clockAsFound + DAY + 3600
 chatMessages = {}
@@ -5105,7 +5107,7 @@ equal(#chatMessages, 1, "a day later it stops on its own")
 SanctuaryDB.changelog.version = "1.0.9"
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 3, "the next build announces itself in turn")
+equal(#chatMessages, 4, "the next build announces itself in turn")
 check(SanctuaryDB.changelog.firstAt > openedAt, "on a window of its own")
 
 -- A clock put back leaves a stamp in the future, and the window would stay shut
@@ -5113,14 +5115,14 @@ check(SanctuaryDB.changelog.firstAt > openedAt, "on a window of its own")
 SanctuaryDB.changelog.firstAt = time() + 10 * DAY
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 3, "a clock put back does not swallow the lines")
+equal(#chatMessages, 4, "a clock put back does not swallow the lines")
 
 -- Turned off, the add-on says so and still says what changed.
 SanctuaryDB.changelog = {}
 SanctuaryCharDB.overrides.enabled = false
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 3, "an add-on switched off announces the update all the same")
+equal(#chatMessages, 4, "an add-on switched off announces the update all the same")
 check(chatMessages[1]:find(ns.L["ADDON_LOADED_INACTIVE"], 1, true) ~= nil,
     "under its own load line")
 
@@ -5130,7 +5132,7 @@ SanctuaryDB = { schemaVersion = 1 }
 SanctuaryCharDB = nil
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 3, "a file the schema reset rebuilt announces the update")
+equal(#chatMessages, 4, "a file the schema reset rebuilt announces the update")
 
 now = clockAsFound
 
@@ -7388,8 +7390,8 @@ do
     local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
         definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
 
-    equal(#englishOrder, 251, "the default locale defines 251 keys")
-    equal(#frenchOrder, 251, "and the French block defines 251")
+    equal(#englishOrder, 252, "the default locale defines 252 keys")
+    equal(#frenchOrder, 252, "and the French block defines 252")
     equal(#englishDupes, 0,
         "no key is defined twice in the default locale ("
             .. table.concat(englishDupes, ", ") .. ")")

@@ -27,7 +27,8 @@ L["ADDON_LOADED_INACTIVE"] = "Inactive."
 -- One line per point, printed under the load line for a day after the first
 -- login that follows an update. Spelt out one by one on purpose: a line built
 -- from a number is a line no translator can find.
-L["CHANGELOG_1_1_0_MAIL"] = "New in 1.1.0: mail from filtered people can be deleted. Set it in /sanc."
+L["CHANGELOG_1_1_0_TITLE"] = "New in 1.1.0:"
+L["CHANGELOG_1_1_0_MAIL"] = "Mail from filtered people can be deleted."
 L["CHANGELOG_1_1_0_SAY_YELL"] = "The /say and /yell options have been merged."
 L["SANCTUARY_ENABLED"] = "Protection enabled."
 L["SANCTUARY_DISABLED"] = "Protection disabled."
@@ -336,7 +337,8 @@ if GetLocale() == "frFR" then
 -- General
 L["ADDON_LOADED_ACTIVE"] = "Actif. Tapez /sanc pour ouvrir."
 L["ADDON_LOADED_INACTIVE"] = "Inactif."
-L["CHANGELOG_1_1_0_MAIL"] = "Nouveau dans la 1.1.0 : le courrier des personnes filtr\195\169es peut \195\170tre supprim\195\169. R\195\169glage dans /sanc."
+L["CHANGELOG_1_1_0_TITLE"] = "Nouveau dans la 1.1.0 :"
+L["CHANGELOG_1_1_0_MAIL"] = "Le courrier des personnes filtr\195\169es peut \195\170tre supprim\195\169."
 L["CHANGELOG_1_1_0_SAY_YELL"] = "Les options /dire et /crier ont \195\169t\195\169 fusionn\195\169es."
 L["SANCTUARY_ENABLED"] = "Protection activ\195\169e."
 L["SANCTUARY_DISABLED"] = "Protection d\195\169sactiv\195\169e."
