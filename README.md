@@ -59,6 +59,8 @@ Mail from a filtered person is deleted when you open the mailbox, not before: th
 
 Sanctuary leaves your mail alone by default. If you choose to have it deleted, two settings appear: what it does with mail that has items or money in it, and the mail icon on the minimap.
 
+The mail icon next to the minimap goes by the sender names. Mail from an NPC can therefore hide it. When you open the mailbox, it is recognized and left alone.
+
 ## Your lists
 
 ![Always blocked](media/screenshots/en-blocked.png)

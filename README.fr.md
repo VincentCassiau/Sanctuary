@@ -60,6 +60,8 @@ Le courrier d'une personne filtrée est supprimé à l'ouverture de la boîte au
 
 Par défaut Sanctuary n'y touche pas. Si vous choisissez de le supprimer, deux réglages apparaissent : ce qu'il fait des courriers contenant des objets ou de l'argent, et l'icône de courrier sur la minicarte.
 
+L'icône de courrier près de la minicarte se fie aux noms des expéditeurs. Un courrier de PNJ peut donc la cacher. À l'ouverture de la boîte aux lettres, il est reconnu et laissé.
+
 ## Vos listes
 
 ![Toujours bloqués](media/screenshots/fr-blocked.png)
