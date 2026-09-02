@@ -18,6 +18,7 @@ Les interactions bloquées ne laissent aucune trace : pas de fenêtre, pas de me
 - les duels et les échanges
 - le /dire, le /crier et les émotes
 - le spam des canaux publics
+- le courrier des personnes filtrées, à l'ouverture de la boîte
 
 **Qui passe toujours :**
 - votre guilde
@@ -49,9 +50,17 @@ Le plus simple : installez Sanctuary depuis CurseForge, avec l'application ou de
 
 Cliquez sur l'icône de Sanctuary autour de la minicarte, ou tapez `/sanc` pour ouvrir la fenêtre.
 
-L'écran principal pose cinq questions : qui peut vous contacter, ce que Sanctuary doit bloquer, s'il faut masquer le spam des canaux publics, ce que Sanctuary vous dit dans le chat, et vos listes.
+L'écran principal pose six questions : qui peut vous contacter, ce que Sanctuary doit bloquer, ce qu'il fait du courrier, s'il faut masquer le spam des canaux publics, ce que Sanctuary vous dit dans le chat, et vos listes.
 
 Le filtrage renforcé en instance (expérimental) est une case à part. Quand WoW verrouille le chat (boss d'instance, clés mythiques, matchs JcJ), les add-ons ne peuvent plus lire les messages système. En activant cette option, tant que vous êtes en groupe ou en instance, Sanctuary masque tous les messages système, pas seulement les invitations. Ne l'activez que si des invitations indésirables vous parviennent encore en donjon, en raid ou en JcJ.
+
+## Le courrier
+
+Le courrier d'une personne filtrée est supprimé à l'ouverture de la boîte aux lettres, pas avant : le jeu l'a déjà livré. Pour empêcher l'envoi, utilisez l'Ignorer de Blizzard. Un courrier qui ne vient pas d'un joueur n'est jamais touché. Vos autres personnages comptent comme des inconnus : ajoutez-les à Toujours autorisés si vous vous envoyez du courrier.
+
+Par défaut Sanctuary n'y touche pas. Si vous choisissez de le supprimer, deux réglages apparaissent : ce qu'il fait des courriers contenant des objets ou de l'argent, et l'icône de courrier sur la minicarte.
+
+L'icône de courrier près de la minicarte se fie aux noms des expéditeurs. Un courrier de PNJ peut donc la cacher. À l'ouverture de la boîte aux lettres, il est reconnu et laissé.
 
 ## Vos listes
 

@@ -24,6 +24,13 @@ ns.L = L
 -- General
 L["ADDON_LOADED_ACTIVE"] = "Active. Type /sanc to open."
 L["ADDON_LOADED_INACTIVE"] = "Inactive."
+-- One line per point, printed under the load line for a day after the first
+-- login that follows an update. Spelt out one by one on purpose: a line built
+-- from a number is a line no translator can find.
+L["CHANGELOG_1_1_0_TITLE"] = "New in 1.1.0:"
+L["CHANGELOG_1_1_0_MAIL"] = "Mail from filtered people can be deleted."
+L["CHANGELOG_1_1_0_SAY_YELL"] = "The /say and /yell options have been merged."
+L["CHANGELOG_1_1_0_POLISH"] = "Interface improvements."
 L["SANCTUARY_ENABLED"] = "Protection enabled."
 L["SANCTUARY_DISABLED"] = "Protection disabled."
 L["LOG_CLEARED"] = "Journal cleared."
@@ -77,8 +84,7 @@ L["FILTER_GROUP_INVITE"] = "Block group invitations"
 -- folded line is a position nobody can keep right.
 L["FILTER_STRICT_GROUP_INVITE_SYSTEM"] = "Enhanced filtering in instances |cffff9933(experimental)|r"
 L["FILTER_WHISPER"] = "Block private messages (/w)"
-L["FILTER_SAY"] = "Block /say (/s)"
-L["FILTER_YELL"] = "Block /yell (/y)"
+L["FILTER_SAY_YELL"] = "Block /say and /yell"
 L["FILTER_EMOTE"] = "Block emote text"
 L["FILTER_DUEL"] = "Auto-decline duels"
 L["FILTER_TRADE"] = "Auto-close trades"
@@ -91,8 +97,7 @@ L["CHANNEL_ALL"] = "Filter everything, except my allowed names"
 -- Question 2 -- tooltips
 L["TIP_GROUP_INVITE"] = "Blocks and auto-declines group invitations from people who are not allowed.\nThe system message in chat is suppressed too.\n\nExample: a stranger invites you => nothing appears."
 L["TIP_WHISPER"] = "Blocks private messages from people who are not allowed.\n\nExample: a stranger sends you a PM => you do not see it."
-L["TIP_SAY"] = "Blocks /say messages from people who are not allowed.\n\nExample: a stranger speaks near you => their text does not appear."
-L["TIP_YELL"] = "Blocks /yell messages from people who are not allowed."
+L["TIP_SAY_YELL"] = "Blocks /say and /yell messages from people who are not allowed.\n\nExample: a stranger speaks near you => their text does not appear."
 L["TIP_EMOTE"] = "Hides emote text in chat from people who are not allowed.\nNote: this hides the text only, not the character animation.\n\nExample: a stranger does /dance => the line does not appear in chat, but you still see the animation."
 L["TIP_DUEL"] = "Auto-declines duel requests from people who are not allowed."
 L["TIP_TRADE"] = "Auto-closes the trade window with someone who is not allowed."
@@ -102,7 +107,27 @@ L["TIP_CHANNEL_KEYWORDS"] = "Blocks messages in channels when the sender's name 
 L["TIP_CHANNEL_ALL"] = "Blocks EVERY message in channels from people who are not allowed.\nWarning: this makes public channels silent."
 L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Experimental: enable it only if unwanted group invitations still reach you in a dungeon, raid, or PvP match.\n\nWhen WoW locks the chat down (instance boss fights, Mythic+ keys, PvP matches), add-ons can no longer read system messages. With this option on, while you are grouped or in an instance, Sanctuary hides EVERY system message, not only invitations: the game does not let it tell them apart."
 
--- Question 3 -- the anti-spam of the public channels
+-- Question 3 -- the mailbox
+L["MAIL_Q_TITLE"] = "And your mail?"
+L["MAIL_KEEP_TITLE"] = "Leave it"
+L["MAIL_KEEP_DESC"] = "Your mailbox stays exactly as it is."
+L["MAIL_DELETE_TITLE"] = "Delete it"
+L["MAIL_DELETE_DESC"] = "Mail from a filtered person is gone when you open the mailbox, unread."
+L["MAIL_ATTACH_LABEL"] = "If it has items or money in it"
+L["MAIL_ATTACH_KEEP"] = "Leave it"
+L["MAIL_ATTACH_RETURN"] = "Send it back"
+L["MAIL_ATTACH_DELETE"] = "Delete it too"
+L["MAIL_ICON_LABEL"] = "Mail icon on the minimap"
+L["MAIL_ICON_NORMAL"] = "Normal"
+L["MAIL_ICON_FILTERED"] = "Hidden when everything waiting is filtered"
+L["MAIL_ICON_NEVER"] = "Never"
+L["TIP_MAIL_ICON_FILTERED"] = "The mail icon next to the minimap goes by the sender names. Mail from an NPC can therefore look like mail to filter. When you open the mailbox, it is recognized as coming from an NPC and is not deleted."
+L["MAIL_NOTE"] = "Mail arrives before Sanctuary can do anything. It is deleted when you open the mailbox. Mail that did not come from a player is never touched."
+L["MAIL_DELETE_CONFIRM"] = "Deleting mail with items or money in it destroys what is inside. Nothing can be recovered. When the game does not allow it, the mail goes back to its sender."
+L["MAIL_DELETE_OK"] = "OK"
+L["MAIL_DELETE_CANCEL"] = "Cancel"
+
+-- Question 4 -- the anti-spam of the public channels
 L["ANTISPAM_Q_TITLE"] = "Should Sanctuary deal with spam in the public channels?"
 L["ANTISPAM_YES_TITLE"] = "Yes, hide the repeats"
 L["ANTISPAM_YES_DESC"] = "The same message from a stranger appears only once."
@@ -119,7 +144,7 @@ L["ANTISPAM_D_4H"] = "4 hours"
 L["ANTISPAM_D_12H"] = "12 hours"
 L["ANTISPAM_D_24H"] = "24 hours"
 
--- Question 4 -- what Sanctuary tells you
+-- Question 5 -- what Sanctuary tells you
 L["Q4_TITLE"] = "What does Sanctuary tell you in chat?"
 L["Q4_SILENT_TITLE"] = "Nothing"
 L["Q4_SILENT_DESC"] = "Complete silence. The Journal keeps the record."
@@ -128,7 +153,7 @@ L["Q4_MINIMAL_DESC"] = "Every 5 minutes, and only if something new was blocked."
 L["Q4_VERBOSE_TITLE"] = "Every block"
 L["Q4_VERBOSE_DESC"] = "One line as it happens."
 
--- Question 5 -- your lists
+-- Question 6 -- your lists
 L["Q5_TITLE"] = "Your lists"
 L["TILE_ALLOWED"] = "Always allowed"
 L["TILE_BLOCKED"] = "Always blocked"
@@ -229,6 +254,7 @@ L["LOG_TYPE_YELL"] = "Yell"
 L["LOG_TYPE_EMOTE"] = "Emote"
 L["LOG_TYPE_CHANNEL"] = "Channel"
 L["LOG_TYPE_GROUP"] = "Group"
+L["LOG_TYPE_MAIL"] = "Mail"
 
 -- Copy window and journal export
 L["EXPORT_INSTRUCTIONS"] = "Ctrl+A then Ctrl+C to copy"
@@ -282,7 +308,7 @@ L["DIAG_LEFT_ON_SCREEN"] = "This window could not be closed: it is still on scre
 L["DIAG_RESTORE_BTN"] = "Put the screen back (/reload)"
 L["DIAG_SIM_INVITE"] = "Simulate an invitation"
 L["DIAG_SIMULATE_SPAM"] = "Simulate channel spam"
-L["DIAG_TIP_SPAM"] = "Sends the same line three times through the real path, as a stranger would. Only the copies the filter did not hide appear in the chat; the Journal keeps one entry, in the channel category."
+L["DIAG_TIP_SPAM"] = "Sends the same line three times through the real path, as a stranger would. Only the copies the filter did not hide appear in the chat. The Journal keeps one entry, in the channel category."
 L["DIAG_SPAM_PROBE_MSG"] = "Sanctuary anti-spam test message"
 L["DIAG_SPAM_PROBE_LINE"] = "%s: %s"
 L["DIAG_SIM_BNET"] = "Simulate a Battle.net whisper"
@@ -295,11 +321,13 @@ L["DIAG_POPUP_INVITE"] = "Group invitation window"
 L["DIAG_POPUP_DUEL"] = "Duel window"
 L["DIAG_POPUP_GUILD"] = "Guild invitation window"
 L["DIAG_POPUP_LIST"] = "List the game windows"
+L["DIAG_MAIL_SCAN"] = "Scan the mailbox"
 L["DIAG_ARG_NAME"] = "name"
 L["DIAG_ARG_NAME_OR_INDEX"] = "name or no."
 L["DIAG_ARG_FILTER"] = "filter"
 L["DIAG_TIP_SOUND"] = "Turn the volume up: this one is checked by ear."
 L["DIAG_TIP_POPUP"] = "Watch the screen. Do not run while a real request is pending."
+L["DIAG_TIP_MAIL_SCAN"] = "Run this one with a mailbox open. It deletes nothing. It says what Sanctuary would do with each mail."
 
 -- ============================================================================
 -- French overrides (frFR)
@@ -310,6 +338,10 @@ if GetLocale() == "frFR" then
 -- General
 L["ADDON_LOADED_ACTIVE"] = "Actif. Tapez /sanc pour ouvrir."
 L["ADDON_LOADED_INACTIVE"] = "Inactif."
+L["CHANGELOG_1_1_0_TITLE"] = "Nouveau dans la 1.1.0 :"
+L["CHANGELOG_1_1_0_MAIL"] = "Le courrier des personnes filtr\195\169es peut \195\170tre supprim\195\169."
+L["CHANGELOG_1_1_0_SAY_YELL"] = "Les options /dire et /crier ont \195\169t\195\169 fusionn\195\169es."
+L["CHANGELOG_1_1_0_POLISH"] = "Am\195\169liorations de l'interface."
 L["SANCTUARY_ENABLED"] = "Protection activ\195\169e."
 L["SANCTUARY_DISABLED"] = "Protection d\195\169sactiv\195\169e."
 L["LOG_CLEARED"] = "Journal vid\195\169."
@@ -357,8 +389,7 @@ L["Q2_COVERED"] = "Rien \195\160 choisir ici : Vous avez d\195\169cid\195\169 de
 L["FILTER_GROUP_INVITE"] = "Bloquer les invitations de groupe"
 L["FILTER_STRICT_GROUP_INVITE_SYSTEM"] = "Filtrage renforc\195\169 en instance |cffff9933(exp\195\169rimental)|r"
 L["FILTER_WHISPER"] = "Bloquer les messages priv\195\169s (/w)"
-L["FILTER_SAY"] = "Bloquer le /dire (/s)"
-L["FILTER_YELL"] = "Bloquer le /crier (/y)"
+L["FILTER_SAY_YELL"] = "Bloquer le /dire et le /crier"
 L["FILTER_EMOTE"] = "Bloquer le texte des \195\169motes"
 L["FILTER_DUEL"] = "Refuser automatiquement les duels"
 L["FILTER_TRADE"] = "Fermer automatiquement les \195\169changes"
@@ -371,8 +402,7 @@ L["CHANNEL_ALL"] = "Tout filtrer, sauf mes autoris\195\169s"
 -- Question 2 -- tooltips
 L["TIP_GROUP_INVITE"] = "Bloque et refuse les invitations de groupe des joueurs non autoris\195\169s.\nLe message syst\195\168me dans le chat est aussi supprim\195\169.\n\nExemple : un inconnu vous invite => rien ne s'affiche."
 L["TIP_WHISPER"] = "Bloque les messages priv\195\169s des joueurs non autoris\195\169s.\n\nExemple : un inconnu vous envoie un MP => vous ne le voyez pas."
-L["TIP_SAY"] = "Bloque les messages /dire des joueurs non autoris\195\169s.\n\nExemple : un inconnu parle pr\195\168s de vous => son texte n'appara\195\174t pas."
-L["TIP_YELL"] = "Bloque les messages /crier des joueurs non autoris\195\169s."
+L["TIP_SAY_YELL"] = "Bloque les messages /dire et /crier des joueurs non autoris\195\169s.\n\nExemple : un inconnu parle pr\195\168s de vous => son texte n'appara\195\174t pas."
 L["TIP_EMOTE"] = "Masque le texte des \195\169motes dans le chat pour les joueurs non autoris\195\169s.\nAttention : cela masque le texte, pas l'animation du personnage.\n\nExemple : un inconnu fait /danser => la ligne n'appara\195\174t pas dans le chat, mais vous verrez toujours l'animation."
 L["TIP_DUEL"] = "Refuse automatiquement les demandes de duel des joueurs non autoris\195\169s."
 L["TIP_TRADE"] = "Ferme automatiquement la fen\195\170tre d'\195\169change avec un joueur non autoris\195\169."
@@ -382,7 +412,27 @@ L["TIP_CHANNEL_KEYWORDS"] = "Bloque les messages dans les canaux si le pseudo de
 L["TIP_CHANNEL_ALL"] = "Bloque TOUS les messages dans les canaux des joueurs non autoris\195\169s.\nAttention : cela rend les canaux publics silencieux."
 L["TIP_STRICT_GROUP_INVITE_SYSTEM"] = "Exp\195\169rimental : \195\160 activer seulement si des invitations de groupe ind\195\169sirables vous parviennent encore en donjon, en raid ou en match JcJ.\n\nQuand WoW verrouille le chat (combats de boss d'instance, cl\195\169s mythiques, matchs JcJ), les add-ons ne peuvent plus lire les messages syst\195\168me. En activant cette option, tant que vous \195\170tes en groupe ou en instance, Sanctuary masque TOUS les messages syst\195\168me, pas seulement les invitations : le jeu ne permet pas de les distinguer."
 
--- Question 3 -- the anti-spam of the public channels
+-- Question 3 -- the mailbox
+L["MAIL_Q_TITLE"] = "Et le courrier ?"
+L["MAIL_KEEP_TITLE"] = "Le laisser"
+L["MAIL_KEEP_DESC"] = "Votre bo\195\174te aux lettres reste telle quelle."
+L["MAIL_DELETE_TITLE"] = "Le supprimer"
+L["MAIL_DELETE_DESC"] = "Le courrier d'une personne filtr\195\169e dispara\195\174t \195\160 l'ouverture de la bo\195\174te, sans \195\170tre lu."
+L["MAIL_ATTACH_LABEL"] = "S'il contient des objets ou de l'argent"
+L["MAIL_ATTACH_KEEP"] = "Le laisser"
+L["MAIL_ATTACH_RETURN"] = "Le renvoyer"
+L["MAIL_ATTACH_DELETE"] = "Le supprimer aussi"
+L["MAIL_ICON_LABEL"] = "Ic\195\180ne de courrier sur la minicarte"
+L["MAIL_ICON_NORMAL"] = "Normale"
+L["MAIL_ICON_FILTERED"] = "Masqu\195\169e si tout ce qui attend est filtr\195\169"
+L["MAIL_ICON_NEVER"] = "Jamais"
+L["TIP_MAIL_ICON_FILTERED"] = "L'ic\195\180ne de courrier pr\195\168s de la minicarte se fie aux noms des exp\195\169diteurs. Un courrier de PNJ peut donc passer pour un courrier \195\160 filtrer. \195\128 l'ouverture de la bo\195\174te aux lettres, il sera reconnu comme venant d'un PNJ et ne sera pas supprim\195\169."
+L["MAIL_NOTE"] = "Le courrier arrive avant que Sanctuary puisse agir. Il est supprim\195\169 \195\160 l'ouverture de la bo\195\174te aux lettres. Un courrier qui ne vient pas d'un joueur n'est jamais touch\195\169."
+L["MAIL_DELETE_CONFIRM"] = "Supprimer aussi les courriers avec objets ou argent d\195\169truit leur contenu. Rien ne pourra \195\170tre r\195\169cup\195\169r\195\169. Quand le jeu l'interdit, le courrier repart chez son exp\195\169diteur."
+L["MAIL_DELETE_OK"] = "OK"
+L["MAIL_DELETE_CANCEL"] = "Annuler"
+
+-- Question 4 -- the anti-spam of the public channels
 L["ANTISPAM_Q_TITLE"] = "Sanctuary doit-il s'occuper du spam des canaux publics ?"
 L["ANTISPAM_YES_TITLE"] = "Oui, masquer les r\195\169p\195\169titions"
 L["ANTISPAM_YES_DESC"] = "Un m\195\170me message d'un inconnu n'appara\195\174t qu'une fois."
@@ -399,7 +449,7 @@ L["ANTISPAM_D_4H"] = "4 heures"
 L["ANTISPAM_D_12H"] = "12 heures"
 L["ANTISPAM_D_24H"] = "24 heures"
 
--- Question 4 -- what Sanctuary tells you
+-- Question 5 -- what Sanctuary tells you
 L["Q4_TITLE"] = "Que vous dit Sanctuary dans le chat ?"
 L["Q4_SILENT_TITLE"] = "Rien"
 L["Q4_SILENT_DESC"] = "Silence total. Le Journal garde la trace."
@@ -408,7 +458,7 @@ L["Q4_MINIMAL_DESC"] = "Toutes les 5 minutes, seulement s'il y a eu de nouveaux 
 L["Q4_VERBOSE_TITLE"] = "Chaque blocage"
 L["Q4_VERBOSE_DESC"] = "Une ligne au moment o\195\185 il a lieu."
 
--- Question 5 -- your lists
+-- Question 6 -- your lists
 L["Q5_TITLE"] = "Vos listes"
 L["TILE_ALLOWED"] = "Toujours autoris\195\169s"
 L["TILE_BLOCKED"] = "Toujours bloqu\195\169s"
@@ -503,6 +553,7 @@ L["LOG_TYPE_YELL"] = "Crier"
 L["LOG_TYPE_EMOTE"] = "\195\137mote"
 L["LOG_TYPE_CHANNEL"] = "Canal"
 L["LOG_TYPE_GROUP"] = "Groupe"
+L["LOG_TYPE_MAIL"] = "Courrier"
 
 -- Copy window and journal export
 L["EXPORT_INSTRUCTIONS"] = "Ctrl+A puis Ctrl+C pour copier"
@@ -556,7 +607,7 @@ L["DIAG_LEFT_ON_SCREEN"] = "Cette fen\195\170tre n'a pas pu \195\170tre referm\1
 L["DIAG_RESTORE_BTN"] = "Remettre l'\195\169cran \195\160 plat (/reload)"
 L["DIAG_SIM_INVITE"] = "Simuler une invitation"
 L["DIAG_SIMULATE_SPAM"] = "Simuler du spam de canal"
-L["DIAG_TIP_SPAM"] = "Envoie trois fois la m\195\170me ligne par le vrai chemin, comme le ferait un inconnu. Seules les copies que le filtre n'a pas masqu\195\169es s'affichent dans le chat ; le Journal garde une entr\195\169e dans la cat\195\169gorie canal."
+L["DIAG_TIP_SPAM"] = "Envoie trois fois la m\195\170me ligne par le vrai chemin, comme le ferait un inconnu. Seules les copies que le filtre n'a pas masqu\195\169es s'affichent dans le chat. Le Journal garde une entr\195\169e dans la cat\195\169gorie canal."
 L["DIAG_SPAM_PROBE_MSG"] = "Message de test de l'anti-spam Sanctuary"
 L["DIAG_SPAM_PROBE_LINE"] = "%s : %s"
 L["DIAG_SIM_BNET"] = "Simuler un chuchotement Battle.net"
@@ -569,10 +620,12 @@ L["DIAG_POPUP_INVITE"] = "Fen\195\170tre d'invitation de groupe"
 L["DIAG_POPUP_DUEL"] = "Fen\195\170tre de duel"
 L["DIAG_POPUP_GUILD"] = "Fen\195\170tre d'invitation de guilde"
 L["DIAG_POPUP_LIST"] = "Lister les fen\195\170tres du jeu"
+L["DIAG_MAIL_SCAN"] = "Analyser la bo\195\174te aux lettres"
 L["DIAG_ARG_NAME"] = "nom"
 L["DIAG_ARG_NAME_OR_INDEX"] = "pseudo ou n\194\176"
 L["DIAG_ARG_FILTER"] = "filtre"
 L["DIAG_TIP_SOUND"] = "Montez le volume : cette v\195\169rification se fait \195\160 l'oreille."
 L["DIAG_TIP_POPUP"] = "Regardez l'\195\169cran. \195\128 ne pas lancer si une vraie demande est en attente."
+L["DIAG_TIP_MAIL_SCAN"] = "\195\128 lancer devant une bo\195\174te aux lettres ouverte. Ne supprime rien. Dit ce que Sanctuary ferait de chaque courrier."
 
 end -- frFR

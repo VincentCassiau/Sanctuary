@@ -1,7 +1,7 @@
 -- ============================================================================
 -- Sanctuary — WoW Anti-Harassment Addon
 -- Two modes: only the people you know, or everyone except the ones you block.
--- Version: 1.0.0 | Interface: 120100, 120007 (Midnight)
+-- Version: 1.1.0 | Build: 20260902-1 | Interface: 120100, 120007 (Midnight)
 -- ============================================================================
 
 -- ============================================================================
@@ -10,7 +10,7 @@
 
 local ADDON_NAME, ns = ...
 local L = ns.L
-local VERSION = "1.0.0"
+local VERSION = "1.1.0"
 
 -- Build identity. This is NOT a release version and must never be presented as
 -- one: it only makes a user-provided debug report attributable to the exact
@@ -19,7 +19,7 @@ local VERSION = "1.0.0"
 -- and nothing else: it is printed verbatim in every report, and a report can be
 -- handed to a third party, so the identifier must not leak what is being
 -- investigated or which internal item it belongs to.
-local BUILD_ID = "20260820-8"
+local BUILD_ID = "20260902-1"
 
 local PREFIX = "|cFF66CCFF[Sanctuary]|r "
 local COLOR_ON = "|cFF00FF00"
@@ -72,7 +72,24 @@ local ACCOUNT_DEFAULTS = {
         strictGroupInviteSystemMessages = false,
     },
 
-    -- Question 3 of the home screen, and a block of its own rather than a line
+    -- What the load line has already announced. Empty on purpose, and it must
+    -- stay empty: a `version` written here would be filled into every existing
+    -- file by fillMissingDefaults, and the one update that has to announce
+    -- itself -- the first load of a new build over an old file -- never would.
+    changelog = {},
+
+    -- Question 3 of the home screen. Off by default, and that is a product
+    -- decision rather than an oversight. Deleting
+    -- somebody's mail is the one thing this add-on does that cannot be undone,
+    -- so it is opted into and never out of, and the two sub-answers only matter
+    -- once it has been.
+    mail = {
+        mode        = "keep",    -- "keep" | "delete"
+        attachments = "keep",    -- "keep" | "return" | "delete"
+        minimapIcon = "normal",  -- "normal" | "hideIfFiltered" | "never"
+    },
+
+    -- Question 4 of the home screen, and a block of its own rather than a line
     -- of `filters`: it decides nothing about who is filtered. It only asks
     -- whether a repeat of a message that was going to show anyway is worth
     -- showing again. Off by default -- it hides something the person would
@@ -934,6 +951,53 @@ end
 function ns.isChannelSpamCovered()
     return (isEnabled() and isFilterOn("channelMode") == "all") and true or false
 end
+
+end
+
+-- ----------------------------------------------------------------------------
+-- The mail setting, and its two sub-answers
+-- ----------------------------------------------------------------------------
+
+-- Scoped like the block above it and for the same reason: this file runs close
+-- to Lua's ceiling of 200 live registers in a chunk, so what the rest of the
+-- add-on needs leaves through `ns`.
+--
+-- Three answers, each read through one function that accepts nothing outside its
+-- own list. A settings file edited by hand, or written by a build that offered
+-- another value, answers the default rather than a state the interface has no
+-- card for -- and the default of all three is "change nothing".
+do
+
+local MAIL_MODES = { keep = true, delete = true }
+local MAIL_ATTACHMENTS = { keep = true, ["return"] = true, delete = true }
+local MAIL_ICONS = { normal = true, hideIfFiltered = true, never = true }
+
+local function readMail(field, allowed, fallback)
+    local stored = SanctuaryDB and SanctuaryDB.mail
+    local value = type(stored) == "table" and stored[field] or nil
+    if allowed[value] then return value end
+    return fallback
+end
+
+local function writeMail(field, allowed, value)
+    local stored = SanctuaryDB and SanctuaryDB.mail
+    if type(stored) ~= "table" or not allowed[value] then return end
+    stored[field] = value
+    -- The minimap icon is drawn from all three answers at once, so it is put
+    -- back on the spot here rather than from the one interface dot that happened
+    -- to carry the call. Saying "leave my mail alone" and keeping a hidden icon
+    -- until the next letter arrives is the state this closes. `refreshMailIcon`
+    -- replays the game's own handler and never shows the icon by hand.
+    if ns.refreshMailIcon then ns.refreshMailIcon() end
+end
+
+function ns.getMailMode() return readMail("mode", MAIL_MODES, "keep") end
+function ns.getMailAttachments() return readMail("attachments", MAIL_ATTACHMENTS, "keep") end
+function ns.getMailIcon() return readMail("minimapIcon", MAIL_ICONS, "normal") end
+
+function ns.setMailMode(value) writeMail("mode", MAIL_MODES, value) end
+function ns.setMailAttachments(value) writeMail("attachments", MAIL_ATTACHMENTS, value) end
+function ns.setMailIcon(value) writeMail("minimapIcon", MAIL_ICONS, value) end
 
 end
 
@@ -1931,6 +1995,8 @@ end
 --   * `group` -- never open. Group, raid and instance chat is filtered for the
 --     always-blocked list and nothing else, whatever is ticked.
 --   * `channel` -- the three-mode setting, open at "all" alone.
+--   * `mail` -- the scope alone. Its own answer, question 3 of the home screen,
+--     was already read before this: see `decideMail`.
 --   * everything else -- the checkbox for that kind, popup names mapped first.
 local function decideInteraction(kind, name)
     local gateOpen
@@ -1938,6 +2004,8 @@ local function decideInteraction(kind, name)
         gateOpen = false
     elseif kind == "channel" then
         gateOpen = isFilterOn("channelMode") == "all"
+    elseif kind == "mail" then
+        gateOpen = getScope() ~= "blockedOnly"
     else
         gateOpen = isFilterOn(FILTER_KEY_BY_POPUP[kind] or kind) == true
     end
@@ -1989,6 +2057,28 @@ local function decideChat(kind, sender)
     -- later -- and Sanctuary may never touch what the player says to themselves.
     if ns.isSelf(sender) then return false, "self", nil, false end
     return decideInteraction(kind, sender)
+end
+
+-- One mail, judged like any other interaction, behind one extra door.
+--
+-- The mode is read ABOVE `decideInteraction`, and it has to be: in there the
+-- always-blocked list comes BEFORE the gate, so a shut gate would still have a
+-- blocked person's mail deleted in a mailbox its owner had asked to be left
+-- alone. "Leave it" means nothing is
+-- decided at all, not even for a name on the blocked list.
+--
+-- Whether the mail comes from a player is NOT asked here: it is asked first, on
+-- the mail itself, before this function ever sees a name. An auction house whose
+-- name happens to carry a blocked pattern must never reach the blocked list.
+--
+-- Published rather than kept as a chunk local: this file runs at 186 of Lua's
+-- 200 live registers and every slot left is spoken for.
+function ns.decideMail(sender)
+    if not isEnabled() then return false, "disabled", nil, false end
+    if ns.getMailMode() ~= "delete" then return false, "filter_off", nil, false end
+    -- Your own mail, from your own character, is yours.
+    if ns.isSelf(sender) then return false, "self", nil, false end
+    return decideInteraction("mail", sender)
 end
 
 -- Battle.net whispers use account display names, not character names.
@@ -2556,6 +2646,7 @@ local LOG_TYPE_KEYS = {
     trade       = "LOG_TYPE_TRADE",
     guildInvite = "LOG_TYPE_GUILD",
     channel     = "LOG_TYPE_CHANNEL",
+    mail        = "LOG_TYPE_MAIL",
     group       = "LOG_TYPE_GROUP",
 }
 
@@ -3050,6 +3141,19 @@ end
 -- hid pays neither -- it was never a block, only a copy of one that had already
 -- been shown -- and those two omissions are the whole of "no visible or audible
 -- trace" for it.
+-- The word the chat line uses for a block: the Journal's own label for the type,
+-- lower-cased, never the identifier the code goes by. "whisper", "groupInvite"
+-- and "mail" were printed as such since 1.0.0. `%u` is ASCII, so the two accented capitals a French
+-- label can open on are folded by hand.
+local ACCENTED_LOWER = { ["\195\137"] = "\195\169", ["\195\128"] = "\195\160" }
+local function blockTypeLabel(blockType)
+    local label = ns.getLogEntryDisplayType and ns.getLogEntryDisplayType({ type = blockType })
+    if type(label) ~= "string" or label == "" then label = tostring(blockType) end
+    label = label:gsub("^%u", string.lower)
+    label = label:gsub("^(\195[\137\128])", ACCENTED_LOWER)
+    return label
+end
+
 local function accountForBlock(blockType, sourceText, maskedRepeat)
     if maskedRepeat then return end
     if SanctuaryCharDB then
@@ -3060,7 +3164,7 @@ local function accountForBlock(blockType, sourceText, maskedRepeat)
     end
     if SanctuaryDB.notifications.mode == "verbose" then
         printMsg(string.format(L["BLOCKED_VERBOSE"],
-            COLOR_HIGHLIGHT .. blockType .. COLOR_RESET,
+            COLOR_HIGHLIGHT .. blockTypeLabel(blockType) .. COLOR_RESET,
             COLOR_HIGHLIGHT .. (sourceText or "?") .. COLOR_RESET))
     end
 end
@@ -3167,6 +3271,16 @@ logBlock = function(blockType, sourceName, message, guid, keyword, options)
     if n and r then
         cleanName = n
         sourceRealm = r
+    end
+    -- A sender of the player's own realm is handed over bare -- a mail, a
+    -- whisper from the same realm -- and the entry then records the realm it
+    -- was written on, as every other entry does: a bare "Toto" next to
+    -- "Titi-Realm" in the Journal told the reader less than the add-on knew.
+    -- A character name only: an account name carries a
+    -- space or a "#" and has no realm to be given, a redacted one is not a name.
+    if sourceRealm == "" and sourceText and charRealm and charRealm ~= ""
+        and not sourceText:find("[%s#<]") and normalizeCharacterKey(sourceText) then
+        sourceRealm = charRealm
     end
 
     -- The first arrival dates the entry. For a hidden repeat that is the copy
@@ -3484,6 +3598,11 @@ captureDebugSnapshot = function(trigger)
         filters = getEffectiveFilterState(),
         antiSpam = ns.isAntiSpamEnabled(),
         antiSpamInterval = ns.getAntiSpamInterval(),
+        mail = {
+            mode = ns.getMailMode(),
+            attachments = ns.getMailAttachments(),
+            icon = ns.getMailIcon(),
+        },
         channelSpamCovered = ns.isChannelSpamCovered(),
         groupInviteFilter = isFilterOn("groupInvite") == true,
         partyInviteOriginalSound = tostring(capturePartyInviteOriginalSound() or "nil"),
@@ -5607,6 +5726,9 @@ function ns.setEnabled(enabled)
     local newState = isEnabled()
     debugLog("TOGGLE", { enabled = newState })
     refreshInviteSoundMuteState()
+    -- The minimap icon reads this switch too: at OFF it is the game's again,
+    -- straight away, like every other window Sanctuary was holding down.
+    if ns.refreshMailIcon then ns.refreshMailIcon() end
 
     if newState then
         printSuccess(L["SANCTUARY_ENABLED"])
@@ -6110,6 +6232,403 @@ function handlers.CHAT_MSG_BN_WHISPER(msg, sender, ...)
     -- handed over, not on the account name we resolved from it.
     logBlock("whisper", info.accountName, msg, nil, keywordOf(reason, nil))
     closeBlockedWhisperTabs(sender, true)
+end
+
+-- ============================================================================
+-- SECTION H2: The mailbox
+-- ============================================================================
+
+-- Mail is the one thing here that arrives whether Sanctuary likes it or not:
+-- the game has already delivered it when the person opens the box, so what this
+-- section can do is empty the box, not guard the door. It runs only where the
+-- person asked for it (question 3), and only on mail that came from a player.
+--
+-- Scoped block, like every other section of this file: what the rest of the
+-- add-on needs leaves through `ns`, and no chunk local is added.
+do
+
+-- Blizzard's inbox draws seven rows a page.
+local PAGE_ROWS = 7
+
+-- What the last pass ordered, how full the box was when it did, which mail has
+-- been set aside for this opening, and whether the hook is in place.
+local mail = { skipped = {}, sentTo = nil, sentAt = nil, lastReport = nil,
+    hooked = false, iconHooked = false }
+
+-- A mail is named by what it IS, never by its index: the indexes are renumbered
+-- at every MAIL_INBOX_UPDATE, so an index kept from the last pass points at
+-- somebody else's letter by the time it is read again.
+local function identityOf(sender, subject, money, itemCount, codAmount)
+    return table.concat({ tostring(sender), tostring(subject),
+        tostring(money), tostring(itemCount), tostring(codAmount) }, "|")
+end
+
+-- A row of the page, emptied the way Blizzard empties an unused one -- same four
+-- gestures, in the same order. It is only ever a stopgap: the row comes back on
+-- the next redraw, and stays gone once the server has answered.
+local function clearRow(row)
+    if row < 1 or row > PAGE_ROWS then return end
+    local button = _G["MailItem" .. row .. "Button"]
+    if button and button.Hide then button:Hide() end
+    local sender = _G["MailItem" .. row .. "Sender"]
+    if sender and sender.SetText then sender:SetText("") end
+    local subject = _G["MailItem" .. row .. "Subject"]
+    if subject and subject.SetText then subject:SetText("") end
+    local expire = _G["MailItem" .. row .. "ExpireTime"]
+    if expire and expire.Hide then expire:Hide() end
+end
+
+-- The one thing a bare name can say on its own: does it look like a character,
+-- or like the game writing to you? A character name is a single word, with a
+-- realm behind a dash at most -- "Hotel des ventes", "The Postmaster" and every
+-- quest giver carry a space in front of that dash, and a player cannot.
+--
+-- Both paths go through here, and it earns its place on both: an auction house
+-- whose name happens to carry a blocked pattern used to take the icon off the
+-- screen while the mailbox itself was left alone. It answers on shape alone, so
+-- it cannot promise more than shape: a one-word NPC name reads as a player
+-- here, and only `classifyInboxMail` -- which has the header, and `canReply`
+-- with it -- can tell the difference. `ns.isSelf` and `ns.decideMail` are read
+-- on both paths too, so a letter you sent yourself is left alone on either
+-- side. None of that makes the two agree: the scan reads the header and stops
+-- on a Game Master, a crafting order, a letter returned to you or a `canReply`
+-- the game says no to, while `GetLatestThreeSenders` hands the icon three
+-- strings and no header at all. So the icon can still go for a letter the
+-- mailbox will never touch. That is a trade taken knowingly (decision
+-- 19), and the tooltip on that answer is where it is said out loud.
+local function isPlayerSenderName(sender)
+    if splitCharacterName(sender) == nil then return false end
+    local clean = stripWoWFormatting(sender)
+    if not clean then return false end
+    clean = clean:gsub("^[%s%-]+", ""):gsub("[%s%-]+$", "")
+    return clean:match("^[^%-]*"):match("%s") == nil
+end
+
+-- Is this a letter from a player? Asked FIRST, before any name reaches any
+-- list. The auction house is far from the only non-player sender: an auction
+-- house whose name happens to carry a blocked
+-- pattern must never be touched, and neither must a quest reward, a crafting
+-- order, a Game Master, or a letter you sent yourself.
+--
+-- `canReply` is the game's OWN answer to "is the sender a player": Blizzard
+-- greys its Reply button on `not sender or not canReply or sender is you`.
+-- Nothing here deduces it from the shape of a name.
+function ns.classifyInboxMail(index)
+    local _, _, sender, subject, money, codAmount, _, itemCount,
+        _, wasReturned, _, canReply, isGM = GetInboxHeaderInfo(index)
+    local info = {
+        index = index,
+        sender = sender,
+        subject = subject,
+        money = tonumber(money) or 0,
+        codAmount = tonumber(codAmount) or 0,
+        itemCount = tonumber(itemCount) or 0,
+    }
+    info.identity = identityOf(sender, subject, info.money, info.itemCount, info.codAmount)
+
+    if isGM then info.class = "gm" return info end
+    -- A crafting order is the game writing to you about a work order. Under
+    -- pcall and behind a type test: the API is not on every client this add-on
+    -- loads on, and a missing one must read as "not a crafting order" rather
+    -- than take the mailbox down.
+    --
+    -- The live client answers a table for EVERY mail, `recipeName = ""` and
+    -- `reason = 0` on an ordinary letter (seen on 12.0): `nil` is
+    -- what the documentation allows, not what the game does. Tested on `~= nil`,
+    -- every letter in the box read as a crafting order and nothing was ever
+    -- filtered. A crafting order names its recipe; nothing else does.
+    local craftingOrder = C_Mail and C_Mail.GetCraftingOrderMailInfo
+    if type(craftingOrder) == "function" then
+        local ok, order = pcall(craftingOrder, index)
+        if ok and type(order) == "table" and type(order.recipeName) == "string"
+            and order.recipeName ~= "" then
+            info.class = "craftingOrder" return info
+        end
+    end
+    if not sender or sender == "" or not canReply then info.class = "system" return info end
+    -- Returned to you, or sent by you: your own things, coming home.
+    if wasReturned or ns.isSelf(sender) then info.class = "own" return info end
+    if not isPlayerSenderName(sender) then info.class = "unnamed" return info end
+
+    info.fromPlayer = true
+    if info.codAmount > 0 then info.class = "cod"
+    elseif info.money > 0 or info.itemCount > 0 then info.class = "attachments"
+    else info.class = "text" end
+    return info
+end
+
+-- What Sanctuary would do with one mail, decided and nothing more: no command is
+-- sent from here. The scan and the diagnostic both read this, so what a report
+-- says Sanctuary would do is what Sanctuary does.
+function ns.planInboxMail(index)
+    local info = ns.classifyInboxMail(index)
+    info.action = "none"
+    if not info.fromPlayer then
+        info.reason = "not_a_player"
+        return info
+    end
+
+    local block, reason, detail = ns.decideMail(info.sender)
+    info.block, info.reason, info.detail = block, reason, detail
+    if not block then return info end
+
+    if info.class == "text" then
+        info.action = "delete"
+        return info
+    end
+
+    -- Money or an item in it. What happens to those is the person's own answer,
+    -- and the default is that nothing happens: the mail stays where it is,
+    -- visible, and nothing is written down -- nothing was blocked.
+    local attachments = ns.getMailAttachments()
+    if attachments == "keep" then
+        info.reason = "attachments_kept"
+        return info
+    end
+    if attachments == "return" then
+        info.action = "return"
+        return info
+    end
+
+    -- "Le supprimer aussi", and the game has the last word on whether that is
+    -- even possible. `InboxItemCanDelete` is exactly what Blizzard's own button
+    -- reads to choose between deleting and returning, down to its label. It is a
+    -- C API whose rule is written nowhere: it is asked, never worked out.
+    if type(InboxItemCanDelete) == "function" and InboxItemCanDelete(index) then
+        info.action = "delete"
+    else
+        info.action = "return"
+    end
+    return info
+end
+
+-- One pass over the open mailbox. Idempotent: Blizzard calls `InboxFrame_Update`
+-- again every time the pointer moves over a row.
+function ns.mailScanInbox()
+    if not SanctuaryDB or not isEnabled() then return end
+    if ns.getMailMode() ~= "delete" then return end
+    if not (MailFrame and MailFrame.IsShown and MailFrame:IsShown()) then return end
+    if type(GetInboxNumItems) ~= "function" then return end
+
+    local total = GetInboxNumItems() or 0
+    local pending = (C_Mail and C_Mail.IsCommandPending and C_Mail.IsCommandPending())
+        and true or false
+
+    -- Two strikes and the mail is left alone. A command that left the box
+    -- exactly as full as it was is a command the server did not carry out, and
+    -- reissuing it on every redraw would be a loop with no way out. Set aside by
+    -- identity, for as long as the box stays open, and MAIL_CLOSED forgets it.
+    --
+    -- Counted only where the command has LANDED. Blizzard redraws the list while
+    -- one is still in flight -- the pointer crossing a row is enough -- and the
+    -- box is of course still as full then. Counting there set the letter aside
+    -- while it was on its way out, so the pass stopped emptying its row and the
+    -- sender and the subject came back on screen: a visible trace of something
+    -- Sanctuary was in the middle of blocking.
+    if not pending then
+        if mail.sentTo and mail.sentAt and total >= mail.sentAt then
+            mail.skipped[mail.sentTo] = true
+            debugLog("MAIL", { action = "SET_ASIDE", count = total })
+        end
+        mail.sentTo, mail.sentAt = nil, nil
+    end
+
+    local page = (InboxFrame and tonumber(InboxFrame.pageNum)) or 1
+    local first, acting, kept = nil, 0, 0
+    for index = 1, total do
+        local info = ns.planInboxMail(index)
+        if info.reason == "attachments_kept" then kept = kept + 1 end
+        if (info.action == "delete" or info.action == "return")
+            and not mail.skipped[info.identity] then
+            acting = acting + 1
+            -- Every row that is going, not just the one being ordered: a letter
+            -- the person can still read is a letter Sanctuary has not blocked
+            -- yet. A mail set aside is deliberately left on screen -- hiding a
+            -- letter that is staying would be a lie.
+            clearRow(index - (page - 1) * PAGE_ROWS)
+            first = first or info
+        end
+    end
+
+    -- What the pass saw, once. Blizzard redraws the list every time the pointer
+    -- crosses a row, so an entry a pass would answer the same question dozens of
+    -- times over -- and a debug log nobody can read through answers nothing.
+    -- `kept` is the one thing no other record carries: a letter with something in
+    -- it, left where it is, blocks nothing and writes nothing to the Journal.
+    local report = total .. "/" .. acting .. "/" .. kept
+    if report ~= mail.lastReport then
+        mail.lastReport = report
+        debugLog("MAIL", { action = "SCAN", mails = total, acting = acting, kept = kept })
+    end
+
+    if not first then return end
+    -- One command per pass, and only when the last one has landed. The client
+    -- takes them one at a time; the answer fires MAIL_INBOX_UPDATE, this hook
+    -- runs again, and the next letter goes.
+    if pending then
+        debugLog("MAIL", { action = "WAIT", index = first.index })
+        return
+    end
+
+    -- Journalled at the moment the command is sent, not at the moment the row is
+    -- emptied: a row is emptied on every pass, and a block happened once.
+    -- Decision 10 -- a mail is a message -- so the subject travels as the text,
+    -- and the "show what was blocked" setting governs it like any other.
+    --
+    -- The anti-spam is deliberately not consulted: it decides whether a repeat
+    -- of a line that was going to show ANYWAY is worth showing again, and a
+    -- deleted mail is never shown at all.
+    logBlock("mail", first.sender, first.subject, nil, keywordOf(first.reason, first.detail))
+
+    mail.sentTo, mail.sentAt = first.identity, total
+    if first.action == "delete" then
+        DeleteInboxItem(first.index)
+    else
+        ReturnInboxItem(first.index)
+    end
+    debugLog("MAIL", {
+        action = first.action == "delete" and "DELETE" or "RETURN",
+        index = first.index,
+        class = first.class,
+        reason = first.reason,
+        count = total,
+    })
+end
+
+-- The box is shut: everything set aside during this opening is forgotten, and
+-- the next opening starts clean.
+function ns.resetMailScan()
+    wipe(mail.skipped)
+    mail.sentTo, mail.sentAt, mail.lastReport = nil, nil, nil
+end
+
+-- A post-hook on Blizzard's own redraw, never a MAIL_INBOX_UPDATE handler of our
+-- own: ours could run first, and Blizzard would then redraw the row of a letter
+-- that is on its way out -- which would sit on screen until the server answered.
+--
+-- Posted once. `Blizzard_MailFrame` is not load-on-demand (its manifest declares
+-- DefaultState: enabled), so the function is there at load; the second call site
+-- is a belt, not a braces.
+function ns.installMailScan()
+    if mail.hooked then return true end
+    if type(hooksecurefunc) ~= "function" then return false end
+    if type(_G.InboxFrame_Update) ~= "function" then return false end
+    mail.hooked = true
+    hooksecurefunc("InboxFrame_Update", ns.mailScanInbox)
+    debugLog("MAIL", { action = "HOOK_INSTALLED" })
+    return true
+end
+
+-- The mail icon on the minimap. It carries no global name: it is
+-- `MinimapCluster.IndicatorFrame.MailFrame`, and Blizzard shows it from that
+-- frame's own OnEvent. So the guard is a post-hook on that script -- the icon is
+-- hidden AFTER Blizzard has shown it, inside the same pass, which is what keeps
+-- it off the screen instead of making it flash.
+local function mailIndicator()
+    local indicator = MinimapCluster and MinimapCluster.IndicatorFrame
+    return indicator and indicator.MailFrame or nil
+end
+
+-- Nothing is unregistered and nothing is re-anchored: Edit Mode and the minimap
+-- add-ons own where that frame sits. This only ever hides, or leaves alone.
+local function applyMailIcon(frame)
+    local mode = ns.getMailIcon()
+    local hasMail = type(HasNewMail) == "function" and HasNewMail() and true or false
+    local senders, filtered, hide = 0, 0, false
+
+    if isEnabled() and ns.getMailMode() == "delete" and hasMail and mode ~= "normal" then
+        if mode == "never" then
+            hide = true
+        elseif type(GetLatestThreeSenders) == "function" then
+            local names = { GetLatestThreeSenders() }
+            senders = #names
+            for _, name in ipairs(names) do
+                -- The scan's own gate first, on everything a bare name allows:
+                -- a name that does not look like a character's is never
+                -- filtered, so an auction house or a letter from yourself
+                -- leaves the icon where the game drew it. A one-word NPC name
+                -- looks like one, and here there is no header to say otherwise.
+                if isPlayerSenderName(name) and not ns.isSelf(name)
+                    and (ns.decideMail(name)) then
+                    filtered = filtered + 1
+                end
+            end
+            -- One or two names, and every one of them filtered. At three the
+            -- API has stopped counting: three names can mean three senders or
+            -- thirty, so hiding there would be hiding without knowing, and
+            -- hiding without certainty is exactly what the product rule refuses.
+            hide = (senders == 1 or senders == 2) and filtered == senders
+        end
+    end
+
+    if hide and frame.Hide then
+        frame:Hide()
+        -- The indicator frame lays its children out in a row: taking one out
+        -- without a re-layout leaves a hole where the icon was.
+        local parent = frame.GetParent and frame:GetParent()
+        if parent and parent.Layout then parent:Layout() end
+    end
+
+    debugLog("MAIL_ICON", {
+        mode = mode, hasNewMail = hasMail, senders = senders,
+        filtered = filtered, hidden = hide,
+    })
+end
+
+function ns.installMailIconGuard()
+    local frame = mailIndicator()
+    if not frame or mail.iconHooked or not frame.HookScript then return frame end
+    mail.iconHooked = true
+    frame:HookScript("OnEvent", function(self, event)
+        -- The one event Blizzard shows the icon on. Ours runs after its handler.
+        if event ~= "UPDATE_PENDING_MAIL" then return end
+        applyMailIcon(self)
+    end)
+    return frame
+end
+
+-- Back to "Normale" without a relog. Blizzard's own handler is what puts the
+-- icon back, so it is replayed rather than the icon being shown by hand: what
+-- draws the icon stays the game's business.
+function ns.refreshMailIcon()
+    local frame = mailIndicator()
+    if not frame or not frame.GetScript then return end
+    local script = frame:GetScript("OnEvent")
+    if type(script) ~= "function" then return end
+    script(frame, "UPDATE_PENDING_MAIL")
+end
+
+-- What the button in the Diagnostics tab answers: one line a letter, and not one
+-- command. It is the only way to read, from a log, what the grid made of a real
+-- mailbox -- the exact shape of a sender, whether a realm is on it, what the
+-- game says of an auction house.
+function ns.runMailScanDiagnostic()
+    if type(GetInboxNumItems) ~= "function" then
+        return "Diagnostic mail scan: no mailbox API on this client"
+    end
+    local shown = MailFrame and MailFrame.IsShown and MailFrame:IsShown()
+    local total = GetInboxNumItems() or 0
+    local lines = {
+        string.format("Diagnostic mail scan: open=%s mode=%s attachments=%s icon=%s mails=%d",
+            shown and "yes" or "no", ns.getMailMode(), ns.getMailAttachments(),
+            ns.getMailIcon(), total),
+    }
+    if total == 0 then
+        lines[#lines + 1] = "  (nothing in the box)"
+    end
+    for index = 1, total do
+        local info = ns.planInboxMail(index)
+        lines[#lines + 1] = string.format(
+            "  %d. sender=%s class=%s player=%s verdict=%s reason=%s would=%s",
+            index, safeText(info.sender, 40, "nil"), info.class,
+            info.fromPlayer and "yes" or "no",
+            info.block and "BLOCK" or "ALLOW",
+            tostring(info.reason or "none"), info.action)
+    end
+    debugLog("MAIL", { action = "DIAGNOSTIC", count = total, open = shown and true or false })
+    return table.concat(lines, "\n")
+end
+
 end
 
 -- ============================================================================
@@ -7058,6 +7577,18 @@ ns.DIAGNOSTIC_CATALOG = {
         popupKind = "guild",
     },
     {
+        id = "mail_scan",
+        labelKey = "DIAG_MAIL_SCAN",
+        tipKey = "DIAG_TIP_MAIL_SCAN",
+        -- Out of "run them all", and with a tooltip of its own: it needs a
+        -- mailbox open in front of it, which is something to say rather than
+        -- "run this one on its own, and listen".
+        skipBulk = true,
+        run = function()
+            return { text = ns.runMailScanDiagnostic() }
+        end,
+    },
+    {
         id = "diag_popup_list",
         labelKey = "DIAG_POPUP_LIST",
         argKey = "DIAG_ARG_FILTER",
@@ -7224,8 +7755,64 @@ local function needsSchemaReset(store)
     return stored == nil or stored < 2
 end
 
+-- The changelog, printed right under the load line. It shows at every load for
+-- a day after the first login that follows an update: a title line naming the
+-- version, then one line per point, nothing else, and then it stops on its own. No window, no sound, no popup: an update is worth two
+-- lines of chat and not an interruption.
+do
+
+-- Spelt out one key a line, never built from the version number: a key that
+-- only exists as a concatenation cannot be searched for, and an unreachable
+-- translation is one nobody will ever notice is missing.
+local CHANGELOG_LINES = {
+    "CHANGELOG_1_1_0_TITLE",
+    "CHANGELOG_1_1_0_MAIL",
+    "CHANGELOG_1_1_0_SAY_YELL",
+    "CHANGELOG_1_1_0_POLISH",
+}
+
+local CHANGELOG_WINDOW = 86400
+
+function ns.announceChangelog(freshInstall)
+    local state = SanctuaryDB and SanctuaryDB.changelog
+    if not state then return end
+
+    -- An install announces nothing: this build is not new to anybody here.
+    if freshInstall then
+        state.version = VERSION
+        return
+    end
+
+    if state.version ~= VERSION then
+        state.version = VERSION
+        state.firstAt = time()
+    end
+
+    local firstAt = tonumber(state.firstAt)
+    if not firstAt then return end
+    local nowSeconds = time()
+    -- A clock put back leaves a stamp in the future, and the window would then
+    -- stay shut for as long as the difference. Pulled back to now rather than
+    -- dropped: the lines have not been read yet.
+    if firstAt > nowSeconds then
+        firstAt = nowSeconds
+        state.firstAt = firstAt
+    end
+    if nowSeconds - firstAt >= CHANGELOG_WINDOW then return end
+
+    for _, key in ipairs(CHANGELOG_LINES) do
+        printMsg(COLOR_ON .. L[key] .. COLOR_RESET)
+    end
+end
+
+end
+
 function handlers.ADDON_LOADED(addonName)
     if addonName ~= ADDON_NAME then return end
+
+    -- Read before the file is built, and the whole changelog turns on it: an
+    -- install has nothing to announce, an update has.
+    local freshInstall = SanctuaryDB == nil
 
     -- Initialize SavedVariables
     if not SanctuaryDB then
@@ -7234,6 +7821,17 @@ function handlers.ADDON_LOADED(addonName)
         resetAccountToSchemaV2()
     else
         fillMissingDefaults(SanctuaryDB, ACCOUNT_DEFAULTS)
+    end
+
+    -- /say and /yell are one box on screen since 1.1.0 -- hiding one means hiding the other. A file written before that can hold two
+    -- different values; the box would then show one and the engine would apply
+    -- the other. Aligned on the ticked one, once, without a schema bump: the
+    -- pair is settled from here on, and a file where they already agree is left
+    -- exactly as it was.
+    local filters = SanctuaryDB.filters
+    if filters and filters.say ~= filters.yell then
+        local blocked = (filters.say or filters.yell) and true or false
+        filters.say, filters.yell = blocked, blocked
     end
 
     if not SanctuaryCharDB then
@@ -7264,6 +7862,8 @@ function handlers.ADDON_LOADED(addonName)
         printMsg(COLOR_OFF .. L["ADDON_LOADED_INACTIVE"] .. COLOR_RESET)
     end
 
+    ns.announceChangelog(freshInstall)
+
     -- A mute survives /reload and relogging, so one left behind by a previous
     -- session would still be silencing the game's panel sounds right now. No
     -- guard can be active at load, so this is the safe point to lift it.
@@ -7272,6 +7872,8 @@ function handlers.ADDON_LOADED(addonName)
     -- Keep invite audio suppression aligned with the effective setting.
     refreshInviteSoundMuteState()
     installGuildInviteFrameGuard()
+    ns.installMailScan()
+    ns.installMailIconGuard()
 
     -- Said once the SavedVariables are in place, and idempotent: this is the
     -- other half of the same call in PLAYER_ENTERING_WORLD, which fires at
@@ -7312,11 +7914,16 @@ function handlers.PLAYER_ENTERING_WORLD()
     refreshGroupTracker()
     refreshInviteSoundMuteState()
     installGuildInviteFrameGuard()
-    -- Both are idempotent. Retrying registration here is what makes the filter
-    -- registry adapter meaningful: if no registration path resolved at load,
-    -- ADDON_LOADED never fires again and the session would filter nothing.
+    -- All four are idempotent. Retrying registration here is what makes the
+    -- filter registry adapter meaningful: if no registration path resolved at
+    -- load, ADDON_LOADED never fires again and the session would filter
+    -- nothing. The two mailbox hooks are retried for exactly that reason -- the
+    -- frame stops listening to ADDON_LOADED at the end of its own handler, and
+    -- this event fires at every loading screen.
     registerChatFilters()
     hookChatOutputDiagnostics()
+    ns.installMailScan()
+    ns.installMailIconGuard()
 
     -- Request social data refresh. Both calls are pcall-wrapped because their
     -- availability/state varies during login and loading transitions.
@@ -7353,6 +7960,19 @@ function handlers.PLAYER_UNGHOST()
     debugLogPlayerState("PLAYER_UNGHOST")
 end
 
+-- The mailbox is shut: the letters set aside during this opening are forgotten,
+-- so a server that was busy a minute ago gets another chance next time.
+function handlers.MAIL_CLOSED()
+    ns.resetMailScan()
+end
+
+-- A command the server refused. Recorded and nothing else: no second attempt, no
+-- fallback. The two-strike guard in the scan is what stops it being reissued,
+-- and a mail Sanctuary could not remove is a mail the person still has.
+function handlers.MAIL_FAILED(...)
+    debugLog("MAIL", { action = "FAILED", detail = safeText(select(1, ...), 60, "nil") })
+end
+
 -- The settings file is the official record, and the client writes it here. The
 -- manifest is stamped one last time at this point so the file describes the
 -- session it actually ends, whether or not the summary window was ever opened.
@@ -7378,6 +7998,10 @@ local events = {
     "BN_FRIEND_INFO_CHANGED",
     "BN_FRIEND_LIST_SIZE_CHANGED",
     "GROUP_ROSTER_UPDATE",
+    -- The mailbox. Nothing here reacts to MAIL_INBOX_UPDATE: the scan is a
+    -- post-hook on Blizzard's own redraw, so it can never run before it.
+    "MAIL_CLOSED",
+    "MAIL_FAILED",
     -- The two chat events whose sender is not a character. Every other one is
     -- registered from `CHAT_KINDS` just below, so a kind can never end up with
     -- a filter, a handler and no event to fire it.

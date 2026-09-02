@@ -134,9 +134,25 @@ function C_FriendList.GetFriendInfoByIndex(index)
 end
 function C_FriendList.ShowFriends() end
 C_GuildInfo = { GuildRoster = function() end }
+-- The build the fake client answers is read off the real manifest, never
+-- typed here: a copy of the number would agree with a stale code constant
+-- and let the two drift apart unnoticed, which is what happened on 27/08.
+local function manifestField(field)
+    local here = (debug.getinfo(1, "S").source or ""):match("^@(.*)[/\\]") or "."
+    local root = here:match("^(.*)[/\\]tests$") or "."
+    local handle = io.open(root .. "/Sanctuary.toc", "r")
+    if not handle then return nil end
+    local value
+    for line in handle:lines() do
+        value = value or line:match("^##%s*" .. field:gsub("%-", "%%-") .. ":%s*(.-)%s*$")
+    end
+    handle:close()
+    return value
+end
+
 local addonMetadata = {
-    Version = "1.0.0",
-    ["X-Sanctuary-Build"] = "20260820-8",
+    Version = manifestField("Version") or "unread",
+    ["X-Sanctuary-Build"] = manifestField("X-Sanctuary-Build") or "unread",
     Interface = "120007",
 }
 C_AddOns = {
@@ -521,6 +537,135 @@ function CreateFrame(frameType, name, parent, template)
     return frame
 end
 
+-- The mailbox, as Retail hands it over.
+--
+-- `GetInboxHeaderInfo` answers its FIFTEEN values in Blizzard's own order, and
+-- that is the point of the fixture: a path that reads the wrong slot -- money
+-- where the item count is, `canReply` where `wasReturned` is -- is exactly the
+-- fault a stub with four fields cannot show. The commands are recorded rather
+-- than executed, and the server answers when a test says it does.
+local mailbox = { inbox = {}, commands = {}, pending = false, shown = false,
+    target = nil, updates = 0 }
+
+function GetInboxNumItems() return #mailbox.inbox end
+
+function GetInboxHeaderInfo(index)
+    local item = mailbox.inbox[index]
+    if not item then return nil end
+    return item.packageIcon, item.stationeryIcon, item.sender, item.subject,
+        item.money or 0, item.codAmount or 0, item.daysLeft or 30, item.itemCount,
+        item.wasRead, item.wasReturned, item.textCreated,
+        item.canReply ~= false, item.isGM, item.firstItemQuantity, item.firstItemLink
+end
+
+-- The client's own answer to "may this one be deleted rather than returned". Its
+-- rule is written nowhere, so the add-on reads it: here it is a field of the
+-- fixture, which is what lets a test play both answers.
+function InboxItemCanDelete(index)
+    local item = mailbox.inbox[index]
+    return item ~= nil and item.canDelete ~= false
+end
+
+do
+    local function record(op, index)
+        mailbox.commands[#mailbox.commands + 1] = { op = op, index = index,
+            subject = mailbox.inbox[index] and mailbox.inbox[index].subject }
+        mailbox.pending = true
+        mailbox.target = mailbox.inbox[index]
+    end
+    function DeleteInboxItem(index) record("delete", index) end
+    function ReturnInboxItem(index) record("return", index) end
+end
+
+C_Mail = {
+    IsCommandPending = function() return mailbox.pending end,
+    -- As on the live client: a table for every mail that exists, blank on an
+    -- ordinary letter, and the recipe named only on a real crafting order.
+    GetCraftingOrderMailInfo = function(index)
+        local item = mailbox.inbox[index]
+        if not item then return nil end
+        return item.craftingOrder or { reason = 0, recipeName = "" }
+    end,
+}
+
+MailFrame = { IsShown = function() return mailbox.shown end }
+InboxFrame = { pageNum = 1 }
+
+do
+    local function mailWidget()
+        return {
+            __shown = true,
+            Show = function(self) self.__shown = true end,
+            Hide = function(self) self.__shown = false end,
+            IsShown = function(self) return self.__shown end,
+            SetText = function(self, text) self.__text = text end,
+            GetText = function(self) return self.__text end,
+        }
+    end
+    for row = 1, 7 do
+        _G["MailItem" .. row .. "Button"] = mailWidget()
+        _G["MailItem" .. row .. "Sender"] = mailWidget()
+        _G["MailItem" .. row .. "Subject"] = mailWidget()
+        _G["MailItem" .. row .. "ExpireTime"] = mailWidget()
+    end
+end
+
+-- Blizzard's redraw, cut down to what the add-on hangs off: it fills the seven
+-- rows of the page and empties the ones it does not use. It is called on every
+-- MAIL_INBOX_UPDATE and again whenever the pointer crosses a row, which is the
+-- whole reason the hook has to be idempotent.
+function InboxFrame_Update()
+    mailbox.updates = mailbox.updates + 1
+    for row = 1, 7 do
+        local item = mailbox.inbox[(InboxFrame.pageNum - 1) * 7 + row]
+        local button = _G["MailItem" .. row .. "Button"]
+        local expire = _G["MailItem" .. row .. "ExpireTime"]
+        if item then button:Show() else button:Hide() end
+        if item then expire:Show() else expire:Hide() end
+        _G["MailItem" .. row .. "Sender"]:SetText(item and item.sender or "")
+        _G["MailItem" .. row .. "Subject"]:SetText(item and item.subject or "")
+    end
+end
+
+function MailFrame_OnEvent()
+    InboxFrame_Update()
+end
+
+-- The mail icon of the minimap. It has no global name, so the fixture is shaped
+-- like the real thing: a frame hanging off MinimapCluster.IndicatorFrame, with
+-- Blizzard's own OnEvent on it. The add-on hooks that script and runs after it,
+-- so what a test reads back is the state the pass ENDS on -- which is the whole
+-- claim: nothing is ever on screen, not even for a frame.
+mailbox.icon = { shown = false, layouts = 0 }
+mailbox.senders = {}
+function HasNewMail() return #mailbox.senders > 0 end
+function GetLatestThreeSenders() return unpackCompat(mailbox.senders) end
+
+do
+    local parent = { Layout = function() mailbox.icon.layouts = mailbox.icon.layouts + 1 end }
+    local frame = { __scripts = {} }
+    frame.Show = function() mailbox.icon.shown = true end
+    frame.Hide = function() mailbox.icon.shown = false end
+    frame.IsShown = function() return mailbox.icon.shown end
+    frame.GetParent = function() return parent end
+    frame.SetScript = function(self, script, callback) self.__scripts[script] = callback end
+    frame.GetScript = function(self, script) return self.__scripts[script] end
+    frame.HookScript = function(self, script, callback)
+        local original = self.__scripts[script]
+        self.__scripts[script] = function(...)
+            if original then original(...) end
+            callback(...)
+        end
+    end
+    -- Blizzard's handler: the icon appears when there is mail waiting.
+    frame:SetScript("OnEvent", function(self, event)
+        if event ~= "UPDATE_PENDING_MAIL" then return end
+        if HasNewMail() then self:Show() else self:Hide() end
+    end)
+    mailbox.icon.frame = frame
+    MinimapCluster = { IndicatorFrame = { MailFrame = frame } }
+end
+
 SlashCmdList = {}
 function geterrorhandler()
     return function(message) error(message, 0) end
@@ -775,6 +920,9 @@ for _, event in ipairs({
     -- Who is allowed: guild, group, friends, Battle.net friends.
     "GROUP_ROSTER_UPDATE", "GUILD_ROSTER_UPDATE", "PLAYER_GUILD_UPDATE",
     "FRIENDLIST_UPDATE", "BN_FRIEND_INFO_CHANGED", "BN_FRIEND_LIST_SIZE_CHANGED",
+    -- The mailbox. MAIL_INBOX_UPDATE is deliberately absent: the pass is a
+    -- post-hook on Blizzard's own redraw, so it can never run before it.
+    "MAIL_CLOSED", "MAIL_FAILED",
     -- Every chat event that carries a message, one line per event so that
     -- dropping one is a line removed rather than a table quietly shrinking.
     "CHAT_MSG_WHISPER", "CHAT_MSG_SAY", "CHAT_MSG_YELL", "CHAT_MSG_EMOTE",
@@ -787,7 +935,7 @@ for _, event in ipairs({
     check(eventFrames[event] ~= nil, "the add-on registers " .. event)
 end
 
-equal(ns.VERSION, "1.0.0", "version exported")
+equal(ns.VERSION, "1.1.0", "version exported")
 equal(#muted, 0, "no global sound files muted at rest")
 equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "party invite dialog sound suppressed while group filter active")
 equal(StaticPopupDialogs.DUEL_REQUESTED.sound, nil, "duel dialog sound suppressed while duel filter active")
@@ -992,13 +1140,13 @@ SanctuaryDB.debugLog = {}
 ns.captureDebugSnapshot()
 equal(#SanctuaryDB.debugLog, 1, "debug snapshot captured")
 equal(SanctuaryDB.debugLog[1].cat, "SNAPSHOT", "debug snapshot category")
-equal(SanctuaryDB.debugLog[1].data.version, "1.0.0", "debug snapshot version")
-equal(SanctuaryDB.debugLog[1].data.build, "20260820-8", "debug snapshot reports the diagnostic build id")
+equal(SanctuaryDB.debugLog[1].data.version, ns.VERSION, "debug snapshot version")
+equal(SanctuaryDB.debugLog[1].data.build, ns.BUILD_ID, "debug snapshot reports the diagnostic build id")
 equal(SanctuaryDB.debugLog[1].data.clientVersion, "12.0.7", "debug snapshot reports the client version")
 equal(SanctuaryDB.debugLog[1].data.clientBuild, "62119", "debug snapshot reports the client build")
 equal(SanctuaryDB.debugLog[1].data.clientInterface, 120007, "debug snapshot reports the client interface number")
-equal(SanctuaryDB.debugLog[1].data.addonMetaVersion, "1.0.0", "debug snapshot reports the loaded addon version metadata")
-equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, "20260820-8", "debug snapshot reports the loaded addon build metadata")
+equal(SanctuaryDB.debugLog[1].data.addonMetaVersion, ns.VERSION, "debug snapshot reports the loaded addon version metadata")
+equal(SanctuaryDB.debugLog[1].data.addonMetaBuild, ns.BUILD_ID, "debug snapshot reports the loaded addon build metadata")
 equal(SanctuaryDB.debugLog[1].data.addonMetaInterface, "120007", "debug snapshot reports the loaded addon interface metadata")
 check(SanctuaryDB.debugLog[1].data.chatLockdownKnown, "debug snapshot reports a readable chat messaging lockdown state")
 check(not SanctuaryDB.debugLog[1].data.chatLockdown, "debug snapshot reports chat messaging lockdown off")
@@ -1613,10 +1761,6 @@ SanctuaryDB.filters.say = true
 filtered = chatFilters.CHAT_MSG_SAY(nil, "CHAT_MSG_SAY", "hello", "Victim-OtherRealm")
 check(filtered, "same-name sender from another realm is not treated as self")
 SanctuaryDB.filters.say = false
-
-SanctuaryDB.filters.yell = true
-check(chatFilters.CHAT_MSG_YELL(nil, "CHAT_MSG_YELL", "hello", "Unknown"), "yell filter blocks unknown")
-SanctuaryDB.filters.yell = false
 
 SanctuaryDB.filters.emote = true
 check(chatFilters.CHAT_MSG_TEXT_EMOTE(nil, "CHAT_MSG_TEXT_EMOTE", "waves", "Unknown"), "text emote filter blocks unknown")
@@ -3079,7 +3223,7 @@ fire("PLAYER_LOGOUT")
 local manifest = SanctuaryDB.reportManifest
 check(type(manifest) == "table", "logging out stamps a manifest into the settings file")
 equal(manifest.trigger, "logout", "the manifest says what wrote it")
-equal(manifest.build, "20260820-8", "the manifest carries the build id")
+equal(manifest.build, ns.BUILD_ID, "the manifest carries the build id")
 equal(manifest.version, ns.VERSION, "the manifest carries the addon version")
 check(manifest.savedAt ~= nil and manifest.savedAt ~= "", "the manifest is dated")
 -- The log is the record and nothing clears it on its own. When it was last
@@ -3105,7 +3249,7 @@ SanctuaryDB.debugEnabled = true
 ns.resetDebugLog()
 ns.captureDebugSnapshot("export")
 local summary = ns.buildDebugSummaryText()
-check(summary:find("20260820-8", 1, true) ~= nil, "the summary names the build")
+check(summary:find(ns.BUILD_ID, 1, true) ~= nil, "the summary names the build")
 check(summary:find("Version: " .. ns.VERSION, 1, true) ~= nil, "the summary names the version")
 check(summary:find("ChatFilterApi:", 1, true) ~= nil, "the summary reports the filter API")
 check(summary:find("ChatFrames:", 1, true) ~= nil, "the summary reports the observed chat frames")
@@ -4887,6 +5031,9 @@ ns.resetDebugLog()
 
 -- C17 -- one line at load, and only one.
 resetModelState()
+-- The changelog prints under that line for a day after an update, and this case
+-- is about the load line alone: this build is stamped as already announced.
+SanctuaryDB.changelog = { version = ns.VERSION }
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
 equal(#chatMessages, 1, "loading prints exactly one line")
@@ -4900,6 +5047,97 @@ equal(#chatMessages, 1, "still exactly one when the protection is off")
 check(chatMessages[1]:find(ns.L["ADDON_LOADED_INACTIVE"], 1, true) ~= nil,
     "and it says so")
 SanctuaryCharDB.overrides.enabled = asFound.loadLineOverride
+
+-- C17b -- the changelog, under the load line, for a day after an update.
+--
+-- It lives in the migration zone on purpose: every case here is a load read on
+-- a settings file of a given age, and the two saved tables are already
+-- substitutes that the end of the zone throws away.
+do
+
+local DAY = 86400
+local clockAsFound = now
+
+-- An install announces nothing: this build is not new to anybody here. Both
+-- saved tables absent is what the add-on reads as an install.
+SanctuaryDB, SanctuaryCharDB = nil, nil
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 1, "a fresh install prints the load line and nothing under it")
+equal(SanctuaryDB.changelog.version, ns.VERSION,
+    "and records this build as already announced")
+-- The mutation this case exists for: a `version` written into the defaults
+-- would be filled into every 1.0.0 file, and the one update that has to speak
+-- would be silent.
+equal(next(ns.ACCOUNT_DEFAULTS.changelog), nil,
+    "the defaults stamp no version, so an update is still an update")
+
+-- A file written by the previous build: the update speaks, once the load line
+-- has.
+SanctuaryDB.changelog = {}
+chatMessages = {}
+playedSounds = {}
+popup.shown = false
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 5, "a file from the previous build gets the title and one line per point")
+check(chatMessages[1]:find(ns.L["ADDON_LOADED_ACTIVE"], 1, true) ~= nil,
+    "the load line still comes first")
+check(chatMessages[2]:find(ns.L["CHANGELOG_1_1_0_TITLE"], 1, true) ~= nil,
+    "then the title line naming the version")
+check(chatMessages[3]:find(ns.L["CHANGELOG_1_1_0_MAIL"], 1, true) ~= nil,
+    "then one line per point")
+check(chatMessages[4]:find(ns.L["CHANGELOG_1_1_0_SAY_YELL"], 1, true) ~= nil,
+    "in the order they are written")
+equal(#playedSounds, 0, "an update is worth two lines of chat and no sound")
+equal(popup.shown, false, "and no window")
+local openedAt = SanctuaryDB.changelog.firstAt
+check(type(openedAt) == "number", "the window opens at the first load that follows")
+
+-- Still inside the day, then past it.
+now = now + 3600
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 5, "an hour later the lines are still there")
+equal(SanctuaryDB.changelog.firstAt, openedAt, "and the window has not moved")
+now = clockAsFound + DAY + 3600
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 1, "a day later it stops on its own")
+
+-- The next update reopens a window of its own.
+SanctuaryDB.changelog.version = "1.0.9"
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 5, "the next build announces itself in turn")
+check(SanctuaryDB.changelog.firstAt > openedAt, "on a window of its own")
+
+-- A clock put back leaves a stamp in the future, and the window would stay shut
+-- for as long as the difference.
+SanctuaryDB.changelog.firstAt = time() + 10 * DAY
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 5, "a clock put back does not swallow the lines")
+
+-- Turned off, the add-on says so and still says what changed.
+SanctuaryDB.changelog = {}
+SanctuaryCharDB.overrides.enabled = false
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 5, "an add-on switched off announces the update all the same")
+check(chatMessages[1]:find(ns.L["ADDON_LOADED_INACTIVE"], 1, true) ~= nil,
+    "under its own load line")
+
+-- A schema 1 file is rebuilt from the defaults rather than completed, and a
+-- rebuild is still an update: the person is running a build they never ran.
+SanctuaryDB = { schemaVersion = 1 }
+SanctuaryCharDB = nil
+chatMessages = {}
+fire("ADDON_LOADED", "Sanctuary")
+equal(#chatMessages, 5, "a file the schema reset rebuilt announces the update")
+
+now = clockAsFound
+
+end
 
 -- C18 -- the anti-spam setting, and the one question the interface asks.
 do
@@ -4998,6 +5236,33 @@ ns.resetDebugLog()
 resetModelState()
 SanctuaryDB.antiSpam.enabled = false
 SanctuaryDB.antiSpam.intervalSeconds = 300
+
+end
+
+-- C18b -- /say and /yell are one box, so the two stored values are one value.
+-- A file written before 1.1.0 can hold them apart; the box would then show one
+-- and the engine would apply the other. The load settles them on the ticked
+-- one, once, and leaves a file where they already agree exactly as it was.
+do
+
+resetModelState()
+equal(ns.ACCOUNT_DEFAULTS.filters.say, false, "a fresh file blocks neither /say")
+equal(ns.ACCOUNT_DEFAULTS.filters.yell, false, "nor /yell")
+
+local ALIGNMENTS = {
+    { say = true,  yell = false, settled = true,  said = "the ticked one wins over the unticked" },
+    { say = false, yell = true,  settled = true,  said = "whichever of the two carried it" },
+    { say = true,  yell = true,  settled = true,  said = "a file that already agrees on true is left alone" },
+    { say = false, yell = false, settled = false, said = "and one that agrees on false too" },
+}
+for _, case in ipairs(ALIGNMENTS) do
+    SanctuaryDB.filters.say, SanctuaryDB.filters.yell = case.say, case.yell
+    fire("ADDON_LOADED", "Sanctuary")
+    equal(SanctuaryDB.filters.say, case.settled, case.said)
+    equal(SanctuaryDB.filters.yell, case.settled, "on both keys")
+end
+
+resetModelState()
 
 end
 
@@ -6285,6 +6550,420 @@ SanctuaryDB.debugEnabled = asFound.selfWhisperDebug
 
 assertModelAtRest()
 -- ===========================================================================
+-- SECTION: the mailbox
+-- ===========================================================================
+
+-- The one thing Sanctuary cannot refuse at the door: the game has already
+-- delivered the letter when the box is opened. So this section is about what
+-- happens at the opening -- who is touched, who is never touched whatever the
+-- lists say, and at what pace.
+do
+
+asFound.mailMode = SanctuaryDB.mail.mode
+asFound.mailAttachments = SanctuaryDB.mail.attachments
+asFound.mailIcon = SanctuaryDB.mail.minimapIcon
+asFound.mailNotifications = SanctuaryDB.notifications.mode
+asFound.mailLogging = SanctuaryDB.logging.enabled
+
+-- Out of the box nothing is touched. Deleting somebody's mail is the one thing
+-- here that cannot be undone, so all three answers default to "change nothing",
+-- and the two mutations the cases below rest on are pinned right here.
+equal(ns.ACCOUNT_DEFAULTS.mail.mode, "keep",
+    "a fresh settings file leaves the mailbox exactly as it is")
+equal(ns.ACCOUNT_DEFAULTS.mail.attachments, "keep",
+    "and never touches a letter with something in it")
+equal(ns.ACCOUNT_DEFAULTS.mail.minimapIcon, "normal",
+    "and the minimap icon behaves as the game draws it")
+-- A value no card on screen offers reads as the default rather than as itself.
+SanctuaryDB.mail.mode = "shred"
+equal(ns.getMailMode(), "keep", "a mode nothing can have written answers the default")
+SanctuaryDB.mail.attachments = "burn"
+equal(ns.getMailAttachments(), "keep", "and so does an answer for what is inside")
+SanctuaryDB.mail.minimapIcon = "sometimes"
+equal(ns.getMailIcon(), "normal", "and so does one for the icon")
+
+local function armMailFixture()
+    resetModelState()
+    guildMembers = { "Guildmate-TestRealm" }
+    inGuild = true
+    ns.addBlocked("Nuisance-TestRealm")
+    ns.invalidateWhitelist()
+    SanctuaryDB.mail.mode = "delete"
+    SanctuaryDB.mail.attachments = "keep"
+    SanctuaryDB.mail.minimapIcon = "normal"
+    SanctuaryDB.logging.enabled = true
+    SanctuaryDB.log = {}
+    SanctuaryCharDB.sessionStats = { blockedCount = 0, blockedByType = {} }
+    mailbox.commands = {}
+    mailbox.pending = false
+    mailbox.target = nil
+    mailbox.shown = true
+    InboxFrame.pageNum = 1
+    ns.resetMailScan()
+end
+
+-- Opening the box is Blizzard drawing its list, and the add-on's pass is hung
+-- off that redraw -- never off MAIL_INBOX_UPDATE, which could reach us first.
+local function openMailbox(items)
+    mailbox.inbox = items
+    mailbox.commands = {}
+    mailbox.pending = false
+    mailbox.target = nil
+    ns.resetMailScan()
+    MailFrame_OnEvent()
+end
+
+-- The server answers. `refuse` plays the other case: the command is acknowledged
+-- and the mailbox comes back exactly as full as it was, which is what the
+-- add-on's two-strike guard exists for.
+local function serverAnswersMail(refuse)
+    mailbox.pending = false
+    if not refuse and mailbox.target then
+        for i, item in ipairs(mailbox.inbox) do
+            if item == mailbox.target then table.remove(mailbox.inbox, i) break end
+        end
+    end
+    mailbox.target = nil
+    MailFrame_OnEvent()
+end
+
+-- Mail arrives: the game fires its event, Blizzard's handler shows the icon, and
+-- the add-on's hook runs in the same pass.
+local function mailWaitsFrom(...)
+    mailbox.senders = { ... }
+    local frame = mailbox.icon.frame
+    frame:GetScript("OnEvent")(frame, "UPDATE_PENDING_MAIL")
+end
+
+local function rowShown(row) return _G["MailItem" .. row .. "Button"]:IsShown() end
+local function rowSubject(row) return _G["MailItem" .. row .. "Subject"]:GetText() end
+local function orderedOps()
+    local out = {}
+    for _, command in ipairs(mailbox.commands) do out[#out + 1] = command.op end
+    return table.concat(out, ",")
+end
+
+-- M1 -- a letter with nothing in it, and the three answers the lists give.
+armMailFixture()
+SanctuaryDB.notifications.mode = "verbose"
+chatMessages = {}
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "you are nothing" } })
+equal(orderedOps(), "delete", "a blocked player's letter is deleted")
+equal(rowShown(1), false, "and its row goes in the same pass, before the server answers")
+equal(rowSubject(1), "", "with nothing left of it to read")
+equal(#SanctuaryDB.log, 1, "the Journal keeps one entry")
+equal(SanctuaryDB.log[1].type, "mail", "typed as a mail")
+equal(SanctuaryDB.log[1].msg, "you are nothing", "with the subject as what was said")
+equal(ns.getLogEntryDisplayType(SanctuaryDB.log[1]), ns.L["LOG_TYPE_MAIL"],
+    "and shown under its own name")
+equal(SanctuaryCharDB.sessionStats.blockedByType.mail, 1, "the session counter moves")
+do
+    -- The Journal's own label for the type, lower-cased, in whichever language
+    -- is loaded: neither the identifier the code goes by nor the capital the
+    -- Journal column wears.
+    local line = chatMessages[#chatMessages]
+    local word = ns.L["LOG_TYPE_MAIL"]:gsub("^%u", string.lower)
+    check(line:find(word, 1, true) ~= nil and line:find("Nuisance-TestRealm", 1, true) ~= nil,
+        "and the verbose mode names the mail in words, with its sender")
+    check(line:find(ns.L["LOG_TYPE_MAIL"], 1, true) == nil and line:find("mail", 1, true) == nil
+        or word == "mail", "in lower case, as a word in a sentence")
+end
+SanctuaryDB.notifications.mode = asFound.mailNotifications
+
+now = now + 5
+openMailbox({ { sender = "Stranger-TestRealm", subject = "hey" } })
+equal(orderedOps(), "delete", "a stranger's letter goes the same way")
+
+now = now + 5
+openMailbox({ { sender = "Guildmate-TestRealm", subject = "raid tonight" } })
+equal(orderedOps(), "", "a guild mate's letter is left alone")
+equal(rowShown(1), true, "and stays where it is")
+
+-- "Les bloques seulement": nobody else is filtered here either.
+now = now + 5
+SanctuaryDB.filters.scope = "blockedOnly"
+openMailbox({
+    { sender = "Stranger-TestRealm", subject = "hey" },
+    { sender = "Nuisance-TestRealm", subject = "again" },
+})
+equal(orderedOps(), "delete", "in the open scope only the blocked name's letter goes")
+equal(mailbox.commands[1].subject, "again", "and it is that one")
+equal(rowShown(1), true, "the stranger's letter is untouched")
+equal(rowShown(2), false, "the blocked one is not")
+
+-- M2 -- "Le laisser" means nothing is decided at all, not even for a blocked
+-- name: the always-blocked list beats every gate, so the mode has to be read
+-- above the decision and not inside it.
+armMailFixture()
+SanctuaryDB.mail.mode = "keep"
+now = now + 5
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "the worst thing anyone wrote" } })
+equal(orderedOps(), "", "with the mailbox left alone, not even a blocked name's letter moves")
+equal(#SanctuaryDB.log, 0, "and nothing is written down")
+equal(rowShown(1), true, "the letter is where it was")
+
+-- M3 -- money or an item in it: the person's own answer, and it is asked before
+-- anything is ordered.
+armMailFixture()
+SanctuaryDB.debugEnabled = true
+ns.resetDebugLog()
+now = now + 5
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "with a gift", money = 100 } })
+equal(orderedOps(), "", "'leave it' orders nothing")
+equal(#SanctuaryDB.log, 0, "and writes nothing down: nothing was blocked")
+equal(rowShown(1), true, "the letter stays readable in the box")
+equal(lastDebug("MAIL", "SCAN") and lastDebug("MAIL", "SCAN").data.kept, 1,
+    "the debug log is the only place that says one was kept")
+SanctuaryDB.debugEnabled = false
+ns.resetDebugLog()
+
+now = now + 5
+ns.setMailAttachments("return")
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "with a gift", money = 100 } })
+equal(orderedOps(), "return", "'send it back' returns it, and never deletes it")
+
+now = now + 5
+ns.setMailAttachments("delete")
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "with an item", itemCount = 1 } })
+equal(orderedOps(), "delete", "'delete it too' deletes what the game lets it delete")
+
+-- And the game has the last word. This is exactly the rule Blizzard's own
+-- button follows, down to whether its label reads Delete or Return.
+now = now + 5
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "with an item",
+    itemCount = 1, canDelete = false } })
+equal(orderedOps(), "return", "and returns what the game refuses to let it delete")
+
+now = now + 5
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "pay up",
+    codAmount = 500, itemCount = 1, canDelete = false } })
+equal(ns.planInboxMail(1).class, "cod", "a cash-on-delivery letter is named as one")
+equal(orderedOps(), "return", "and follows the same rule, with no branch of its own")
+
+-- M4 -- the grid, which is read BEFORE any name reaches any list. A letter that
+-- did not come from a player is never touched, whatever the answers say.
+armMailFixture()
+ns.setMailAttachments("delete")
+-- The pattern names the auction house's own first word. Take the `canReply`
+-- test out and this letter is deleted: that is what the case is here to catch.
+SanctuaryDB.keywords = { "hotel" }
+ns.invalidateWhitelist()
+now = now + 5
+openMailbox({
+    { sender = "Blizzard", subject = "your ticket", isGM = true, money = 500 },
+    { sender = "Crafter-TestRealm", subject = "your order", craftingOrder = { reason = 3, recipeName = "Test recipe" } },
+    { sender = "Hotel des ventes", subject = "sold", canReply = false, money = 900 },
+    { subject = "quest reward", itemCount = 1 },
+    { sender = "Nuisance-TestRealm", subject = "came back", wasReturned = true },
+    { sender = "Victim-TestRealm", subject = "my own things", itemCount = 1 },
+    { sender = "-", subject = "nothing usable in that name" },
+})
+equal(orderedOps(), "", "not one letter that did not come from a player is touched")
+equal(#SanctuaryDB.log, 0, "and none of them is written down")
+for row = 1, 7 do
+    equal(rowShown(row), true, "row " .. row .. " is still on screen")
+end
+local GRID = { "gm", "craftingOrder", "system", "system", "own", "own", "unnamed" }
+for index, class in ipairs(GRID) do
+    equal(ns.classifyInboxMail(index).class, class,
+        "letter " .. index .. " is read as " .. class)
+end
+
+-- M5 -- one command a redraw, and every row that is going emptied at once.
+armMailFixture()
+now = now + 5
+openMailbox({
+    { sender = "Nuisance-TestRealm", subject = "one" },
+    { sender = "Nuisance-TestRealm", subject = "two" },
+    { sender = "Nuisance-TestRealm", subject = "three" },
+})
+equal(#mailbox.commands, 1, "three letters to remove, one command")
+equal(rowShown(1) or rowShown(2) or rowShown(3), false,
+    "and all three rows emptied at once, so nothing readable is left behind")
+MailFrame_OnEvent()
+equal(#mailbox.commands, 1, "a redraw while the client is still working orders nothing")
+-- And gives nothing back. A box still as full as it was is what the two-strike
+-- guard reads as a refusal -- but while the command is in flight it is simply a
+-- box that has not been emptied yet, and counting a strike there put the sender
+-- and the subject back on screen for as long as the mailbox stayed open.
+equal(rowShown(1) or rowSubject(1) ~= "", false,
+    "and puts nothing of the letter on its way out back on screen")
+now = now + 5
+serverAnswersMail()
+equal(#mailbox.commands, 2, "the answer lets the next one go")
+now = now + 5
+serverAnswersMail()
+now = now + 5
+serverAnswersMail()
+equal(#mailbox.inbox, 0, "the box empties itself, one letter at a time")
+equal(#mailbox.commands, 3, "with one command each and not one more")
+equal(#SanctuaryDB.log, 3, "and one Journal entry a letter")
+
+-- Three letters a redraw cannot tell them apart by: same sender, same subject,
+-- nothing in any of them. They are set aside by identity, so a strike counted on
+-- one is a strike counted on all three -- and none of them may be counted while
+-- the client is still working, or two of the three stay in the box.
+armMailFixture()
+now = now + 5
+openMailbox({
+    { sender = "Nuisance-TestRealm", subject = "same" },
+    { sender = "Nuisance-TestRealm", subject = "same" },
+    { sender = "Nuisance-TestRealm", subject = "same" },
+})
+MailFrame_OnEvent()
+serverAnswersMail()
+MailFrame_OnEvent()
+serverAnswersMail()
+serverAnswersMail()
+equal(#mailbox.inbox, 0, "three letters nothing tells apart all go, one an answer")
+
+-- M6 -- a server that acknowledges and removes nothing. Without this the pass
+-- would order the same letter away for as long as the box stayed open.
+armMailFixture()
+now = now + 5
+openMailbox({ { sender = "Nuisance-TestRealm", subject = "stubborn" } })
+equal(#mailbox.commands, 1, "the letter is ordered away")
+now = now + 5
+serverAnswersMail(true)
+equal(#mailbox.commands, 1, "a mailbox that came back as full is not asked twice")
+equal(rowShown(1), true, "and the letter is shown again rather than hidden on a lie")
+MailFrame_OnEvent()
+equal(#mailbox.commands, 1, "however many times the list is redrawn")
+fire("MAIL_CLOSED")
+MailFrame_OnEvent()
+equal(#mailbox.commands, 2, "closing the mailbox gives it another chance")
+
+-- A command the game refused outright. Written down, and nothing else: there is
+-- no second attempt and no fallback, and a letter Sanctuary could not remove is
+-- a letter the person still has.
+SanctuaryDB.debugEnabled = true
+ns.resetDebugLog()
+local orderedBeforeFailure = #mailbox.commands
+fire("MAIL_FAILED")
+equal(#mailbox.commands, orderedBeforeFailure, "a refused command is never sent again")
+check(lastDebug("MAIL", "FAILED") ~= nil, "the log is the whole of what happens")
+SanctuaryDB.debugEnabled = false
+ns.resetDebugLog()
+
+-- M7 -- nothing to scan.
+armMailFixture()
+mailbox.inbox = { { sender = "Nuisance-TestRealm", subject = "waiting" } }
+mailbox.shown = false
+MailFrame_OnEvent()
+equal(#mailbox.commands, 0, "a mailbox nobody opened is not scanned")
+mailbox.shown = true
+asFound.mailAddonEnabled = SanctuaryCharDB.overrides.enabled
+SanctuaryCharDB.overrides.enabled = false
+MailFrame_OnEvent()
+equal(#mailbox.commands, 0, "and neither is one while Sanctuary is switched off")
+SanctuaryCharDB.overrides.enabled = asFound.mailAddonEnabled
+MailFrame_OnEvent()
+equal(#mailbox.commands, 1, "switched back on, the very same redraw acts")
+
+-- M8 -- the button in the Diagnostics tab reads the box and orders nothing. It
+-- is the only way to answer, from a log, what the grid made of a real mailbox.
+armMailFixture()
+mailbox.inbox = {
+    { sender = "Nuisance-TestRealm", subject = "one" },
+    { sender = "Hotel des ventes", subject = "sold", canReply = false },
+}
+local mailReport = ns.runDiagnosticById("mail_scan")
+equal(mailReport.failed, nil, "the mailbox diagnostic runs")
+equal(#mailbox.commands, 0, "and orders nothing at all")
+check(mailReport.text:find("class=text", 1, true) ~= nil,
+    "it says what the grid made of each letter")
+check(mailReport.text:find("class=system", 1, true) ~= nil,
+    "the ones that never came from a player included")
+check(mailReport.text:find("would=delete", 1, true) ~= nil,
+    "and what Sanctuary would do with them")
+
+-- M9 -- the mail icon of the minimap. Hidden AFTER Blizzard has shown it, in
+-- the same pass, so nothing is ever on screen. The icon is handed three names
+-- and no header, so it can still go for a letter the mailbox will never touch:
+-- a blocked name's letter returned to them, which the box leaves alone on its
+-- fifth letter in M4, takes the icon away here all the same. That is decision
+-- 19, and the tooltip on that answer is where it is said.
+armMailFixture()
+ns.setMailIcon("normal")
+mailWaitsFrom("Nuisance-TestRealm")
+equal(mailbox.icon.shown, true, "on the normal setting the icon behaves as the game draws it")
+
+ns.setMailIcon("never")
+local layoutsBefore = mailbox.icon.layouts
+mailWaitsFrom("Guildmate-TestRealm")
+equal(mailbox.icon.shown, false, "on 'never' the icon goes, even for a letter from a guild mate")
+equal(mailbox.icon.layouts, layoutsBefore + 1, "and the row it sat in is laid out again")
+
+ns.setMailIcon("hideIfFiltered")
+mailWaitsFrom("Nuisance-TestRealm")
+equal(mailbox.icon.shown, false, "one filtered sender and the icon goes")
+mailWaitsFrom("Nuisance-TestRealm", "Stranger-TestRealm")
+equal(mailbox.icon.shown, false, "two of them, in the scope that filters strangers, too")
+mailWaitsFrom("Nuisance-TestRealm", "Guildmate-TestRealm")
+equal(mailbox.icon.shown, true, "one letter you would want and the icon stays")
+-- Three names is where the game stops counting: three can mean three senders or
+-- thirty, and hiding there would be hiding without knowing.
+mailWaitsFrom("Nuisance-TestRealm", "Nuisance-TestRealm", "Nuisance-TestRealm")
+equal(mailbox.icon.shown, true, "at three names the game has stopped counting, so the icon stays")
+
+-- A sender who is not a player goes through the very gate the scan uses. The
+-- pattern below is the auction house's own first word: without that gate the
+-- name is put to the lists like anybody's, the icon disappears, and the person
+-- is not told they have mail from an auction house or an NPC -- while the
+-- mailbox itself, quite rightly, was never touched.
+local keywordsBeforeIcon = SanctuaryDB.keywords
+SanctuaryDB.keywords = { "hotel" }
+ns.invalidateWhitelist()
+mailWaitsFrom("Hotel des ventes")
+equal(mailbox.icon.shown, true, "a sender who is not a player never takes the icon away")
+SanctuaryDB.keywords = keywordsBeforeIcon
+ns.invalidateWhitelist()
+
+-- Nothing waiting, and nothing to hide.
+mailWaitsFrom()
+equal(mailbox.icon.shown, false, "no mail waiting, no icon, and nothing for us to do")
+
+-- The icon is drawn from the mail answers AND from the master switch, so every
+-- one of them puts it back the moment it changes. Waiting for the next letter to
+-- arrive left the person who had just said "leave my mail alone" without an
+-- icon until a relog.
+mailWaitsFrom("Nuisance-TestRealm")
+ns.setMailMode("keep")
+equal(mailbox.icon.shown, true, "'leave my mail alone' hands the icon straight back")
+ns.setMailMode("delete")
+equal(mailbox.icon.shown, false, "and taking that answer back hides it again")
+
+local enabledBeforeIcon = SanctuaryCharDB.overrides.enabled
+ns.setEnabled(false)
+equal(mailbox.icon.shown, true, "switching the protection off hands it back too")
+SanctuaryCharDB.overrides.enabled = enabledBeforeIcon
+ns.refreshMailIcon()
+equal(mailbox.icon.shown, false, "and switched back on it is hidden again")
+
+-- And back to "Normale" without a relog: Blizzard's own handler is replayed,
+-- so what draws the icon stays the game's.
+ns.setMailIcon("normal")
+equal(mailbox.icon.shown, true, "and the icon comes back the moment the answer changes")
+mailbox.senders = {}
+
+mailbox.inbox = {}
+mailbox.commands = {}
+mailbox.shown = false
+mailbox.pending = false
+mailbox.target = nil
+ns.resetMailScan()
+InboxFrame_Update()
+resetModelState()
+SanctuaryDB.mail.mode = asFound.mailMode
+SanctuaryDB.mail.attachments = asFound.mailAttachments
+SanctuaryDB.mail.minimapIcon = asFound.mailIcon
+SanctuaryDB.notifications.mode = asFound.mailNotifications
+SanctuaryDB.logging.enabled = asFound.mailLogging
+
+end
+
+assertModelAtRest()
+-- ===========================================================================
 -- SECTION UI: the interface file, under a widget mock
 -- ===========================================================================
 
@@ -6484,6 +7163,10 @@ local function newWidget(kind, name, parent, template)
     function w:SetTexture(path) self.__texture = path end
     function w:GetTexture() return self.__texture end
     function w:SetTexCoord(...) self.__texCoord = { ... } end
+    -- Recorded for the same reason: the arrow of a duration field is one file
+    -- tinted rather than four rectangles filled, so the only trace its colour
+    -- leaves is this call.
+    function w:SetVertexColor(r, g, b, a) self.__vertexColor = { r, g, b, a or 1 } end
     function w:EnableMouse(value) self.__mouseEnabled = value and true or false end
     -- Kept as four numbers rather than a table: a colour is read back one
     -- component at a time, and "is this line green" is a check the panel's
@@ -6661,6 +7344,8 @@ local KNOWN_IDENTICAL = {
     -- The Journal's badge and its time range: a count, a dash and the word
     -- SPAM, which French borrows unchanged.
     LOGS_SPAM_BADGE = true, LOGS_TIME_RANGE = true,
+    -- The accept button of the mailbox dialog. "OK" in both languages.
+    MAIL_DELETE_OK = true,
 }
 local unexpected = {}
 for _, key in ipairs(untranslated) do
@@ -6675,7 +7360,7 @@ assertModelAtRest()
 -- ---------------------------------------------------------------------------
 
 -- The check above it asks "is every key the code writes as L[\"NAME\"] translated",
--- which is 147 keys of 230: the other 83 are reached by a computed name
+-- which is 147 keys of 228: the other 81 are reached by a computed name
 -- (L[row.labelKey]) and were never submitted to it. And French is an OVERRIDE
 -- block -- a key missing from it renders in English, readably, so nobody reports
 -- it and it drifts.
@@ -6715,8 +7400,8 @@ do
     local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
         definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
 
-    equal(#englishOrder, 230, "the default locale defines 230 keys")
-    equal(#frenchOrder, 230, "and the French block defines 230")
+    equal(#englishOrder, 253, "the default locale defines 253 keys")
+    equal(#frenchOrder, 253, "and the French block defines 253")
     equal(#englishDupes, 0,
         "no key is defined twice in the default locale ("
             .. table.concat(englishDupes, ", ") .. ")")
@@ -6775,13 +7460,29 @@ assertModelAtRest()
 -- themselves should not have to learn a vocabulary. And "passer" was banned for
 -- being untrue -- a name is never "let through", it is simply not blocked.
 local BANNED_WORDS = { "whitelist", "blacklist", " passe" }
+-- " passe" is banned in ONE sense, the one the rule above names: a name is never
+-- "let through". "passer pour", to be mistaken for something, is a different
+-- verb, and it is the word the validated sentence uses about the minimap icon
+-- (decision 20). The exception is that phrase and nothing wider: "un nom qui
+-- passe" is still a failure here.
+local function carriesBanned(text, word)
+    local at = 1
+    while true do
+        local found = text:find(word, at, true)
+        if not found then return false end
+        if not (word == " passe" and text:find("^ passer pour ", found)) then
+            return true
+        end
+        at = found + 1
+    end
+end
 local offenders = {}
 for _, locale in ipairs({ defaultLocale, frenchLocale }) do
     for key, value in pairs(locale) do
         if type(value) == "string" then
             local lowered = value:lower()
             for _, word in ipairs(BANNED_WORDS) do
-                if lowered:find(word, 1, true) then
+                if carriesBanned(lowered, word) then
                     offenders[#offenders + 1] = key .. " (" .. word .. ")"
                 end
             end
@@ -6791,6 +7492,12 @@ end
 table.sort(offenders)
 equal(#offenders, 0,
     "no visible string carries a banned word (" .. table.concat(offenders, ", ") .. ")")
+-- The exception is narrow, and this is what keeps it narrow: only the phrase is
+-- let by, the sense the rule bans still fails.
+equal(carriesBanned("un nom qui passe", " passe"), true,
+    "a name that 'passes' is still a banned word")
+equal(carriesBanned("peut donc passer pour un courrier", " passe"), false,
+    "and being mistaken for something is not")
 
 assertModelAtRest()
 -- ---------------------------------------------------------------------------
@@ -7008,8 +7715,8 @@ end
 -- count is asserted too.
 local CHECKS = {
     "SanctuaryStrictCheck", "SanctuaryAutoTrust",
-    "SanctuaryFilter_groupInvite", "SanctuaryFilter_whisper", "SanctuaryFilter_say",
-    "SanctuaryFilter_yell", "SanctuaryFilter_emote", "SanctuaryFilter_duel",
+    "SanctuaryFilter_groupInvite", "SanctuaryFilter_whisper", "SanctuaryFilter_sayYell",
+    "SanctuaryFilter_emote", "SanctuaryFilter_duel",
     "SanctuaryFilter_trade", "SanctuaryFilter_guildInvite",
     "SanctuaryJournalEnable", "SanctuaryJournalShowMessages",
     "SanctuaryDebugCheck", "SanctuaryMinimapCheck",
@@ -7028,35 +7735,39 @@ end
 
 -- The unticked state is the one that had nothing to show. A box whose fill and
 -- border are only applied when it is ticked reads as an empty label.
-_G.SanctuaryFilter_say.get = function() return false end
-_G.SanctuaryFilter_say:Refresh()
-equal(_G.SanctuaryFilter_say.mark:IsShown(), false, "an unticked box shows no mark")
-check(sameColor(_G.SanctuaryFilter_say.__backdropColor, CHECK_BG),
+_G.SanctuaryFilter_trade.get = function() return false end
+_G.SanctuaryFilter_trade:Refresh()
+equal(_G.SanctuaryFilter_trade.mark:IsShown(), false, "an unticked box shows no mark")
+check(sameColor(_G.SanctuaryFilter_trade.__backdropColor, CHECK_BG),
     "and is still a drawn box, which is the whole of the defect")
 
--- The radios are round: three discs and a circular mask, never a backdrop.
-for _, mode in ipairs({ "none", "keywords", "all" }) do
-    local radio = _G["SanctuaryChannel_" .. mode]
-    check(radio ~= nil and radio.rim ~= nil and radio.fill ~= nil and radio.mark ~= nil,
-        "the " .. mode .. " radio is drawn as a rim, a fill and a dot")
-    equal(radio.__backdropColor, nil, "and never as a square backdrop")
-    check(radio.mark.__mask ~= nil, "its dot is rounded by a mask")
-    equal(radio:GetWidth(), 18, "and it is the same 18 px as a checkbox")
+-- The channel modes are one menu, not three dots: it
+-- names the stored mode, a row picks one, and every row keeps the sentence its
+-- dot used to carry.
+do
+    local menu = _G.SanctuaryChannelMode
+    check(menu ~= nil and menu.list ~= nil and #menu.rows == 3,
+        "the channel modes are one menu of three rows")
+    SanctuaryDB.filters.channelMode = "none"
+    menu:Refresh()
+    equal(menu.value:GetText(), ns.L["CHANNEL_NONE"], "closed, it names the stored mode")
+    menu.rows[2]:Click()
+    equal(SanctuaryDB.filters.channelMode, "keywords", "a row picks its mode")
+    equal(menu.value:GetText(), ns.L["CHANNEL_KEYWORDS"], "and the field says so at once")
+    for index, key in ipairs({ "TIP_CHANNEL_NONE", "TIP_CHANNEL_KEYWORDS", "TIP_CHANNEL_ALL" }) do
+        check(menu.rows[index]:GetScript("OnEnter") ~= nil, "row " .. index .. " answers on hover")
+    end
+    menu.rows[1]:Click()
+    equal(SanctuaryDB.filters.channelMode, "none", "and moves it back")
 end
-_G.SanctuaryChannel_keywords:Click()
-equal(_G.SanctuaryChannel_keywords.mark:IsShown(), true, "the picked channel shows its dot")
-equal(_G.SanctuaryChannel_none.mark:IsShown(), false, "and the others do not")
-check(sameColor(_G.SanctuaryChannel_keywords.rim.__colorTexture, { 0.4, 0.6, 1.0, 1.0 }),
-    "the picked radio's rim answers too")
-_G.SanctuaryChannel_none:Click()
 
 -- Decision 135: clicking the TEXT of a box or a dot works the box or the dot.
 -- An 18 px square is a small target and every interface a person has used lets
 -- them hit the words instead.
 do
-    -- `say` is the box the block above rewired to answer false for ever; `yell`
-    -- is untouched and reads its own stored value.
-    local box = _G.SanctuaryFilter_yell
+    -- `trade` is the box the block above rewired to answer false for ever;
+    -- `emote` is untouched and reads its own stored value.
+    local box = _G.SanctuaryFilter_emote
     local hit = box.labelHit
     check(hit ~= nil, "a checkbox's label is a target of its own")
     equal(hit:GetParent(), box, "belonging to the box, so it hides with it")
@@ -7071,23 +7782,16 @@ do
         equal(corner, "BOTTOMRIGHT", "and to their bottom-right")
         equal(other, box.label, "so it stops where the text stops")
     end
-    local before = SanctuaryDB.filters.yell
+    local before = SanctuaryDB.filters.emote
     hit:Click()
-    equal(SanctuaryDB.filters.yell, not before, "clicking the words works the box")
+    equal(SanctuaryDB.filters.emote, not before, "clicking the words works the box")
     hit:Click()
-    equal(SanctuaryDB.filters.yell, before, "and works it back")
+    equal(SanctuaryDB.filters.emote, before, "and works it back")
     -- A disabled box refuses the words exactly as it refuses the square.
     box:SetEnabledState(false)
     hit:Click()
-    equal(SanctuaryDB.filters.yell, before, "a greyed box ignores its label too")
+    equal(SanctuaryDB.filters.emote, before, "a greyed box ignores its label too")
     box:SetEnabledState(true)
-
-    local radio = _G.SanctuaryChannel_keywords
-    check(radio.labelHit ~= nil, "and a radio's label is a target as well")
-    radio.labelHit:Click()
-    equal(SanctuaryDB.filters.channelMode, "keywords", "clicking the words picks the dot")
-    _G.SanctuaryChannel_none.labelHit:Click()
-    equal(SanctuaryDB.filters.channelMode, "none", "and moves it to the next one")
 end
 
 -- The tab strip, decision 140: ONE bar the full width of the window, between the
@@ -7207,7 +7911,7 @@ do
     _G["SanctuaryTab_protection"]:Click()
     ns.refreshUI()
     local content = _G.SanctuaryTabContent_protection
-    -- Four joins between five questions, so four rules.
+    -- Five joins between six questions, so five rules.
     local found = {}
     for _, child in ipairs(content.__children or {}) do
         if child.__kind == "Texture" and child:GetHeight() == 1
@@ -7215,7 +7919,7 @@ do
             found[#found + 1] = child
         end
     end
-    equal(#found, 4, "four rules, one between each pair of questions")
+    equal(#found, 5, "five rules, one between each pair of questions")
     for _, rule in ipairs(found) do
         equal(rule:GetWidth(), _G.SanctuaryMainFrame:GetWidth() - 36,
             "each one runs the whole column, padding aside")
@@ -7357,9 +8061,9 @@ do
     _G.SanctuaryFilter_duel:SetEnabledState(true)
     equal(_G.SanctuaryFilter_duel:GetAlpha(), 1, "and both come back")
     equal(_G.SanctuaryFilter_duel.label:GetAlpha(), 1, "together")
-    _G.SanctuaryChannel_all:SetEnabledState(false)
-    equal(_G.SanctuaryChannel_all:GetAlpha(), 0.8, "a greyed dot dims as well")
-    _G.SanctuaryChannel_all:SetEnabledState(true)
+    _G.SanctuaryChannelMode:SetEnabledState(false)
+    equal(_G.SanctuaryChannelMode:GetAlpha(), 0.8, "a greyed menu dims as well")
+    _G.SanctuaryChannelMode:SetEnabledState(true)
     SanctuaryDB.filters.channelMode = "none"
     ns.refreshUI()
 end
@@ -7742,9 +8446,28 @@ _G.SanctuaryFilter_whisper:Click()
 equal(SanctuaryDB.filters.whisper, not storedWhisper, "a box writes its own key")
 _G.SanctuaryFilter_whisper:Click()
 equal(SanctuaryDB.filters.whisper, storedWhisper, "and writes it back")
-_G.SanctuaryChannel_all:Click()
-equal(SanctuaryDB.filters.channelMode, "all", "a channel radio writes the channel mode")
-_G.SanctuaryChannel_none:Click()
+-- One box for two keys since 1.1.0: hiding one means hiding the other. The engine keeps the two apart -- the Journal still says which of
+-- the two a line was -- so what has to be proven here is that ONE click arms
+-- both of them, all the way down to the two chat filters.
+do
+    local storedSay, storedYell = SanctuaryDB.filters.say, SanctuaryDB.filters.yell
+    SanctuaryDB.filters.say, SanctuaryDB.filters.yell = false, false
+    _G.SanctuaryFilter_sayYell:Click()
+    equal(SanctuaryDB.filters.say, true, "one box ticks /say")
+    equal(SanctuaryDB.filters.yell, true, "and /yell with it")
+    check(chatFilters.CHAT_MSG_SAY(nil, "CHAT_MSG_SAY", "hello", "Unknown"),
+        "so a stranger's /say is hidden")
+    check(chatFilters.CHAT_MSG_YELL(nil, "CHAT_MSG_YELL", "hello", "Unknown"),
+        "and their /yell too")
+    _G.SanctuaryFilter_sayYell:Click()
+    equal(SanctuaryDB.filters.say, false, "unticking clears /say")
+    equal(SanctuaryDB.filters.yell, false, "and /yell with it")
+    SanctuaryDB.filters.say, SanctuaryDB.filters.yell = storedSay, storedYell
+end
+
+_G.SanctuaryChannelMode.rows[3]:Click()
+equal(SanctuaryDB.filters.channelMode, "all", "a row of the channel menu writes the channel mode")
+_G.SanctuaryChannelMode.rows[1]:Click()
 equal(SanctuaryDB.filters.channelMode, "none", "and the first one writes it back")
 check(_G.SanctuaryStrictCheck:IsShown(), "the enhanced-instance box is visible in \"I choose\"")
 
@@ -7825,15 +8548,11 @@ do
     local SWEEP = {
         { name = "SanctuaryFilter_groupInvite", room = 194, column = 220 },
         { name = "SanctuaryFilter_whisper",     room = 194, column = 220 },
-        { name = "SanctuaryFilter_say",         room = 194, column = 220 },
-        { name = "SanctuaryFilter_yell",        room = 194, column = 220 },
+        { name = "SanctuaryFilter_sayYell",     room = 194, column = 220 },
         { name = "SanctuaryFilter_emote",       room = 194, column = 220 },
         { name = "SanctuaryFilter_duel",        room = 194, column = 220 },
         { name = "SanctuaryFilter_trade",       room = 194, column = 220 },
         { name = "SanctuaryFilter_guildInvite", room = 194, column = 220 },
-        { name = "SanctuaryChannel_none",       room = 178, column = 204 },
-        { name = "SanctuaryChannel_keywords",   room = 178, column = 204 },
-        { name = "SanctuaryChannel_all",        room = 178, column = 204 },
         -- Indented under its parent in "I choose": 220 less the 26 px indent.
         { name = "SanctuaryStrictCheck",        room = 168, column = 194 },
         -- Never in a column: the whole inner width less its own box and gap.
@@ -7855,6 +8574,13 @@ do
         -- the whole point of the bound.
         check(label.__wordWrap ~= false, entry.name .. " folds rather than truncating")
     end
+
+    -- The channel menu is not a box with a label: it is bounded as a whole,
+    -- the column less the 16 px indent the dots had, field, list and rows alike.
+    local menu = _G.SanctuaryChannelMode
+    equal(menu:GetWidth(), 204, "the channel menu takes the column less its indent")
+    equal(menu.list:GetWidth(), 204, "and its list opens as wide as the field")
+    equal(menu.rows[3]:GetWidth(), 196, "each row inside the list's 4 px margins")
 
     -- Not vacuous. The longest label of the screen really is longer than the
     -- room it has, at the 5.14 px per character the session measured on the real
@@ -7935,6 +8661,190 @@ do
 end
 
 assertModelAtRest()
+-- The contract a texture file has to meet for the client to draw it at all,
+-- read from the file's own header: uncompressed true-colour -- type 2, never
+-- the RLE variant every convert-to-TGA tool writes by default -- 32 bits a
+-- pixel with a real eight-bit alpha, written bottom-up, and a power of two on
+-- both sides. Two files ship with the add-on and both answer to it, so the rule
+-- is written once and asked twice; each caller reads the pixels afterwards for
+-- what only its own drawing has to be.
+local function readShippedTexture(relative, side, said)
+    local handle = io.open(repoRoot .. "/" .. relative, "rb")
+    check(handle ~= nil, said .. " is in the add-on folder (" .. relative .. ")")
+    if not handle then return nil end
+    local header = handle:read(18)
+    equal(#header, 18, said .. " has a TGA header")
+    equal(header:byte(2), 0, "with no colour map in " .. said)
+    equal(header:byte(3), 2, said .. " is uncompressed true-colour, not the RLE variant")
+    local width = header:byte(13) + header:byte(14) * 256
+    local height = header:byte(15) + header:byte(16) * 256
+    equal(width, side, said .. " is " .. side .. " px wide")
+    equal(height, side, "and " .. side .. " tall -- a power of two on both sides")
+    equal(header:byte(17), 32, said .. " is 32 bits a pixel, so there is room for an alpha")
+    equal(header:byte(18) % 16, 8, "and eight of them are the alpha")
+    -- Bit 5 of the descriptor is the origin. Zero is bottom-left, which is what
+    -- the client reads; the other way round is an upside-down drawing.
+    equal(math.floor(header:byte(18) / 32) % 2, 0, said .. " is written bottom-up")
+    local body = handle:read("a")
+    handle:close()
+    equal(#body, width * height * 4, "the pixels of " .. said .. " are all there")
+    return body, width, height
+end
+
+-- ---------------------------------------------------------------------------
+-- Question 3: the mailbox
+-- ---------------------------------------------------------------------------
+
+do
+
+local keptMode = ns.getMailMode()
+local keptAttachments = ns.getMailAttachments()
+local keptIcon = ns.getMailIcon()
+local keptSize = SanctuaryDB.uiSize
+local details = _G.SanctuaryMailDetails
+local keep, remove = _G.SanctuaryMail_keep, _G.SanctuaryMail_delete
+check(keep ~= nil and remove ~= nil, "question 3 offers the same two cards as the others")
+check(details ~= nil, "with its details in a block of their own")
+
+-- The anti-spam kept its own names: they say what the cards are, not where they
+-- sit, and renaming them would cost twenty locale keys to say the same thing.
+check(_G.SanctuaryQ3_yes ~= nil and _G.SanctuaryQ3_no ~= nil,
+    "the anti-spam's cards keep the names they have always had")
+check(_G.SanctuaryQ4_silent ~= nil, "and so do the notification cards")
+
+-- Folded by default: the two cards and nothing else. What the home screen grows
+-- by is one row of cards, its title and its rule.
+ns.setMailMode("keep")
+ns.refreshUI()
+equal(details:IsShown(), false, "left alone, question 3 shows its two cards and nothing more")
+local foldedHeight = _G.SanctuaryContentScroll:GetScrollChild():GetHeight()
+
+remove:Click()
+equal(ns.getMailMode(), "delete", "the second card sets the mailbox to be emptied")
+equal(details:IsShown(), true, "and unfolds the two answers that go with it")
+check(_G.SanctuaryContentScroll:GetScrollChild():GetHeight() > foldedHeight,
+    "the screen grows for them")
+-- The questions under it move down with the fold rather than being written over.
+do
+    local _, _, _, _, mailY = _G.SanctuaryMailDetails:GetPoint()
+    local _, _, _, _, antiSpamY = _G.SanctuaryQ3_yes:GetPoint()
+    check((antiSpamY or 0) < (mailY or 0) - details:GetHeight(),
+        "and question 4 sits under the whole of it")
+end
+keep:Click()
+equal(details:IsShown(), false, "the first card folds it away again")
+equal(_G.SanctuaryContentScroll:GetScrollChild():GetHeight(), foldedHeight,
+    "and the screen goes back to the length it had")
+
+-- Alive in the open mode too, and never a greyed-out witness: the blocked list
+-- and the patterns reach a letter whatever question 1 answers.
+do
+    local keptScope = SanctuaryDB.filters.scope
+    SanctuaryDB.filters.scope = "blockedOnly"
+    ns.refreshUI()
+    equal(keep.enabled, true, "'everyone except the people I block' leaves question 3 live")
+    equal(remove.enabled, true, "on both of its cards")
+    SanctuaryDB.filters.scope = keptScope
+    ns.refreshUI()
+end
+
+-- The one answer that destroys something is written by the dialog and never by
+-- the click.
+remove:Click()
+ns.setMailAttachments("keep")
+ns.refreshUI()
+popup.shown = false
+_G.SanctuaryMailAttach_delete:Click()
+equal(ns.getMailAttachments(), "keep", "clicking 'delete it too' writes nothing on its own")
+equal(popup.shown, true, "it asks first")
+equal(popup.which, "SANCTUARY_MAIL_DELETE_ATTACHMENTS", "in a dialog of its own")
+local mailDialog = StaticPopupDialogs.SANCTUARY_MAIL_DELETE_ATTACHMENTS
+equal(mailDialog.showAlert, true, "drawn as the warning it is")
+mailDialog.OnCancel()
+equal(ns.getMailAttachments(), "keep", "saying no leaves the answer that was there")
+equal(_G.SanctuaryMailAttach_keep.mark:IsShown(), true, "and the dot goes back where it was")
+popup.shown = false
+_G.SanctuaryMailAttach_delete:Click()
+equal(popup.shown, true, "a second try asks again rather than remembering the first")
+mailDialog.OnAccept()
+equal(ns.getMailAttachments(), "delete", "and saying yes is what writes it")
+
+-- The other two answers are ordinary: they write on the click.
+_G.SanctuaryMailAttach_return:Click()
+equal(ns.getMailAttachments(), "return", "sending it back needs no dialog")
+_G.SanctuaryMailIcon_never:Click()
+equal(ns.getMailIcon(), "never", "and neither does the icon")
+_G.SanctuaryMailIcon_normal:Click()
+equal(ns.getMailIcon(), "normal", "either way round")
+
+-- The middle answer is the one thing on this screen the game cannot be sure of,
+-- and the sentence saying so hangs on it alone. Outside the mailbox WoW gives
+-- three sender NAMES and nothing else, so an NPC named in a single word reads
+-- like anyone else and takes the icon with it; inside the mailbox the game
+-- answers, and that mail is never touched. The setting stays as it is
+-- and says what it does instead (decisions 19 to 21). The other two
+-- answers promise nothing they cannot keep, so they explain nothing.
+do
+    -- A row with nothing to say has no OnEnter at all, so the hover is asked for
+    -- rather than called: what is compared is the sentence that came up, and a
+    -- row that stopped saying anything reads as nil instead of a traceback.
+    local function hoverText(frame)
+        rawset(GameTooltip, "__lastText", nil)
+        local enter = frame:GetScript("OnEnter")
+        if enter then enter(frame) end
+        local text = rawget(GameTooltip, "__lastText")
+        local leave = frame:GetScript("OnLeave")
+        if leave then leave(frame) end
+        return text
+    end
+    local uncertain = _G.SanctuaryMailIcon_hideIfFiltered
+    equal(hoverText(uncertain), ns.L["TIP_MAIL_ICON_FILTERED"],
+        "the icon answer the game cannot be sure of says so under the pointer")
+    equal(hoverText(uncertain.labelHit), ns.L["TIP_MAIL_ICON_FILTERED"],
+        "and so do the words beside it")
+    equal(hoverText(_G.SanctuaryMailIcon_normal), nil,
+        "'Normal' is certain, and answers nothing on hover")
+    equal(hoverText(_G.SanctuaryMailIcon_never), nil, "so is 'Never'")
+
+    -- The validated sentence, to the letter (decisions 20 and 21).
+    equal(frenchLocale.TIP_MAIL_ICON_FILTERED,
+        "L'ic\195\180ne de courrier pr\195\168s de la minicarte se fie aux noms des "
+        .. "exp\195\169diteurs. Un courrier de PNJ peut donc passer pour un courrier "
+        .. "\195\160 filtrer. \195\128 l'ouverture de la bo\195\174te aux lettres, il "
+        .. "sera reconnu comme venant d'un PNJ et ne sera pas supprim\195\169.",
+        "the French sentence is the validated one")
+    check((defaultLocale.TIP_MAIL_ICON_FILTERED or ""):find(
+        "it is recognized as coming from an NPC and is not deleted", 1, true) ~= nil,
+        "and the default locale makes the mailbox the same promise")
+end
+
+-- At the narrowest the grip goes to, every dot and its label stay inside the
+-- screen. They are laid out left to right and wrap when the next one would not
+-- fit, which is what the mock-up draws.
+SanctuaryDB.uiSize = { 500, 0 }
+ns.refreshUI()
+do
+    local room = _G.SanctuaryMailDetails:GetWidth()
+    equal(room, 464, "at 500 px the block has the same 464 px the rest of the screen has")
+    for _, name in ipairs({ "SanctuaryMailAttach_keep", "SanctuaryMailAttach_return",
+        "SanctuaryMailAttach_delete", "SanctuaryMailIcon_normal",
+        "SanctuaryMailIcon_hideIfFiltered", "SanctuaryMailIcon_never" }) do
+        local dot = _G[name]
+        local _, _, _, x = dot:GetPoint()
+        local right = (x or 0) + (dot:GetWidth() or 0) + 8 + (dot.label:GetWidth() or 0)
+        check(right <= room, name .. " ends inside the screen (" .. right .. " of " .. room .. ")")
+    end
+end
+SanctuaryDB.uiSize = keptSize
+
+ns.setMailAttachments(keptAttachments)
+ns.setMailIcon(keptIcon)
+ns.setMailMode(keptMode)
+ns.refreshUI()
+
+end
+
+assertModelAtRest()
 -- ---------------------------------------------------------------------------
 -- Question 3: the anti-spam of the public channels
 -- ---------------------------------------------------------------------------
@@ -7945,6 +8855,42 @@ local yes, no = _G.SanctuaryQ3_yes, _G.SanctuaryQ3_no
 local interval, list = _G.SanctuaryAntiSpamInterval, _G.SanctuaryAntiSpamIntervalList
 check(yes ~= nil and no ~= nil, "question 3 offers the same two cards as the others")
 check(interval ~= nil and list ~= nil, "with a window under them")
+
+-- The arrow in the field. Four rectangles stacked into a staircase read as
+-- crooked on a real client, so it is one image now, white on transparency,
+-- and the colour is a tint over it.
+do
+    local caret = interval.caret
+    check(caret ~= nil and caret.arrow ~= nil, "the field carries an arrow")
+    equal(caret.bars, nil, "made of one texture and not of a stack of them")
+    local path = tostring(caret.arrow:GetTexture())
+    equal(path:sub(-15), "media\\caret.tga", "drawn from the add-on's own file (" .. path .. ")")
+    caret:SetCaretColor({ 1, 0, 0, 1 })
+    equal(table.concat(caret.arrow.__vertexColor or {}, ","), "1,0,0,1",
+        "and greying it out is a tint, not a redraw")
+
+    local body, width, height = readShippedTexture("media/caret.tga", 16, "the arrow")
+    if body then
+        -- A triangle pointing down: nothing at the very bottom row, a full base
+        -- at the top of the drawing. Read on the image's own rows -- the file is
+        -- written bottom-up, so its first row is the image's last.
+        local function alphaAt(col, row)
+            return body:byte(((height - 1 - row) * width + col) * 4 + 4)
+        end
+        local widest, widestRow = 0, nil
+        for row = 0, height - 1 do
+            local drawn = 0
+            for col = 0, width - 1 do
+                if alphaAt(col, row) > 0 then drawn = drawn + 1 end
+            end
+            if drawn > widest then widest, widestRow = drawn, row end
+        end
+        check(widest >= 10, "there is a triangle in it (" .. widest .. " px across)")
+        check(widestRow < height / 2, "with its base at the top (row " .. tostring(widestRow) .. ")")
+        equal(alphaAt(width / 2, height - 1), 0, "and its point above the bottom edge")
+    end
+    ns.refreshUI()
+end
 
 -- Out of the box: opted into, never out of, and five minutes.
 ns.setAntiSpamEnabled(false)
@@ -8031,10 +8977,10 @@ do
         end
     end
     walk(protectionContent)
-    for _, number in ipairs({ "1", "2", "3", "4", "5" }) do
+    for _, number in ipairs({ "1", "2", "3", "4", "5", "6" }) do
         check(seen[number], "the screen numbers a question " .. number)
     end
-    check(not seen["6"], "and stops at five")
+    check(not seen["7"], "and stops at six")
 
     local previousY
     local ordered = {
@@ -9381,31 +10327,30 @@ do
     equal(declared, drawn,
         "the AddOns list and the minimap name the same asset")
 
+    -- Same manifest, two more fields: the version and the build the code prints
+    -- in the About tab and in every debug report have to be the ones the .toc
+    -- declares, or the AddOns list and a user report would name two different
+    -- builds. The 27/08 release bumped the .toc and not the code, and nothing
+    -- here said so.
+    local tocVersion, tocBuild
+    local manifestAgain = io.open(repoRoot .. "/Sanctuary.toc", "r")
+    if manifestAgain then
+        for line in manifestAgain:lines() do
+            tocVersion = tocVersion or line:match("^##%s*Version:%s*(.-)%s*$")
+            tocBuild = tocBuild or line:match("^##%s*X%-Sanctuary%-Build:%s*(.-)%s*$")
+        end
+        manifestAgain:close()
+    end
+    equal(ns.VERSION, tocVersion, "the code's version is the .toc's version")
+    equal(ns.BUILD_ID, tocBuild, "the code's build is the .toc's build")
+
     -- Surface three: the file itself. The client's path is turned back into a
     -- path on disk -- the add-on folder IS `Sanctuary`, and the extension is the
     -- one we ship.
     local relative = tostring(declared):gsub("\\", "/")
-        :gsub("^Interface/AddOns/Sanctuary/", "")
-    local handle = io.open(repoRoot .. "/" .. relative .. ".tga", "rb")
-    check(handle ~= nil,
-        "and the file that path resolves to is in the add-on folder (" .. relative .. ".tga)")
-    if handle then
-        local header = handle:read(18)
-        equal(#header, 18, "it has a TGA header")
-        equal(header:byte(2), 0, "no colour map")
-        -- Type 2 is uncompressed true-colour. Type 10 is the RLE variant, which
-        -- is what every convert-to-TGA tool writes by default and what the
-        -- client does not read.
-        equal(header:byte(3), 2, "uncompressed true-colour, not the RLE variant")
-        local width = header:byte(13) + header:byte(14) * 256
-        local height = header:byte(15) + header:byte(16) * 256
-        equal(width, 64, "64 px wide")
-        equal(height, 64, "and 64 tall -- a power of two on both sides")
-        equal(header:byte(17), 32, "32 bits a pixel, so there is room for an alpha")
-        equal(header:byte(18) % 16, 8, "and eight of them are the alpha")
-        -- Bit 5 of the descriptor is the origin. Zero is bottom-left, which is
-        -- what the client reads; the other way round is an upside-down icon.
-        equal(math.floor(header:byte(18) / 32) % 2, 0, "written bottom-up")
+        :gsub("^Interface/AddOns/Sanctuary/", "") .. ".tga"
+    local body, width, height = readShippedTexture(relative, 64, "the logo")
+    if body then
         -- Really drawn, and really a DISC. Decision 163 recomposed the artwork:
         -- the night background fills the whole square as a disc and the shield
         -- sits on it at 74 %, because the shield alone -- detoured, on nothing --
@@ -9414,9 +10359,6 @@ do
         -- see-through": it is opaque from edge to edge through the middle, and
         -- clear at the four corners, which is the difference between a disc that
         -- fills the ring's hole and a square whose corners the ring cuts off.
-        local body = handle:read("a")
-        handle:close()
-        equal(#body, width * height * 4, "the pixels are all there")
         local function alphaAt(col, row) return body:byte((row * width + col) * 4 + 4) end
         local clear, opaque = 0, 0
         for row = 0, height - 1 do
@@ -9757,7 +10699,7 @@ equal(resultText and resultText:GetText(), ns.L["DIAG_RESULT_EMPTY"],
 -- branches on the data it is testing cannot notice that data disappearing.
 local SENSITIVE_DIAGNOSTIC_ID = "sim_bnetfriend"
 local MANUAL_DIAGNOSTIC_IDS = { "diag_sound_open", "diag_sound_invite" }
-local SKIPPED_DIAGNOSTIC_ID = "sim_channel_spam"
+local SKIPPED_DIAGNOSTIC_IDS = { "sim_channel_spam", "mail_scan" }
 local BULK_DIAGNOSTIC_IDS = { "sim_invite", "sim_bnet", "diag_chat",
     "diag_chat_lockdown", "diag_popup_invite", "diag_popup_duel", "diag_popup_guild",
     "diag_popup_list" }
@@ -9775,13 +10717,16 @@ equal(manualCount, #MANUAL_DIAGNOSTIC_IDS, "exactly two are marked as run-them-b
 for _, id in ipairs(MANUAL_DIAGNOSTIC_IDS) do
     equal(ns.getDiagnosticEntry(id).manual, true, id .. " is one of them")
 end
-equal(skippedCount, 1, "exactly one is kept out of the batch without being a manual one")
-equal(ns.getDiagnosticEntry(SKIPPED_DIAGNOSTIC_ID).skipBulk, true,
-    "and it is " .. SKIPPED_DIAGNOSTIC_ID .. ", the one that prints into the chat")
-equal(ns.getDiagnosticEntry(SKIPPED_DIAGNOSTIC_ID).manual, nil,
-    "which is not a manual one: its tooltip has something else to say")
-equal(#ns.DIAGNOSTIC_CATALOG, #BULK_DIAGNOSTIC_IDS + #MANUAL_DIAGNOSTIC_IDS + 2,
-    "the catalogue is the bulk set plus those four")
+equal(skippedCount, #SKIPPED_DIAGNOSTIC_IDS,
+    "two are kept out of the batch without being manual ones")
+for _, id in ipairs(SKIPPED_DIAGNOSTIC_IDS) do
+    equal(ns.getDiagnosticEntry(id).skipBulk, true, id .. " is one of them")
+    equal(ns.getDiagnosticEntry(id).manual, nil,
+        "and not a manual one: " .. id .. " has a tooltip of its own to show")
+end
+equal(#ns.DIAGNOSTIC_CATALOG,
+    #BULK_DIAGNOSTIC_IDS + #MANUAL_DIAGNOSTIC_IDS + #SKIPPED_DIAGNOSTIC_IDS + 1,
+    "the catalogue is the bulk set plus those five")
 
 -- Being kept out of the batch must not rewrite what the button says on hover:
 -- "run this one on its own, and listen" is true of the two sounds and false of
@@ -9818,8 +10763,10 @@ for _, id in ipairs(MANUAL_DIAGNOSTIC_IDS) do
     equal(shown:find(ns.L[ns.getDiagnosticEntry(id).labelKey], 1, true), nil,
         "nor " .. id .. ", which has to be heard on its own")
 end
-equal(shown:find(ns.L[ns.getDiagnosticEntry(SKIPPED_DIAGNOSTIC_ID).labelKey], 1, true), nil,
-    "nor " .. SKIPPED_DIAGNOSTIC_ID .. ", whose answer is printed into the chat")
+for _, id in ipairs(SKIPPED_DIAGNOSTIC_IDS) do
+    equal(shown:find(ns.L[ns.getDiagnosticEntry(id).labelKey], 1, true), nil,
+        "nor " .. id .. ", which is kept out of the batch for a reason of its own")
+end
 
 -- Step C.1 of the session promises nothing on screen and nothing in the ear
 -- while the batch runs, and the tester reads the chat right after it. The spam
@@ -9963,7 +10910,7 @@ local aboutHeight = mainFrame:GetHeight()
 _G["SanctuaryTab_protection"]:Click()
 local protectionHeight = mainFrame:GetHeight()
 check(protectionHeight >= aboutHeight, "the tallest screen is at least as tall as the shortest")
-check(protectionHeight <= 900 + 40 + 30 + 16, "and the fitted height stays within its bounds")
+check(protectionHeight <= 1030 + 40 + 30 + 16, "and the fitted height stays within its bounds")
 
 -- "I choose" unfolds two columns of boxes into the middle of the screen: the
 -- window grows for them, and where it cannot -- a size the person dragged it to
@@ -10523,7 +11470,7 @@ end
 -- And the fitted mode is really back: the height follows the screen again, and
 -- the width goes back to the one the window is designed at.
 _G["SanctuaryTab_about"]:Click()
-equal(mainFrame:GetHeight(), 776 + 40 + 30 + 16, "the shortest screen is back to its fitted height")
+equal(mainFrame:GetHeight(), 906 + 40 + 30 + 16, "the shortest screen is back to its fitted height")
 equal(mainFrame:GetWidth(), 780, "and to the design width")
 local shortestFitted = mainFrame:GetHeight()
 -- Every screen opens in the same window: the height the window asks for is the
@@ -11193,6 +12140,11 @@ do
                 .. " (" .. tostring(maxHeight) .. ")")
         check(minHeight < maxHeight, "and the grip still has a vertical travel at "
             .. screen .. " (" .. tostring(minHeight) .. " to " .. tostring(maxHeight) .. ")")
+        -- The bounds are posted before the SetSize, so a ceiling under the
+        -- opening height is a window the client cuts down on the spot.
+        check(maxHeight >= mainFrame:GetHeight(),
+            "and it is never asked to be shorter than the window opens at " .. screen
+                .. " (" .. tostring(maxHeight) .. " for " .. tostring(mainFrame:GetHeight()) .. ")")
 
         local scroll = _G.SanctuaryContentScroll
         local child = scroll:GetScrollChild():GetHeight() or 0
@@ -11256,6 +12208,53 @@ do
         "on a screen with the room the whole home screen is in the window")
     equal(scroll.bar:IsShown(), false, "and there is nothing to scroll")
 
+    -- The room a large screen buys, taken. The design's ceiling stops the window
+    -- at 1116 units; up to nine tenths of the screen carries "I choose" unfolded
+    -- WITH question 3 unfolded under it, which is the tallest the home screen
+    -- ever is.
+    UIParent.GetHeight = function() return 1440 end
+    SanctuaryDB.filters.preset = "custom"
+    local keptMailMode = ns.getMailMode()
+    ns.setMailMode("delete")
+    ns.refreshUI()
+    check(mainFrame:GetHeight() > 1030 + 86,
+        "a screen with room to spare opens the window past the design ceiling ("
+            .. tostring(mainFrame:GetHeight()) .. ")")
+    check((scroll:GetScrollChild():GetHeight() or 0) <= (scroll:GetHeight() or 0),
+        "and the whole home screen, both folds open, is in it ("
+            .. tostring(scroll:GetScrollChild():GetHeight()) .. " in "
+            .. tostring(scroll:GetHeight()) .. ")")
+    equal(scroll.bar:IsShown(), false, "with nothing left under the fold")
+    ns.setMailMode(keptMailMode)
+    SanctuaryDB.filters.preset = "all"
+
+    -- A size the person dragged to is theirs: the share of the screen is what
+    -- the window opens at when nobody has said otherwise, and nothing else.
+    SanctuaryDB.uiSize = { 500, 890 }
+    mainFrame:Hide()
+    mainFrame:Show()
+    equal(mainFrame:GetHeight(), 890, "a remembered height is not stretched by the share")
+    -- Theirs up to the GRIP's ceiling, which is the share of the screen -- not
+    -- the design's 1116. Held to the design's, letting go of a window dragged
+    -- taller than that wrote the size, and the refresh that followed pulled the
+    -- window back up on its own, by more the larger the screen.
+    SanctuaryDB.uiSize = { 500, 1250 }
+    mainFrame:Hide()
+    mainFrame:Show()
+    equal(mainFrame:GetHeight(), 1250,
+        "a height dragged past the design ceiling comes back exactly where it was left")
+    -- And a settings file that carries anything at all still comes back inside
+    -- the bounds the grip is given.
+    local _, _, _, gripCeiling = mainFrame:GetResizeBounds()
+    SanctuaryDB.uiSize = { 500, 10000 }
+    mainFrame:Hide()
+    mainFrame:Show()
+    equal(mainFrame:GetHeight(), gripCeiling,
+        "while an absurd remembered height is brought back to the grip's own ceiling")
+    SanctuaryDB.uiSize = nil
+    mainFrame:Hide()
+    mainFrame:Show()
+
     UIParent.GetHeight = keptScreen
     SanctuaryDB.uiSize = keptSize
     SanctuaryDB.filters.preset = keptPreset
@@ -11273,7 +12272,7 @@ do
     _G["SanctuaryTab_protection"]:Click()
     ns.refreshUI()
     local asked = mainFrame:GetHeight()
-    check(asked >= 776 + 40 + 30 + 16,
+    check(asked >= 906 + 40 + 30 + 16,
         "with no screen to fit, the window is as tall as the home screen asked ("
             .. tostring(asked) .. ")")
     for _, answer in ipairs({ "nil", 0, -100, "tall" }) do
@@ -12481,7 +13480,7 @@ now = now + 5
 reloaded.logBlock("channel", "Namesake", "same words twice", nil, nil)
 equal(#SanctuaryDB.log, 1, "a bare pseudo folds into one entry on its own realm")
 equal(SanctuaryDB.log[1].count, 2, "counted twice")
-equal(SanctuaryDB.log[1].realm, "", "and stored bare, the way the game hands it over")
+equal(SanctuaryDB.log[1].realm, "TestRealm", "and stored with the realm it was written on")
 
 local ownRealm = GetNormalizedRealmName
 function GetNormalizedRealmName() return "OtherRealm" end
