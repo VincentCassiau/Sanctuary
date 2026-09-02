@@ -4088,6 +4088,21 @@ local function fitToScreen(frameHeight)
     return math.min(frameHeight, math.max(SCREEN_FLOOR, available - SCREEN_MARGIN))
 end
 
+-- How tall the window may go when nobody has dragged it: the design's ceiling,
+-- or nine tenths of the screen where that is more. A large screen shows the home
+-- screen whole instead of scrolling it (Vincent, 02/09/2026).
+--
+-- `max`, never the share alone. Nine tenths of the 768 units a default Retail
+-- client measures is 691 -- shorter than the 748 the window already opens at
+-- there -- so reading "up to 90 %" literally would shrink the window on the most
+-- common screen of all. It is a ceiling to grow towards, not a size to impose.
+local SCREEN_SHARE = 0.90
+local function heightCeiling()
+    local available = UIParent and UIParent.GetHeight and UIParent:GetHeight()
+    if type(available) ~= "number" or available <= 0 then return MAX_FRAME_HEIGHT end
+    return math.max(MAX_FRAME_HEIGHT, math.floor(available * SCREEN_SHARE))
+end
+
 -- What the grip is allowed to do, in height. The screen brings the CEILING down
 -- to what it holds; the floor stays the design's, so there is always a travel
 -- between the two. Applying the screen to BOTH bounds is what took the vertical
@@ -4096,8 +4111,12 @@ end
 -- the one case where it would otherwise cross the ceiling -- a screen too short
 -- to hold even the floor -- because bounds handed over inverted are bounds the
 -- client is free to read either way round.
+--
+-- The ceiling is the one `applyHeight` opens on, and it has to be: the bounds
+-- are posted before the SetSize, so a grip ceiling under the opening height
+-- would have the client cut the window down to it.
 local function heightBounds()
-    local maxHeight = fitToScreen(MAX_FRAME_HEIGHT)
+    local maxHeight = fitToScreen(heightCeiling())
     return math.min(GRIP_MIN_FRAME_HEIGHT, maxHeight), maxHeight
 end
 
@@ -4184,8 +4203,7 @@ local function applyHeight(height)
         frameHeight = manualSize[2] or GRIP_MIN_FRAME_HEIGHT
         frameHeight = math.min(MAX_FRAME_HEIGHT, math.max(GRIP_MIN_FRAME_HEIGHT, frameHeight))
     else
-        local bounded = math.min(MAX_HEIGHT, needed)
-        frameHeight = bounded + CONTENT_TOP + CONTENT_BOTTOM
+        frameHeight = math.min(needed + CONTENT_TOP + CONTENT_BOTTOM, heightCeiling())
     end
     frameHeight = fitToScreen(frameHeight)
     applyResizeBounds()

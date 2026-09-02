@@ -11367,6 +11367,11 @@ do
                 .. " (" .. tostring(maxHeight) .. ")")
         check(minHeight < maxHeight, "and the grip still has a vertical travel at "
             .. screen .. " (" .. tostring(minHeight) .. " to " .. tostring(maxHeight) .. ")")
+        -- The bounds are posted before the SetSize, so a ceiling under the
+        -- opening height is a window the client cuts down on the spot.
+        check(maxHeight >= mainFrame:GetHeight(),
+            "and it is never asked to be shorter than the window opens at " .. screen
+                .. " (" .. tostring(maxHeight) .. " for " .. tostring(mainFrame:GetHeight()) .. ")")
 
         local scroll = _G.SanctuaryContentScroll
         local child = scroll:GetScrollChild():GetHeight() or 0
@@ -11429,6 +11434,30 @@ do
     check((scroll:GetScrollChild():GetHeight() or 0) <= (scroll:GetHeight() or 0),
         "on a screen with the room the whole home screen is in the window")
     equal(scroll.bar:IsShown(), false, "and there is nothing to scroll")
+
+    -- The room a large screen buys, taken. The design's ceiling stops the window
+    -- at 986 units; up to nine tenths of the screen carries "I choose" unfolded,
+    -- which is the tallest the home screen ever is.
+    UIParent.GetHeight = function() return 1440 end
+    SanctuaryDB.filters.preset = "custom"
+    ns.refreshUI()
+    check(mainFrame:GetHeight() > 986,
+        "a screen with room to spare opens the window past the design ceiling ("
+            .. tostring(mainFrame:GetHeight()) .. ")")
+    check((scroll:GetScrollChild():GetHeight() or 0) <= (scroll:GetHeight() or 0),
+        "and the unfolded home screen is in it whole")
+    equal(scroll.bar:IsShown(), false, "with nothing left under the fold")
+    SanctuaryDB.filters.preset = "all"
+
+    -- A size the person dragged to is theirs: the share of the screen is what
+    -- the window opens at when nobody has said otherwise, and nothing else.
+    SanctuaryDB.uiSize = { 500, 890 }
+    mainFrame:Hide()
+    mainFrame:Show()
+    equal(mainFrame:GetHeight(), 890, "a remembered height is not stretched by the share")
+    SanctuaryDB.uiSize = nil
+    mainFrame:Hide()
+    mainFrame:Show()
 
     UIParent.GetHeight = keptScreen
     SanctuaryDB.uiSize = keptSize
