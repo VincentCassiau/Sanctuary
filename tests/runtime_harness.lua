@@ -579,9 +579,12 @@ end
 
 C_Mail = {
     IsCommandPending = function() return mailbox.pending end,
+    -- As on the live client: a table for every mail that exists, blank on an
+    -- ordinary letter, and the recipe named only on a real crafting order.
     GetCraftingOrderMailInfo = function(index)
         local item = mailbox.inbox[index]
-        return item and item.craftingOrder or nil
+        if not item then return nil end
+        return item.craftingOrder or { reason = 0, recipeName = "" }
     end,
 }
 
@@ -6741,7 +6744,7 @@ ns.invalidateWhitelist()
 now = now + 5
 openMailbox({
     { sender = "Blizzard", subject = "your ticket", isGM = true, money = 500 },
-    { sender = "Crafter-TestRealm", subject = "your order", craftingOrder = { id = 4 } },
+    { sender = "Crafter-TestRealm", subject = "your order", craftingOrder = { reason = 3, recipeName = "Test recipe" } },
     { sender = "Hotel des ventes", subject = "sold", canReply = false, money = 900 },
     { subject = "quest reward", itemCount = 1 },
     { sender = "Nuisance-TestRealm", subject = "came back", wasReturned = true },

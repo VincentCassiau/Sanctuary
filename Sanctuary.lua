@@ -6311,10 +6311,19 @@ function ns.classifyInboxMail(index)
     -- pcall and behind a type test: the API is not on every client this add-on
     -- loads on, and a missing one must read as "not a crafting order" rather
     -- than take the mailbox down.
+    --
+    -- The live client answers a table for EVERY mail, `recipeName = ""` and
+    -- `reason = 0` on an ordinary letter (seen on 12.0, 03/09/2026): `nil` is
+    -- what the documentation allows, not what the game does. Tested on `~= nil`,
+    -- every letter in the box read as a crafting order and nothing was ever
+    -- filtered. A crafting order names its recipe; nothing else does.
     local craftingOrder = C_Mail and C_Mail.GetCraftingOrderMailInfo
     if type(craftingOrder) == "function" then
         local ok, order = pcall(craftingOrder, index)
-        if ok and order ~= nil then info.class = "craftingOrder" return info end
+        if ok and type(order) == "table" and type(order.recipeName) == "string"
+            and order.recipeName ~= "" then
+            info.class = "craftingOrder" return info
+        end
     end
     if not sender or sender == "" or not canReply then info.class = "system" return info end
     -- Returned to you, or sent by you: your own things, coming home.
