@@ -18,6 +18,7 @@ Blocked interactions leave no trace: no window, no message, no sound.
 - duels and trades
 - /say, /yell and emotes
 - spam in the public channels
+- mail from filtered people, when you open the mailbox
 
 **Who always gets through:**
 - your guild
@@ -48,9 +49,15 @@ By hand:
 
 Click the Sanctuary icon around the minimap, or type `/sanc` to open the window.
 
-The main screen asks five questions: who can contact you, what Sanctuary should block, whether to hide the spam of the public channels, what Sanctuary tells you in chat, and your lists.
+The main screen asks six questions: who can contact you, what Sanctuary should block, what it does with your mail, whether to hide the spam of the public channels, what Sanctuary tells you in chat, and your lists.
 
 Enhanced filtering in instances (experimental) is a box of its own. When WoW locks the chat down (instance bosses, Mythic+ keys, PvP matches), add-ons can no longer read system messages. With this option on, while you are grouped or in an instance, Sanctuary hides every system message, not only invitations. Turn it on only if unwanted invitations still reach you in a dungeon, a raid or PvP.
+
+## Your mail
+
+Mail from a filtered person is deleted when you open the mailbox, not before: the game has already delivered it. To stop it being sent at all, use Blizzard's Ignore. Mail that did not come from a player is never touched. Your other characters count as strangers: add them to Always allowed if you send yourself mail.
+
+Sanctuary leaves your mail alone by default. If you choose to have it deleted, two settings appear: what it does with mail that has items or money in it, and the mail icon on the minimap.
 
 ## Your lists
 
