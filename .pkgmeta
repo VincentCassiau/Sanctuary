@@ -1,0 +1,7 @@
+package-as: Sanctuary
+
+ignore:
+  - tests
+  - media/screenshots
+  - README.fr.md
+  - .github
