@@ -5,6 +5,7 @@
 ## Author: Zephos
 ## Version: 1.1.0
 ## X-Sanctuary-Build: 20260902-1
+## X-Curse-Project-ID: 1670719
 ## X-Game-Client: Retail only
 ## IconTexture: Interface\AddOns\Sanctuary\media\logo
 ## Category: Chat
