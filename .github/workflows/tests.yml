@@ -1,0 +1,35 @@
+name: Tests
+
+on:
+  # Branch pushes only: a v* tag runs these checks through release.yml, which
+  # calls this workflow before it packages anything.
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Runtime harness and Lua 5.1 syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone project
+        uses: actions/checkout@v4
+
+      - name: Install Lua 5.4 and 5.1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lua5.4 lua5.1
+
+      # The WoW client runs Lua 5.1: the add-on itself has to stay parseable there.
+      - name: Add-on files parse as Lua 5.1
+        run: luac5.1 -p Locales.lua Sanctuary.lua SanctuaryUI.lua
+
+      # The harness needs 5.2+. Call lua5.4 by name: with lua5.1 installed too,
+      # plain `lua` resolves to 5.1.
+      - name: Runtime harness (Lua 5.4)
+        run: lua5.4 tests/runtime_harness.lua
