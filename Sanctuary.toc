@@ -1,7 +1,7 @@
 ## Interface: 120100, 120007
 ## Title: Sanctuary
 ## Notes: Anti-harassment protection
-## Notes-frFR: Protection anti-harcelement
+## Notes-frFR: Protection anti-harcèlement
 ## Author: Zephos
 ## Version: 1.1.0
 ## X-Sanctuary-Build: 20260902-1

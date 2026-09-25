@@ -7972,6 +7972,10 @@ do
             end
         end
     end
+    -- The French line, to the letter: it went out as "harcelement", the accent
+    -- lost to a 7-bit habit the manifest never had.
+    equal(manifestField("Notes-frFR"), "Protection anti-harcèlement",
+        "the French add-on list reads its accent")
 end
 
 assertModelAtRest()
