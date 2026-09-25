@@ -7378,26 +7378,21 @@ end
 
 -- Format strings and a handful of proper nouns are identical in two languages on
 -- purpose; the check is that nothing NEW slips through untranslated, so each
--- language's list is compared against the keys that were already like that.
--- Keyed by file: the two Spanish clients read one.
+-- language lists the keys that read the same as in English -- and only those: a
+-- key that is gone, or has been translated since, comes off its list, or the
+-- list stops meaning anything. Every key of the reference is asked about, the
+-- ones the code reaches by a computed name included. Keyed by file: the two
+-- Spanish clients read one.
 local KNOWN_IDENTICAL = {}
 KNOWN_IDENTICAL.frFR = {
-    DATE_FORMAT = true, TAB_SUSPECTS = true, TAB_WHITELIST = true, TAB_LOGS = true,
-    GROUP_DEBUG = true, TAB_DIAGNOSTICS = true, LOGS_GROUP_HEADER = true,
-    WL_GROUP_ROW = true, DIAG_ARG_FILTER = true,
-    -- Already identical before this lot: proper nouns, format strings and words
-    -- French borrows unchanged. Listed rather than filtered out so that adding a
-    -- new one is a deliberate act.
-    ABOUT_VERSION = true, GROUP_COMMUNICATION = true, GROUP_INTERACTIONS = true,
-    GROUP_NOTIFICATIONS = true, LOG_TYPE_DUEL = true, LOG_TYPE_EMOTE = true,
-    LOG_TYPE_INVITE = true, LOG_TYPE_WHISPER = true, NOTIF_MINIMAL = true,
-    -- 1.0.0: proper nouns and format strings that read the same in both
-    -- languages. Listed rather than filtered out so adding one is deliberate.
-    ADV_DIAG_TITLE = true, ADV_JOURNAL_TITLE = true, EXPORT_COLUMNS = true,
-    PANEL_BLOCKED_PATTERNS = true, WL_BNET_ROW = true, TAB_PROTECTION = true,
-    TAB_JOURNAL = true, TAB_DIAGNOSTICS = true, KIND_DUEL = true,
-    Q4_MINIMAL_TITLE = true, LOG_TYPE_DUEL = true, ABOUT_VERSION = true,
-    LOGS_GROUP_HEADER = true, DATE_FORMAT = true, DIAG_ARG_FILTER = true,
+    -- Words French borrows unchanged: two tabs, the sections that carry their
+    -- names, the duel, the patterns.
+    TAB_PROTECTION = true, TAB_JOURNAL = true, TAB_DIAGNOSTICS = true,
+    ADV_JOURNAL_TITLE = true, ADV_DIAG_TITLE = true, KIND_DUEL = true,
+    LOG_TYPE_DUEL = true, PANEL_BLOCKED_PATTERNS = true,
+    -- Format strings with a proper noun or nothing to translate in them.
+    ABOUT_VERSION = true, EXPORT_COLUMNS = true, LOGS_GROUP_HEADER = true,
+    WL_BNET_ROW = true,
     -- The Journal's badge and its time range: a count, a dash and the word
     -- SPAM, which French borrows unchanged.
     LOGS_SPAM_BADGE = true, LOGS_TIME_RANGE = true,
@@ -7405,22 +7400,31 @@ KNOWN_IDENTICAL.frFR = {
     MAIL_DELETE_OK = true,
     -- How the header's tooltip punctuates its list: a comma, a full stop.
     LIST_SEPARATOR = true, LIST_END = true,
+    -- Three durations of the anti-spam menu, written the same in both.
+    ANTISPAM_D_5M = true, ANTISPAM_D_10M = true, ANTISPAM_D_30M = true,
 }
 for _, locale in ipairs(shippedLocales) do
     if locale.code ~= "enUS" then
         local allowed = KNOWN_IDENTICAL[locale.file]
         check(type(allowed) == "table",
             locale.code .. " has its list of keys that read the same as in English")
-        local unexpected = {}
+        local unexpected, stale = {}, {}
         for key, value in pairs(defaultLocale) do
-            if locale.strings[key] == value and usedKeys[key]
-                and not (allowed and allowed[key]) then
+            if locale.strings[key] == value and not (allowed and allowed[key]) then
                 unexpected[#unexpected + 1] = key
             end
         end
+        for key in pairs(allowed or {}) do
+            if defaultLocale[key] == nil or locale.strings[key] ~= defaultLocale[key] then
+                stale[#stale + 1] = key
+            end
+        end
         table.sort(unexpected)
-        equal(#unexpected, 0, "every used key is translated in " .. locale.code
+        table.sort(stale)
+        equal(#unexpected, 0, "every key is translated in " .. locale.code
             .. " (" .. table.concat(unexpected, ", ") .. ")")
+        equal(#stale, 0, locale.code .. "'s list names only keys that still read as in English ("
+            .. table.concat(stale, ", ") .. ")")
     end
 end
 
