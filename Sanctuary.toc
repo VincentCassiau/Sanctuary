@@ -18,6 +18,8 @@
 ## Category-esMX: Chat
 ## Notes-ptBR: Proteção contra assédio
 ## Category-ptBR: Bate-papo
+## Notes-ruRU: Защита от преследований
+## Category-ruRU: Чат
 ## SavedVariables: SanctuaryDB
 ## SavedVariablesPerCharacter: SanctuaryCharDB
 ## DefaultState: enabled
@@ -27,6 +29,7 @@ Locales\frFR.lua
 Locales\deDE.lua
 Locales\es.lua
 Locales\ptBR.lua
+Locales\ruRU.lua
 Locales\apply.lua
 Sanctuary.lua
 SanctuaryUI.lua
