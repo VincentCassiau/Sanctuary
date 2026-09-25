@@ -12,10 +12,9 @@ ns.locales.ruRU = L
 -- General
 L["ADDON_LOADED_ACTIVE"] = "Активен. Чтобы открыть окно, введите /sanc."
 L["ADDON_LOADED_INACTIVE"] = "Неактивен."
-L["CHANGELOG_1_1_0_TITLE"] = "Новое в версии 1.1.0:"
-L["CHANGELOG_1_1_0_MAIL"] = "Теперь почту от отфильтрованных игроков можно удалять."
-L["CHANGELOG_1_1_0_SAY_YELL"] = "Параметры /say и /yell объединены."
-L["CHANGELOG_1_1_0_POLISH"] = "Улучшения интерфейса."
+L["CHANGELOG_1_2_0_TITLE"] = "Новое в версии 1.2.0:"
+L["CHANGELOG_1_2_0_LANGUAGES"] = "Sanctuary теперь говорит по-русски, а также по-немецки, по-испански, по-португальски и по-итальянски. Язык можно выбрать на вкладке «Дополнительно»."
+L["CHANGELOG_1_2_0_POLISH"] = "Исправления интерфейса."
 L["SANCTUARY_ENABLED"] = "Защита включена."
 L["SANCTUARY_DISABLED"] = "Защита отключена."
 L["LOG_CLEARED"] = "Журнал очищен."

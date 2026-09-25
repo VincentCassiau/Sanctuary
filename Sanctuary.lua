@@ -1,7 +1,7 @@
 -- ============================================================================
 -- Sanctuary — WoW Anti-Harassment Addon
 -- Two modes: only the people you know, or everyone except the ones you block.
--- Version: 1.1.0 | Build: 20260902-1 | Interface: 120100, 120007 (Midnight)
+-- Version: 1.2.0 | Build: 20260925-1 | Interface: 120100, 120007 (Midnight)
 -- ============================================================================
 
 -- ============================================================================
@@ -10,7 +10,7 @@
 
 local ADDON_NAME, ns = ...
 local L = ns.L
-local VERSION = "1.1.0"
+local VERSION = "1.2.0"
 
 -- Build identity. This is NOT a release version and must never be presented as
 -- one: it only makes a user-provided debug report attributable to the exact
@@ -19,7 +19,7 @@ local VERSION = "1.1.0"
 -- and nothing else: it is printed verbatim in every report, and a report can be
 -- handed to a third party, so the identifier must not leak what is being
 -- investigated or which internal item it belongs to.
-local BUILD_ID = "20260902-1"
+local BUILD_ID = "20260925-1"
 
 local PREFIX = "|cFF66CCFF[Sanctuary]|r "
 local COLOR_ON = "|cFF00FF00"
@@ -7786,10 +7786,9 @@ do
 -- only exists as a concatenation cannot be searched for, and an unreachable
 -- translation is one nobody will ever notice is missing.
 local CHANGELOG_LINES = {
-    "CHANGELOG_1_1_0_TITLE",
-    "CHANGELOG_1_1_0_MAIL",
-    "CHANGELOG_1_1_0_SAY_YELL",
-    "CHANGELOG_1_1_0_POLISH",
+    "CHANGELOG_1_2_0_TITLE",
+    "CHANGELOG_1_2_0_LANGUAGES",
+    "CHANGELOG_1_2_0_POLISH",
 }
 
 local CHANGELOG_WINDOW = 86400

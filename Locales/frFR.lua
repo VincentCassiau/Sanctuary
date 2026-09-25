@@ -13,10 +13,9 @@ ns.locales.frFR = L
 -- General
 L["ADDON_LOADED_ACTIVE"] = "Actif. Tapez /sanc pour ouvrir."
 L["ADDON_LOADED_INACTIVE"] = "Inactif."
-L["CHANGELOG_1_1_0_TITLE"] = "Nouveau dans la 1.1.0 :"
-L["CHANGELOG_1_1_0_MAIL"] = "Le courrier des personnes filtrées peut être supprimé."
-L["CHANGELOG_1_1_0_SAY_YELL"] = "Les options /dire et /crier ont été fusionnées."
-L["CHANGELOG_1_1_0_POLISH"] = "Améliorations de l'interface."
+L["CHANGELOG_1_2_0_TITLE"] = "Nouveau dans la 1.2.0 :"
+L["CHANGELOG_1_2_0_LANGUAGES"] = "Sanctuary parle aussi allemand, espagnol, portugais, russe et italien, et sa langue se choisit dans l'onglet Avancé."
+L["CHANGELOG_1_2_0_POLISH"] = "Corrections de l'interface."
 L["SANCTUARY_ENABLED"] = "Protection activée."
 L["SANCTUARY_DISABLED"] = "Protection désactivée."
 L["LOG_CLEARED"] = "Journal vidé."

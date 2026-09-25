@@ -12,10 +12,9 @@ ns.locales.deDE = L
 -- General
 L["ADDON_LOADED_ACTIVE"] = "Aktiv. Gib /sanc ein, um das Fenster zu öffnen."
 L["ADDON_LOADED_INACTIVE"] = "Inaktiv."
-L["CHANGELOG_1_1_0_TITLE"] = "Neu in 1.1.0:"
-L["CHANGELOG_1_1_0_MAIL"] = "Post von gefilterten Personen kann gelöscht werden."
-L["CHANGELOG_1_1_0_SAY_YELL"] = "Die Optionen /say und /yell wurden zusammengelegt."
-L["CHANGELOG_1_1_0_POLISH"] = "Verbesserungen an der Oberfläche."
+L["CHANGELOG_1_2_0_TITLE"] = "Neu in 1.2.0:"
+L["CHANGELOG_1_2_0_LANGUAGES"] = "Sanctuary spricht jetzt auch Deutsch, Spanisch, Portugiesisch, Russisch und Italienisch, und seine Sprache lässt sich im Reiter „Erweitert“ auswählen."
+L["CHANGELOG_1_2_0_POLISH"] = "Korrekturen an der Oberfläche."
 L["SANCTUARY_ENABLED"] = "Schutz aktiviert."
 L["SANCTUARY_DISABLED"] = "Schutz deaktiviert."
 L["LOG_CLEARED"] = "Protokoll geleert."

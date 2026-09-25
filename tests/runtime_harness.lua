@@ -956,7 +956,7 @@ for _, event in ipairs({
     check(eventFrames[event] ~= nil, "the add-on registers " .. event)
 end
 
-equal(ns.VERSION, "1.1.0", "version exported")
+equal(ns.VERSION, "1.2.0", "version exported")
 equal(#muted, 0, "no global sound files muted at rest")
 equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "party invite dialog sound suppressed while group filter active")
 equal(StaticPopupDialogs.DUEL_REQUESTED.sound, nil, "duel dialog sound suppressed while duel filter active")
@@ -5100,14 +5100,14 @@ chatMessages = {}
 playedSounds = {}
 popup.shown = false
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 5, "a file from the previous build gets the title and one line per point")
+equal(#chatMessages, 4, "a file from the previous build gets the title and one line per point")
 check(chatMessages[1]:find(ns.L["ADDON_LOADED_ACTIVE"], 1, true) ~= nil,
     "the load line still comes first")
-check(chatMessages[2]:find(ns.L["CHANGELOG_1_1_0_TITLE"], 1, true) ~= nil,
+check(chatMessages[2]:find(ns.L["CHANGELOG_1_2_0_TITLE"], 1, true) ~= nil,
     "then the title line naming the version")
-check(chatMessages[3]:find(ns.L["CHANGELOG_1_1_0_MAIL"], 1, true) ~= nil,
+check(chatMessages[3]:find(ns.L["CHANGELOG_1_2_0_LANGUAGES"], 1, true) ~= nil,
     "then one line per point")
-check(chatMessages[4]:find(ns.L["CHANGELOG_1_1_0_SAY_YELL"], 1, true) ~= nil,
+check(chatMessages[4]:find(ns.L["CHANGELOG_1_2_0_POLISH"], 1, true) ~= nil,
     "in the order they are written")
 equal(#playedSounds, 0, "an update is worth two lines of chat and no sound")
 equal(popup.shown, false, "and no window")
@@ -5118,7 +5118,7 @@ check(type(openedAt) == "number", "the window opens at the first load that follo
 now = now + 3600
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 5, "an hour later the lines are still there")
+equal(#chatMessages, 4, "an hour later the lines are still there")
 equal(SanctuaryDB.changelog.firstAt, openedAt, "and the window has not moved")
 now = clockAsFound + DAY + 3600
 chatMessages = {}
@@ -5129,7 +5129,7 @@ equal(#chatMessages, 1, "a day later it stops on its own")
 SanctuaryDB.changelog.version = "1.0.9"
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 5, "the next build announces itself in turn")
+equal(#chatMessages, 4, "the next build announces itself in turn")
 check(SanctuaryDB.changelog.firstAt > openedAt, "on a window of its own")
 
 -- A clock put back leaves a stamp in the future, and the window would stay shut
@@ -5137,14 +5137,14 @@ check(SanctuaryDB.changelog.firstAt > openedAt, "on a window of its own")
 SanctuaryDB.changelog.firstAt = time() + 10 * DAY
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 5, "a clock put back does not swallow the lines")
+equal(#chatMessages, 4, "a clock put back does not swallow the lines")
 
 -- Turned off, the add-on says so and still says what changed.
 SanctuaryDB.changelog = {}
 SanctuaryCharDB.overrides.enabled = false
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 5, "an add-on switched off announces the update all the same")
+equal(#chatMessages, 4, "an add-on switched off announces the update all the same")
 check(chatMessages[1]:find(ns.L["ADDON_LOADED_INACTIVE"], 1, true) ~= nil,
     "under its own load line")
 
@@ -5154,7 +5154,7 @@ SanctuaryDB = { schemaVersion = 1 }
 SanctuaryCharDB = nil
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 5, "a file the schema reset rebuilt announces the update")
+equal(#chatMessages, 4, "a file the schema reset rebuilt announces the update")
 
 now = clockAsFound
 
@@ -7499,7 +7499,7 @@ assertModelAtRest()
 -- reaches it. The size of the reference is pinned: a key added or removed on
 -- purpose moves this number with it, and one lost by accident stops here.
 do
-    local REFERENCE_KEYS = 261
+    local REFERENCE_KEYS = 260
 
     local handle = assert(io.open(repoRoot .. "/Sanctuary.toc", "r"))
     local manifest = handle:read("a")

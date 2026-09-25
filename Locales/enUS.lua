@@ -28,10 +28,9 @@ L["ADDON_LOADED_INACTIVE"] = "Inactive."
 -- One line per point, printed under the load line for a day after the first
 -- login that follows an update. Spelt out one by one on purpose: a line built
 -- from a number is a line no translator can find.
-L["CHANGELOG_1_1_0_TITLE"] = "New in 1.1.0:"
-L["CHANGELOG_1_1_0_MAIL"] = "Mail from filtered people can be deleted."
-L["CHANGELOG_1_1_0_SAY_YELL"] = "The /say and /yell options have been merged."
-L["CHANGELOG_1_1_0_POLISH"] = "Interface improvements."
+L["CHANGELOG_1_2_0_TITLE"] = "New in 1.2.0:"
+L["CHANGELOG_1_2_0_LANGUAGES"] = "Sanctuary also speaks German, Spanish, Portuguese, Russian and Italian, and its language can be picked in the Advanced tab."
+L["CHANGELOG_1_2_0_POLISH"] = "Interface fixes."
 L["SANCTUARY_ENABLED"] = "Protection enabled."
 L["SANCTUARY_DISABLED"] = "Protection disabled."
 L["LOG_CLEARED"] = "Journal cleared."

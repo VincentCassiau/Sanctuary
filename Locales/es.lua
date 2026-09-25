@@ -12,10 +12,9 @@ ns.locales.es = L
 -- General
 L["ADDON_LOADED_ACTIVE"] = "Activo. Escribe /sanc para abrirlo."
 L["ADDON_LOADED_INACTIVE"] = "Inactivo."
-L["CHANGELOG_1_1_0_TITLE"] = "Novedades de la 1.1.0:"
-L["CHANGELOG_1_1_0_MAIL"] = "El correo de las personas filtradas se puede borrar."
-L["CHANGELOG_1_1_0_SAY_YELL"] = "Las opciones /say y /yell ahora son una sola."
-L["CHANGELOG_1_1_0_POLISH"] = "Mejoras en la interfaz."
+L["CHANGELOG_1_2_0_TITLE"] = "Novedades de la 1.2.0:"
+L["CHANGELOG_1_2_0_LANGUAGES"] = "Sanctuary también habla alemán, español, portugués, ruso e italiano, y su idioma se puede elegir en la pestaña Avanzado."
+L["CHANGELOG_1_2_0_POLISH"] = "Correcciones en la interfaz."
 L["SANCTUARY_ENABLED"] = "Protección activada."
 L["SANCTUARY_DISABLED"] = "Protección desactivada."
 L["LOG_CLEARED"] = "Historial vaciado."
