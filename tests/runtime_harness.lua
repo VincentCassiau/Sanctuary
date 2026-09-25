@@ -681,7 +681,28 @@ local scriptPath = (arg and arg[0]) or "tests/runtime_harness.lua"
 local scriptDir = scriptPath:match("^(.*)[/\\][^/\\]+$") or "."
 local repoRoot = scriptDir:match("^(.*)[/\\]tests$") or "."
 
-assert(loadfile(repoRoot .. "/Locales.lua"))("Sanctuary", ns)
+-- The locale files, loaded from the manifest's own list and in its order --
+-- every language registers its table, and Locales\apply.lua, last, builds the
+-- one the add-on reads for the client's `GetLocale()`. Read off the .toc rather
+-- than listed here: a file the client loads and the harness does not is a file
+-- nothing checks. Every chunk that stands in for the add-on loads through this.
+local function loadLocaleFiles(scope)
+    local handle = assert(io.open(repoRoot .. "/Sanctuary.toc", "r"))
+    local manifest = handle:read("a")
+    handle:close()
+    local loaded = 0
+    for line in manifest:gmatch("[^\r\n]+") do
+        local file = line:match("^(Locales[\\/][%w_]+%.lua)%s*$")
+        if file then
+            assert(loadfile(repoRoot .. "/" .. (file:gsub("\\", "/"))))("Sanctuary", scope)
+            loaded = loaded + 1
+        end
+    end
+    assert(loaded > 0, "the manifest lists no locale file")
+    return scope
+end
+
+loadLocaleFiles(ns)
 assert(loadfile(repoRoot .. "/Sanctuary.lua"))("Sanctuary", ns)
 
 local function fire(event, ...)
@@ -7300,14 +7321,17 @@ assertModelAtRest()
 -- The French locale covers every key the default locale defines
 -- ---------------------------------------------------------------------------
 
--- The addon ships French as an override block. A key added to the default and
+-- The addon ships French as a file of overrides. A key added to the default and
 -- forgotten there shows up in English in a French client -- readable, so nobody
 -- reports it, and it drifts.
+--
+-- A locale here is the table a client of that language reads: every file of
+-- the manifest loaded into a fresh namespace, with `GetLocale()` answering it
+-- while they run, so the one that applies the language picks it.
 local realGetLocale = GetLocale
 local function loadLocale(locale)
     GetLocale = function() return locale end
-    local scoped = {}
-    assert(loadfile(repoRoot .. "/Locales.lua"))("Sanctuary", scoped)
+    local scoped = loadLocaleFiles({})
     GetLocale = realGetLocale
     return scoped.L
 end
@@ -7356,33 +7380,53 @@ equal(#unexpected, 0,
 
 assertModelAtRest()
 -- ---------------------------------------------------------------------------
--- The two locale blocks define exactly the same keys
+-- Every locale file defines exactly the keys of the reference
 -- ---------------------------------------------------------------------------
 
 -- The check above it asks "is every key the code writes as L[\"NAME\"] translated",
 -- which is 147 keys of 228: the other 81 are reached by a computed name
--- (L[row.labelKey]) and were never submitted to it. And French is an OVERRIDE
--- block -- a key missing from it renders in English, readably, so nobody reports
--- it and it drifts.
+-- (L[row.labelKey]) and were never submitted to it. And a translation is a file
+-- of OVERRIDES -- a key missing from it renders in English, readably, so nobody
+-- reports it and it drifts.
 --
--- So this reads the file itself, both blocks, and holds them to the same set. It
--- is not a check on what the code uses: a key defined once is a key that has to
--- exist twice, whatever reaches it.
+-- So this reads the files themselves, every one the manifest lists, and holds
+-- each to the set of the English reference. It is not a check on what the code
+-- uses: a key defined once is a key every language has to define, whatever
+-- reaches it. The size of the reference is pinned: a key added or removed on
+-- purpose moves this number with it, and one lost by accident stops here.
 do
-    local handle = assert(io.open(repoRoot .. "/Locales.lua", "r"))
-    local source = handle:read("a")
-    handle:close()
-    local frenchAt = source:find('if GetLocale() == "frFR" then', 1, true)
-    local frenchEnd = source:find("\nend -- frFR", 1, true)
-    check(frenchAt ~= nil and frenchEnd ~= nil and frenchEnd > frenchAt,
-        "the French overrides are a block of their own, opened and closed")
+    local REFERENCE_KEYS = 253
 
-    -- One assignment a line, which is how the file is written; a value is read as
-    -- everything between the first and the last quote of the line, so escaped
-    -- quotes inside it cost nothing.
-    local function definitions(block)
-        local keys, order, duplicates, empty = {}, {}, {}, {}
-        for line in block:gmatch("[^\n]+") do
+    local handle = assert(io.open(repoRoot .. "/Sanctuary.toc", "r"))
+    local manifest = handle:read("a")
+    handle:close()
+    local listed, codes = {}, {}
+    for line in manifest:gmatch("[^\r\n]+") do
+        if line:match("%.lua%s*$") then listed[#listed + 1] = line:gsub("%s+$", "") end
+        local code = line:match("^Locales[\\/]([%w_]+)%.lua%s*$")
+        if code and code ~= "apply" then codes[#codes + 1] = code end
+    end
+    -- The reference first, the file that applies a language after every language,
+    -- and both before the add-on's own files, which take `ns.L` as they load.
+    equal(codes[1], "enUS", "the English reference is the first locale file the client loads")
+    local applyAt, addonAt
+    for index, file in ipairs(listed) do
+        if file:match("^Locales[\\/]apply%.lua$") then applyAt = index end
+        if file == "Sanctuary.lua" then addonAt = index end
+    end
+    equal(applyAt, #codes + 1, "Locales\\apply.lua is loaded right after the last language")
+    check(applyAt ~= nil and addonAt ~= nil and addonAt > applyAt,
+        "and before Sanctuary.lua reads ns.L")
+
+    -- One assignment a line, which is how the files are written; a value is read
+    -- as everything between the first and the last quote of the line, so escaped
+    -- quotes inside it cost nothing. Any other line is a blank, a comment or one of
+    -- the four statements every locale file opens with -- a string set any other
+    -- way would be a string this reading never sees.
+    local function definitions(code, source)
+        local keys, order, duplicates, empty, strays = {}, {}, {}, {}, {}
+        for line in source:gmatch("[^\n]+") do
+            line = line:gsub("\r$", "")
             local key, rest = line:match('^L%["([%w_]+)"%]%s*=%s*(.+)$')
             if key then
                 if keys[key] then duplicates[#duplicates + 1] = key end
@@ -7390,41 +7434,132 @@ do
                 if value == nil or value == "" then empty[#empty + 1] = key end
                 if not keys[key] then order[#order + 1] = key end
                 keys[key] = value or ""
+            elseif not (line:match("^%s*$") or line:match("^%-%-")
+                or line == "local _, ns = ..."
+                or line == "ns.locales = ns.locales or {}"
+                or line == "local L = {}"
+                or line == "ns.locales." .. code .. " = L") then
+                strays[#strays + 1] = line
             end
         end
-        return keys, order, duplicates, empty
+        return keys, order, duplicates, empty, strays
     end
 
-    local englishKeys, englishOrder, englishDupes, englishEmpty =
-        definitions(source:sub(1, (frenchAt or 1) - 1))
-    local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
-        definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
+    local referenceKeys, registeredByCode = nil, {}
+    for _, code in ipairs(codes) do
+        local path = repoRoot .. "/Locales/" .. code .. ".lua"
+        local file = assert(io.open(path, "r"))
+        local source = file:read("a")
+        file:close()
+        local keys, order, dupes, empty, strays = definitions(code, source)
+        equal(#dupes, 0, code .. ": no key is defined twice (" .. table.concat(dupes, ", ") .. ")")
+        equal(#empty, 0, code .. ": no value is empty (" .. table.concat(empty, ", ") .. ")")
+        equal(#strays, 0, code .. ": every line is a comment, an opening statement or one assignment ("
+            .. table.concat(strays, " | ") .. ")")
 
-    equal(#englishOrder, 253, "the default locale defines 253 keys")
-    equal(#frenchOrder, 253, "and the French block defines 253")
-    equal(#englishDupes, 0,
-        "no key is defined twice in the default locale ("
-            .. table.concat(englishDupes, ", ") .. ")")
-    equal(#frenchDupes, 0,
-        "nor in the French block (" .. table.concat(frenchDupes, ", ") .. ")")
-    equal(#englishEmpty, 0,
-        "no default value is empty (" .. table.concat(englishEmpty, ", ") .. ")")
-    equal(#frenchEmpty, 0,
-        "no French value is empty (" .. table.concat(frenchEmpty, ", ") .. ")")
+        -- What the file registers when it runs is what its text says.
+        local scope = {}
+        assert(loadfile(path))("Sanctuary", scope)
+        local registered = scope.locales and scope.locales[code]
+        check(type(registered) == "table", code .. ": the file registers ns.locales." .. code)
+        registeredByCode[code] = registered
+        local count, unread = 0, {}
+        for key in pairs(registered or {}) do
+            count = count + 1
+            if keys[key] == nil then unread[#unread + 1] = key end
+        end
+        equal(count, #order, code .. ": it registers exactly the keys written in it")
+        equal(#unread, 0, code .. ": and none the reading missed (" .. table.concat(unread, ", ") .. ")")
 
-    local missingFrench, extraFrench = {}, {}
-    for _, key in ipairs(englishOrder) do
-        if frenchKeys[key] == nil then missingFrench[#missingFrench + 1] = key end
+        if code == "enUS" then
+            referenceKeys = keys
+            equal(#order, REFERENCE_KEYS, "the reference defines " .. REFERENCE_KEYS .. " keys")
+        else
+            local missing, extra = {}, {}
+            for key in pairs(referenceKeys or {}) do
+                if keys[key] == nil then missing[#missing + 1] = key end
+            end
+            for _, key in ipairs(order) do
+                if referenceKeys and referenceKeys[key] == nil then extra[#extra + 1] = key end
+            end
+            table.sort(missing)
+            equal(#missing, 0, code .. ": every key of the reference is written ("
+                .. table.concat(missing, ", ") .. ")")
+            equal(#extra, 0, code .. ": and the file invents none of its own ("
+                .. table.concat(extra, ", ") .. ")")
+        end
     end
-    for _, key in ipairs(frenchOrder) do
-        if englishKeys[key] == nil then extraFrench[#extraFrench + 1] = key end
+    check(#codes >= 2, "the manifest lists the reference and at least one translation")
+
+    -- And the other way round: a file in the folder that the manifest does not
+    -- list is a translation the client never loads, and every check above would
+    -- pass without it. Lua cannot list a folder, so the shell does.
+    local onWindows = package.config:sub(1, 1) == "\\"
+    local folder = repoRoot .. "/Locales"
+    local listing = io.popen(onWindows and ('dir /b "' .. (folder:gsub("/", "\\")) .. '"')
+        or ('ls "' .. folder .. '"'))
+    local inFolder = {}
+    if listing then
+        for name in listing:lines() do
+            local file = name:match("^([%w_]+%.lua)%s*$")
+            if file then inFolder[#inFolder + 1] = file end
+        end
+        listing:close()
     end
-    equal(#missingFrench, 0,
-        "every key of the default locale is written in French ("
-            .. table.concat(missingFrench, ", ") .. ")")
-    equal(#extraFrench, 0,
-        "and the French block invents none of its own ("
-            .. table.concat(extraFrench, ", ") .. ")")
+    local inManifest = {}
+    for _, file in ipairs(listed) do
+        local name = file:match("^Locales[\\/]([%w_]+%.lua)$")
+        if name then inManifest[name] = true end
+    end
+    local unlisted = {}
+    for _, file in ipairs(inFolder) do
+        if not inManifest[file] then unlisted[#unlisted + 1] = file end
+    end
+    check(#inFolder >= 3, "the Locales folder can be listed (" .. #inFolder .. " files)")
+    equal(#unlisted, 0, "every file of the Locales folder is in the manifest ("
+        .. table.concat(unlisted, ", ") .. ")")
+
+    -- Which table each client reads. The client names its language and
+    -- apply.lua picks the file: its own, the one Spanish file both Spanish
+    -- clients share, or none, which is English. Held here for every client
+    -- locale WoW has, so that no edit to that choice can hand one language's
+    -- text to another client, and no translation can sit in the manifest under
+    -- a name no client asks for.
+    local FILE_FOR_CLIENT = {
+        enUS = "enUS", enGB = "enUS", frFR = "frFR", deDE = "deDE", esES = "es",
+        esMX = "es", itIT = "itIT", ptBR = "ptBR", ruRU = "ruRU",
+        koKR = "enUS", zhCN = "enUS", zhTW = "enUS",
+    }
+    local CLIENTS = { "enUS", "enGB", "frFR", "deDE", "esES", "esMX", "itIT", "ptBR",
+        "ruRU", "koKR", "zhCN", "zhTW" }
+    local readBySomeClient = {}
+    for _, client in ipairs(CLIENTS) do
+        local file = FILE_FOR_CLIENT[client]
+        local overrides = registeredByCode[file]
+        if overrides then readBySomeClient[file] = true end
+        local expected = {}
+        for key, value in pairs(registeredByCode.enUS or {}) do expected[key] = value end
+        if file ~= "enUS" then
+            for key, value in pairs(overrides or {}) do expected[key] = value end
+        end
+        local read = loadLocale(client)
+        local wrong = {}
+        for key, value in pairs(expected) do
+            if read[key] ~= value then wrong[#wrong + 1] = key end
+        end
+        for key in pairs(read) do
+            if expected[key] == nil then wrong[#wrong + 1] = key end
+        end
+        table.sort(wrong)
+        local what = (file == "enUS" or not overrides) and "English"
+            or ("Locales\\" .. file .. ".lua over English")
+        equal(#wrong, 0, "the " .. client .. " client reads " .. what .. ", and only that ("
+            .. table.concat(wrong, ", ", 1, math.min(#wrong, 5)) .. ")")
+    end
+    for _, code in ipairs(codes) do
+        check(code == "enUS" or readBySomeClient[code],
+            "Locales\\" .. code .. ".lua is the file of at least one client locale")
+    end
 end
 
 assertModelAtRest()
@@ -7504,11 +7639,11 @@ assertModelAtRest()
 -- Every locale value is valid UTF-8
 -- ---------------------------------------------------------------------------
 
--- Accented characters are written as decimal escapes ("\194\176" for a degree
--- sign), and a mistyped second byte produces a broken sequence that the parity
--- check cannot see: the key exists on both sides, only its bytes are wrong. WoW
--- renders such a string with a replacement glyph or truncates it at the bad
--- byte, so the check is on the bytes themselves.
+-- Accented characters are written as themselves, and an editor that saves a
+-- locale file in another encoding -- Latin-1, Windows-1252 -- produces bytes the
+-- parity check cannot see: the key exists on both sides, only its bytes are
+-- wrong. WoW renders such a string with a replacement glyph or truncates it at
+-- the bad byte, so the check is on the bytes themselves.
 local invalidUtf8 = {}
 for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) do
     for key, value in pairs(entry[2]) do
@@ -8219,7 +8354,7 @@ do
     end
     -- The warning of 167b left the locales with the dialog (decision 170c).
     for _, key in ipairs({ "STRICT_CONFIRM", "STRICT_CONFIRM_OK", "STRICT_CONFIRM_CANCEL" }) do
-        equal(frenchLocale[key], nil, key .. " is gone from the French block")
+        equal(frenchLocale[key], nil, key .. " is gone from the French locale")
         equal(defaultLocale[key], nil, "and from the default locale")
     end
     -- The tooltip validated at decision 170d, to the letter: it opens on
@@ -9854,7 +9989,7 @@ equal(patternBox.note:GetWidth(), 500, "and the pattern field too")
 
 -- ... and the sentences measured against it, because the sentences are what
 -- changes. 6.5 px is a majorant for one character of FONT_BODY in a latin face;
--- characters are counted, not bytes, French being stored as escaped UTF-8.
+-- characters are counted, not bytes, an accented letter being two bytes of UTF-8.
 -- Decision 167c cut the reserved room to ONE line under all three fields, so the
 -- labels start just under the field they belong to: every answer but one has to
 -- fit that line, and this check is what fails the day one of them grows past it.
@@ -13585,8 +13720,7 @@ equal(#SanctuaryDB.log, 1, "before the reload the day holds one entry")
 equal(SanctuaryDB.log[1].count, 2, "counted twice")
 local openedAt, openedOn = SanctuaryDB.log[1].t, SanctuaryDB.log[1].d
 
-local reloaded = {}
-assert(loadfile(repoRoot .. "/Locales.lua"))("Sanctuary", reloaded)
+local reloaded = loadLocaleFiles({})
 assert(loadfile(repoRoot .. "/Sanctuary.lua"))("Sanctuary", reloaded)
 
 now = now + 10
@@ -13688,8 +13822,7 @@ equal(SanctuaryDB.log[1].realm, "TestRealm", "and stored with the realm it was w
 
 local ownRealm = GetNormalizedRealmName
 function GetNormalizedRealmName() return "OtherRealm" end
-local elsewhere = {}
-assert(loadfile(repoRoot .. "/Locales.lua"))("Sanctuary", elsewhere)
+local elsewhere = loadLocaleFiles({})
 assert(loadfile(repoRoot .. "/Sanctuary.lua"))("Sanctuary", elsewhere)
 
 now = now + 10

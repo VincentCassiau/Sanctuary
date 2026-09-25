@@ -27,7 +27,7 @@ jobs:
 
       # The WoW client runs Lua 5.1: the add-on itself has to stay parseable there.
       - name: Add-on files parse as Lua 5.1
-        run: luac5.1 -p Locales.lua Sanctuary.lua SanctuaryUI.lua
+        run: luac5.1 -p Locales/*.lua Sanctuary.lua SanctuaryUI.lua
 
       # The harness needs 5.2+. Call lua5.4 by name: with lua5.1 installed too,
       # plain `lua` resolves to 5.1.
