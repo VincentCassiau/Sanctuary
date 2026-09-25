@@ -7413,6 +7413,14 @@ KNOWN_IDENTICAL.deDE = {
     LIST_END = true, LIST_SEPARATOR = true, LOGS_GROUP_HEADER = true,
     LOGS_TIME_RANGE = true, MINIMAP_TIP_TITLE = true, WL_BNET_ROW = true,
 }
+-- Spanish: "No" and "Normal" as Spanish writes them.
+-- The rest are format strings with nothing in them to translate.
+KNOWN_IDENTICAL.es = {
+    ANTISPAM_NO_TITLE = true, MAIL_ICON_NORMAL = true, LOGS_SPAM_BADGE = true,
+    ABOUT_GITHUB = true, DIAG_SPAM_PROBE_LINE = true, LIST_END = true,
+    LIST_SEPARATOR = true, LOGS_GROUP_HEADER = true, LOGS_TIME_RANGE = true,
+    MINIMAP_TIP_TITLE = true, WL_BNET_ROW = true,
+}
 for _, locale in ipairs(shippedLocales) do
     if locale.code ~= "enUS" then
         local allowed = KNOWN_IDENTICAL[locale.file]

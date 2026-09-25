@@ -12,6 +12,10 @@
 ## Category-frFR: Discussion
 ## Notes-deDE: Schutz vor Belästigung
 ## Category-deDE: Chat
+## Notes-esES: Protección contra el acoso
+## Category-esES: Chat
+## Notes-esMX: Protección contra el acoso
+## Category-esMX: Chat
 ## SavedVariables: SanctuaryDB
 ## SavedVariablesPerCharacter: SanctuaryCharDB
 ## DefaultState: enabled
@@ -19,6 +23,7 @@
 Locales\enUS.lua
 Locales\frFR.lua
 Locales\deDE.lua
+Locales\es.lua
 Locales\apply.lua
 Sanctuary.lua
 SanctuaryUI.lua
