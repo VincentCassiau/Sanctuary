@@ -7228,6 +7228,9 @@ local function newWidget(kind, name, parent, template)
     end
     function w:CreateFontString(fsName, _, _)
         local fs = newWidget("FontString", fsName, self)
+        -- What GameFontNormal hands a FontString: the client's own cut of the
+        -- face, which is the Cyrillic one on a Russian client.
+        if GetLocale() == "ruRU" then fs.__fontFile = "Fonts\\FRIZQT___CYR.TTF" end
         self.__children[#self.__children + 1] = fs
         return fs
     end
@@ -7803,14 +7806,18 @@ assertModelAtRest()
 --
 -- Two places a visible glyph can come from here: a locale value, and a string
 -- literal in the code written as escaped bytes, which is what the caret was.
+--
+-- The set is kept for the smoke test at the end of the file too, which holds
+-- every text of every window to the font that actually draws it.
+local WINDOW_FONT_EXTRA = {}
+for _, code in ipairs({ 0x20AC, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+    0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x017D, 0x2018, 0x2019, 0x201C,
+    0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153,
+    0x017E, 0x0178 }) do
+    WINDOW_FONT_EXTRA[code] = true
+end
 do
-    local FONT_EXTRA = {}
-    for _, code in ipairs({ 0x20AC, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
-        0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x017D, 0x2018, 0x2019, 0x201C,
-        0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153,
-        0x017E, 0x0178 }) do
-        FONT_EXTRA[code] = true
-    end
+    local FONT_EXTRA = WINDOW_FONT_EXTRA
     -- A Russian client draws the same window in the Cyrillic cut of the face,
     -- which adds the Cyrillic block and nothing else: a Russian value may use
     -- it, and no other language may.
@@ -13741,7 +13748,51 @@ for _, choice in ipairs(ns.LOCALE_CHOICES) do
         local matches, key = sameStrings(ns.L, loadLocale(choice.code))
         check(matches, choice.code .. " picked reads the " .. choice.code .. " table (" .. tostring(key) .. ")")
         equal(SanctuaryDB.locale, choice.code, "and the choice is kept")
+        -- German writes its nouns with a capital in the middle of a sentence,
+        -- and no other language here does: the flag follows the language applied.
+        equal(ns.localeKeepsLabelCase, choice.code == "deDE",
+            choice.code .. " picked keeps a block's label as written only if it is German")
     end
+end
+
+-- And what that does to the verbose line, through the language applied rather
+-- than a flag set by hand: German keeps the capital, English and Russian fold it.
+do
+    local keptMode, keptLogging = SanctuaryDB.notifications.mode, SanctuaryDB.logging.enabled
+    SanctuaryDB.notifications.mode = "verbose"
+    SanctuaryDB.logging.enabled = true
+    local function verboseTrade()
+        chatMessages = {}
+        now = now + 5
+        ns.logBlock("trade", "Cased-TestRealm", nil, nil, nil)
+        return (chatMessages[#chatMessages] or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    end
+    local function foldedFirst(label)
+        local pair = label:match("^[\208\209][\128-\191]")
+        if pair then
+            local lead, trail = pair:byte(1), pair:byte(2)
+            if lead == 0xD0 and trail >= 0x90 and trail <= 0x9F then
+                return "\208" .. string.char(trail + 0x20) .. label:sub(3)
+            elseif lead == 0xD0 and trail >= 0xA0 and trail <= 0xAF then
+                return "\209" .. string.char(trail - 0x20) .. label:sub(3)
+            end
+            return label
+        end
+        return label:sub(1, 1):lower() .. label:sub(2)
+    end
+    for _, code in ipairs({ "deDE", "enUS", "ruRU" }) do
+        if ns.isLocaleAvailable(code) then
+            reloadWith(code)
+            local label = ns.L.LOG_TYPE_TRADE
+            local expected = code == "deDE" and label or foldedFirst(label)
+            local line = verboseTrade()
+            check(line:find(string.format(ns.L.BLOCKED_VERBOSE, expected, "Cased-TestRealm"), 1, true) ~= nil,
+                code .. ": the verbose line writes the trade as " .. expected)
+        end
+    end
+    ns.clearJournal()
+    SanctuaryDB.notifications.mode = keptMode
+    SanctuaryDB.logging.enabled = keptLogging
 end
 for _, shipped in ipairs(shippedLocales) do
     check(offeredFiles[shipped.file], "the menu offers the language a " .. shipped.code .. " client reads")
@@ -13784,6 +13835,8 @@ menu.rows[2]:Click()
 equal(SanctuaryDB.locale, offered[1], "a pick is saved at once")
 equal(popup.shown and popup.which, "SANCTUARY_RELOAD_LOCALE", "and the reload is asked for")
 equal(reloads, 0, "nothing reloads on its own")
+menu:Refresh()
+equal(menu.value:GetText(), menu.rows[2].label:GetText(), "the closed menu names the language picked")
 StaticPopupDialogs.SANCTUARY_RELOAD_LOCALE.OnAccept()
 equal(reloads, 1, "Reload now reloads the interface, once")
 popup.shown = false
@@ -13792,6 +13845,28 @@ equal(popup.shown, false, "picking the language already saved asks nothing")
 C_UI = nil
 StaticPopupDialogs.SANCTUARY_RELOAD_LOCALE.OnAccept()
 equal(reloads, 101, "and a client without C_UI.Reload falls back to ReloadUI")
+
+-- Russian picked on this French client, and the reload put off: the window is
+-- still Latin, and the closed menu is the one label that now shows Cyrillic. It
+-- takes the Cyrillic cut of the face, and gives it back once the pick is undone.
+local russianRow
+for index, code in ipairs(offered) do
+    if code == "ruRU" then russianRow = menu.rows[index + 1] end
+end
+if russianRow then
+    check(russianRow.label.__fontFile:find("CYR", 1, true) ~= nil,
+        "the Русский row is drawn in the Cyrillic cut on a French client")
+    russianRow:Click()
+    popup.shown = false
+    menu:Refresh()
+    equal(menu.value:GetText(), "Русский", "Russian picked, the closed menu says so")
+    check((menu.value.__fontFile or ""):find("CYR", 1, true) ~= nil,
+        "in the Cyrillic cut, before any reload")
+    SanctuaryDB.locale = "auto"
+    menu:Refresh()
+    check(not (menu.value.__fontFile or ""):find("CYR", 1, true),
+        "and back in the game's own cut once the pick is undone")
+end
 
 C_UI, ReloadUI = keptUI, keptReload
 popup.shown = false
@@ -14032,7 +14107,6 @@ assertModelAtRest()
             assert(loadfile(repoRoot .. "/Sanctuary.lua"))("Sanctuary", scope)
             assert(loadfile(repoRoot .. "/SanctuaryUI.lua"))("Sanctuary", scope)
         end)
-        GetLocale = keptLocale
         check(loaded, code .. ": the add-on loads (" .. tostring(loadError) .. ")")
 
         local failures = {}
@@ -14131,13 +14205,48 @@ assertModelAtRest()
                     text = text, room = room,
                     width = type(text) == "string" and widget:GetStringWidth() or 0,
                     owner = owner and owner.__name or "?",
+                    font = widget.__fontFile or "Fonts\\FRIZQT__.TTF",
                 }
             end
         end
-        return { code = code, texts = texts }
+        GetLocale = keptLocale
+
+        -- Each text drawn in a font that has its letters: judged by the file the
+        -- label was actually given, not by the language the text is in. The Latin
+        -- cut of the face draws Latin-1 and the Windows-1252 additions; the
+        -- Cyrillic cut adds the Cyrillic block. And only Russian text is handed
+        -- the Cyrillic cut, unless the client or Sanctuary speaks Russian: every
+        -- other label keeps the file the game gave it.
+        local undrawable, recut, menuText = {}, {}, nil
+        for _, entry in ipairs(texts) do
+            local cyrillicCut = entry.font:find("CYR", 1, true) ~= nil
+            if type(entry.text) == "string" and utf8.len(entry.text) then
+                for _, point in utf8.codes(entry.text) do
+                    if point >= 0x100 and not WINDOW_FONT_EXTRA[point]
+                        and not (cyrillicCut and point >= 0x0400 and point <= 0x04FF) then
+                        undrawable[#undrawable + 1] = string.format("%s \"%s\" U+%04X in %s",
+                            entry.owner, entry.text, point, entry.font)
+                        break
+                    end
+                end
+            end
+            if cyrillicCut and clientCode ~= "ruRU" and picked ~= "ruRU"
+                and not (type(entry.text) == "string" and entry.text:find("[\208\209][\128-\191]")) then
+                recut[#recut + 1] = entry.owner .. " \"" .. tostring(entry.text) .. "\""
+            end
+            if entry.owner == "SanctuaryLanguageMenu" then menuText = entry.text end
+        end
+        equal(#undrawable, 0, code .. ": every text is drawn in a font that has its letters ("
+            .. table.concat(undrawable, " | ") .. ")")
+        equal(#recut, 0, code .. ": and only Russian text is drawn in the Cyrillic cut ("
+            .. table.concat(recut, " | ") .. ")")
+        return { code = code, texts = texts, menuText = menuText }
     end
     for _, shipped in ipairs(shippedLocales) do
-        builds[#builds + 1] = buildWindow(shipped.code, shipped.code, nil, shipped.strings)
+        local build = buildWindow(shipped.code, shipped.code, nil, shipped.strings)
+        builds[#builds + 1] = build
+        equal(build.menuText, shipped.strings.LANGUAGE_AUTO,
+            shipped.code .. ": the closed language menu follows the game")
     end
 
     -- The same window built by a French client that picked another language in
@@ -14153,13 +14262,12 @@ assertModelAtRest()
             equal(#picked.texts, #own.build.texts, label .. ": the same texts as its own client's window")
             -- One text differs by design: the closed language menu shows the
             -- choice saved, "auto" on one side and the language on the other.
+            equal(picked.menuText, choice.name, label .. ": the closed menu names the language picked")
             local differing = {}
             for index, entry in ipairs(own.build.texts) do
                 local other = picked.texts[index]
                 if entry.owner == "SanctuaryLanguageMenu" then
-                    if other and other.text ~= entry.text then
-                        equal(other.text, choice.name, label .. ": the closed menu names the language picked")
-                    end
+                    -- Checked above.
                 elseif not other or other.text ~= entry.text then
                     differing[#differing + 1] = string.format("%s \"%s\" for \"%s\"", entry.owner,
                         tostring(other and other.text), tostring(entry.text))

@@ -32,6 +32,23 @@ function ns.applyLocale(code)
         for key, value in pairs(overrides) do L[key] = value end
     end
     ns.localeKeepsLabelCase = (overrides and KEEPS_LABEL_CASE[code]) or false
+    ns.appliedLocale = (overrides and overrides ~= english) and code or "enUS"
+end
+
+-- The file of the game font a window label is drawn with. Each client ships its
+-- own cut of Friz Quadrata, and the Latin one has no Cyrillic: a Russian word
+-- drawn with it is a row of white boxes. Every client also carries the Cyrillic
+-- cut, the one it draws Russian players' names with, so Russian text on another
+-- client is drawn with that: the whole window when Sanctuary speaks Russian
+-- there, and "Русский" in the language menu. Anything else keeps the file the
+-- game gave it.
+function ns.windowFontFile(gameFile, text)
+    if GetLocale() == "ruRU" then return gameFile end
+    if ns.appliedLocale == "ruRU"
+        or (type(text) == "string" and text:find("[\208\209][\128-\191]")) then
+        return UNIT_NAME_FONT_CYRILLIC or "Fonts\\FRIZQT___CYR.TTF"
+    end
+    return gameFile
 end
 
 -- The languages a player can pick for Sanctuary alone, in the Advanced tab, in

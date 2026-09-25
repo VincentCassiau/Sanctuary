@@ -315,7 +315,11 @@ end
 -- by itself, which needs a global to reach.
 local function newLabel(parent, text, size, color, justify, name)
     local label = parent:CreateFontString(name, "OVERLAY", "GameFontNormal")
-    local fontFile = label:GetFont()
+    -- The game's own file, except for Russian text on a client whose file has
+    -- no Cyrillic: see `ns.windowFontFile`. The game's file is kept, for a label
+    -- whose text changes script later -- the closed language menu.
+    label.gameFontFile = label:GetFont()
+    local fontFile = ns.windowFontFile(label.gameFontFile, text)
     label:SetFont(fontFile, size or FONT_BODY, "")
     label:SetTextColor(unpack(color or C.ink))
     label:SetText(text or "")
@@ -1046,6 +1050,9 @@ local function newDropdown(parent, name, width, rows, get, set)
         for _, row in ipairs(rows) do
             if row.value == current then text = row.text end
         end
+        -- The value is the one label here whose script can change: "Русский"
+        -- picked, and the reload put off, shows in a window still drawn in Latin.
+        self.value:SetFont(ns.windowFontFile(self.value.gameFontFile, text), FONT_BODY, "")
         self.value:SetText(text)
         self.value:SetTextColor(unpack(self.enabled and C.ink or C.disabled))
         self.caret:SetCaretColor(self.enabled and C.dim or C.disabled)
@@ -2090,7 +2097,7 @@ local function buildProtectionTab(parent)
     protection.testInput:MakeClearable()
     protection.testAnswer = parent:CreateFontString("SanctuaryTestAnswer", "OVERLAY", "GameFontNormal")
     do
-        local fontFile = protection.testAnswer:GetFont()
+        local fontFile = ns.windowFontFile(protection.testAnswer:GetFont())
         protection.testAnswer:SetFont(fontFile, FONT_BODY, "")
         protection.testAnswer:SetJustifyH("LEFT")
     end
