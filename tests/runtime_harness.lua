@@ -7499,7 +7499,7 @@ assertModelAtRest()
 -- reaches it. The size of the reference is pinned: a key added or removed on
 -- purpose moves this number with it, and one lost by accident stops here.
 do
-    local REFERENCE_KEYS = 255
+    local REFERENCE_KEYS = 261
 
     local handle = assert(io.open(repoRoot .. "/Sanctuary.toc", "r"))
     local manifest = handle:read("a")
@@ -11527,7 +11527,7 @@ do
     gripUp(grip)
     equal(content:GetWidth(), 500, "the window is at its narrowest bound")
     local narrow = sweep()
-    equal(#narrow.sections, 3, "the Advanced screen has its three section rules")
+    equal(#narrow.sections, 4, "the Advanced screen has its four section rules")
     for _, section in ipairs(narrow.sections) do
         equal(section:GetWidth(), 500 - 18 * 2, "and each spans the narrow window")
     end
@@ -13668,6 +13668,142 @@ end)()
 
 assertModelAtRest()
 -- ---------------------------------------------------------------------------
+-- A language picked for Sanctuary alone
+-- ---------------------------------------------------------------------------
+
+-- The Advanced tab lets a player read Sanctuary in another language than the
+-- game's -- a French client reading English, a Russian reading an EU realm's
+-- French. The files lay the strings out for the game's language when they load,
+-- before the saved variables exist; the choice is applied at ADDON_LOADED. A
+-- reload is simulated as the client runs one: the game's language laid out
+-- again, the dialogs written again at load, then the event.
+;(function()
+
+local function sameStrings(a, b)
+    for key, value in pairs(a) do
+        if b[key] ~= value then return false, key end
+    end
+    for key in pairs(b) do
+        if a[key] == nil then return false, key end
+    end
+    return true
+end
+local function reloadWith(choice)
+    SanctuaryDB.locale = choice
+    ns.applyLocale(GetLocale())
+    ns.refreshPopupTexts()
+    chatMessages = {}
+    fire("ADDON_LOADED", "Sanctuary")
+end
+local DIALOG_TEXTS = {
+    SANCTUARY_CLEAR_LOG = { "LOGS_CLEAR_CONFIRM", "LOGS_CLEAR_YES", "LOGS_CLEAR_NO" },
+    SANCTUARY_MAIL_DELETE_ATTACHMENTS = { "MAIL_DELETE_CONFIRM", "MAIL_DELETE_OK", "MAIL_DELETE_CANCEL" },
+    SANCTUARY_CLEAR_DEBUG_LOG = { "DEBUG_CLEAR_CONFIRM", "LOGS_CLEAR_YES", "LOGS_CLEAR_NO" },
+    SANCTUARY_RELOAD_LOCALE = { "LANGUAGE_RELOAD_TEXT", "LANGUAGE_RELOAD_NOW", "LANGUAGE_RELOAD_LATER" },
+}
+local function dialogsSpeak(strings, label)
+    for which, keys in pairs(DIALOG_TEXTS) do
+        local dialog = StaticPopupDialogs[which]
+        equal(dialog.text, strings[keys[1]], which .. " reads " .. label)
+        equal(dialog.button1, strings[keys[2]], "and so does its first button")
+        equal(dialog.button2, strings[keys[3]], "and its second")
+    end
+end
+
+equal(ns.ACCOUNT_DEFAULTS.locale, "auto", "a new settings file follows the game's language")
+equal(SanctuaryDB.locale, "auto", "and so does the one this run started on")
+
+-- "auto" changes nothing: the table laid out for the game's language stays.
+reloadWith("auto")
+equal((sameStrings(ns.L, frenchLocale)), true, "with auto, a French client reads French")
+equal(SanctuaryDB.locale, "auto", "and the saved choice stays auto")
+dialogsSpeak(frenchLocale, "French")
+
+-- A language picked is applied before the first line is printed, and the four
+-- dialogs written at load are written again in it.
+reloadWith("enUS")
+local same, differing = sameStrings(ns.L, defaultLocale)
+check(same, "with English picked, a French client reads English (" .. tostring(differing) .. ")")
+check((chatMessages[1] or ""):find(defaultLocale.ADDON_LOADED_ACTIVE, 1, true) ~= nil,
+    "and the load line is already English")
+dialogsSpeak(defaultLocale, "English")
+
+-- Every language the menu offers reads its own table, and every language this
+-- copy ships is on the menu.
+local FILE_OF = {}
+for _, pair in ipairs(CLIENT_FILES) do FILE_OF[pair[1]] = pair[2] end
+local offered, offeredFiles = {}, {}
+for _, choice in ipairs(ns.LOCALE_CHOICES) do
+    if ns.isLocaleAvailable(choice.code) then
+        offered[#offered + 1] = choice.code
+        offeredFiles[FILE_OF[choice.code]] = true
+        reloadWith(choice.code)
+        local matches, key = sameStrings(ns.L, loadLocale(choice.code))
+        check(matches, choice.code .. " picked reads the " .. choice.code .. " table (" .. tostring(key) .. ")")
+        equal(SanctuaryDB.locale, choice.code, "and the choice is kept")
+    end
+end
+for _, shipped in ipairs(shippedLocales) do
+    check(offeredFiles[shipped.file], "the menu offers the language a " .. shipped.code .. " client reads")
+end
+
+-- A value this copy cannot honour -- a code from a later version, a language it
+-- does not ship, a file an editor broke -- reads as auto, and is put back to it.
+for _, broken in ipairs({ "xxXX", "es", "koKR", "enGB", 42, true, "" }) do
+    reloadWith(broken)
+    equal(SanctuaryDB.locale, "auto", "a saved " .. tostring(broken) .. " is read as auto")
+    equal((sameStrings(ns.L, frenchLocale)), true, "and Sanctuary follows the game again")
+end
+
+-- The menu: the game's language first, then each language in itself.
+local keptUI, keptReload = C_UI, ReloadUI
+local reloads = 0
+C_UI = { Reload = function() reloads = reloads + 1 end }
+ReloadUI = function() reloads = reloads + 100 end
+reloadWith("auto")
+local keptShown = mainFrame:IsShown()
+if not keptShown then mainFrame:Show() end
+_G.SanctuaryTab_advanced:Click()
+local menu = _G.SanctuaryLanguageMenu
+check(menu ~= nil, "the Advanced tab carries the language menu")
+equal(#menu.rows, 1 + #offered, "one row for the game's language and one per language shipped")
+equal(menu.rows[1].label:GetText(), frenchLocale.LANGUAGE_AUTO, "the first row follows the game")
+for index, code in ipairs(offered) do
+    local name
+    for _, choice in ipairs(ns.LOCALE_CHOICES) do
+        if choice.code == code then name = choice.name end
+    end
+    equal(menu.rows[index + 1].label:GetText(), name, code .. " is named in itself")
+end
+menu:Refresh()
+equal(menu.value:GetText(), frenchLocale.LANGUAGE_AUTO, "closed, the menu shows the saved choice")
+
+-- Picking a language saves it and asks for a reload; only the click reloads.
+popup.shown = false
+menu.rows[2]:Click()
+equal(SanctuaryDB.locale, offered[1], "a pick is saved at once")
+equal(popup.shown and popup.which, "SANCTUARY_RELOAD_LOCALE", "and the reload is asked for")
+equal(reloads, 0, "nothing reloads on its own")
+StaticPopupDialogs.SANCTUARY_RELOAD_LOCALE.OnAccept()
+equal(reloads, 1, "Reload now reloads the interface, once")
+popup.shown = false
+menu.rows[2]:Click()
+equal(popup.shown, false, "picking the language already saved asks nothing")
+C_UI = nil
+StaticPopupDialogs.SANCTUARY_RELOAD_LOCALE.OnAccept()
+equal(reloads, 101, "and a client without C_UI.Reload falls back to ReloadUI")
+
+C_UI, ReloadUI = keptUI, keptReload
+popup.shown = false
+reloadWith("auto")
+_G.SanctuaryTab_protection:Click()
+ns.refreshUI()
+if not keptShown then mainFrame:Hide() end
+
+end)()
+
+assertModelAtRest()
+-- ---------------------------------------------------------------------------
 -- The day's fold survives a /reload
 -- ---------------------------------------------------------------------------
 
@@ -13878,16 +14014,18 @@ assertModelAtRest()
     local keptAntiSpam = SanctuaryDB.antiSpam.enabled
     local keptDialogs = {}
     local DIALOGS = { "SANCTUARY_CLEAR_LOG", "SANCTUARY_MAIL_DELETE_ATTACHMENTS",
-        "SANCTUARY_CLEAR_DEBUG_LOG" }
+        "SANCTUARY_CLEAR_DEBUG_LOG", "SANCTUARY_RELOAD_LOCALE" }
     for _, which in ipairs(DIALOGS) do keptDialogs[which] = StaticPopupDialogs[which] end
     UIParent.GetHeight = function() return 768 end
 
     local TAB_KEYS = { "protection", "journal", "advanced", "about", "diagnostics" }
     local builds = {}
-    for _, shipped in ipairs(shippedLocales) do
-        local code = shipped.code
+    -- `code` names the build, `clientCode` is the game's language, `picked` the
+    -- language chosen in the Advanced tab (nil: none), `strings` the table the
+    -- window is expected to speak.
+    local function buildWindow(code, clientCode, picked, strings)
         local scope = {}
-        GetLocale = function() return code end
+        GetLocale = function() return clientCode end
         local first = #createdWidgets + 1
         local loaded, loadError = pcall(function()
             loadLocaleFiles(scope)
@@ -13896,14 +14034,31 @@ assertModelAtRest()
         end)
         GetLocale = keptLocale
         check(loaded, code .. ": the add-on loads (" .. tostring(loadError) .. ")")
-        equal(scope.L and scope.L.TAB_PROTECTION, shipped.strings.TAB_PROTECTION,
-            code .. ": and reads its own language")
 
         local failures = {}
         local function try(label, action)
             local ok, err = pcall(action)
             if not ok then failures[#failures + 1] = label .. ": " .. tostring(err) end
         end
+        SanctuaryDB.debugEnabled = false
+        if loaded then
+            -- What the client does once the saved variables exist.
+            SanctuaryDB.locale = picked or "auto"
+            local fired = false
+            for index = first, #createdWidgets do
+                local widget = createdWidgets[index]
+                if not fired and widget.__events and widget.__events.ADDON_LOADED
+                    and widget.__scripts.OnEvent then
+                    try("ADDON_LOADED", function()
+                        widget.__scripts.OnEvent(widget, "ADDON_LOADED", "Sanctuary")
+                    end)
+                    fired = true
+                end
+            end
+            check(fired, code .. ": its ADDON_LOADED is found and fired")
+        end
+        equal(scope.L and scope.L.TAB_PROTECTION, strings.TAB_PROTECTION,
+            code .. ": and reads its own language")
         if loaded then
             SanctuaryDB.filters.preset = "custom"
             SanctuaryDB.mail.mode = "delete"
@@ -13947,8 +14102,10 @@ assertModelAtRest()
                 check(dialog and dialog.text and dialog.button1 and dialog.button2 and true,
                     code .. ": " .. which .. " has its text and its two buttons")
             end
-            equal(StaticPopupDialogs.SANCTUARY_CLEAR_LOG.text, shipped.strings.LOGS_CLEAR_CONFIRM,
+            equal(StaticPopupDialogs.SANCTUARY_CLEAR_LOG.text, strings.LOGS_CLEAR_CONFIRM,
                 code .. ": the dialogs speak the language of the window")
+            equal(StaticPopupDialogs.SANCTUARY_RELOAD_LOCALE.button1, strings.LANGUAGE_RELOAD_NOW,
+                code .. ": the reload dialog too")
         end
         equal(#failures, 0, code .. ": the window opens every screen without an error ("
             .. table.concat(failures, " | ") .. ")")
@@ -13977,8 +14134,41 @@ assertModelAtRest()
                 }
             end
         end
-        builds[#builds + 1] = { code = code, texts = texts }
+        return { code = code, texts = texts }
     end
+    for _, shipped in ipairs(shippedLocales) do
+        builds[#builds + 1] = buildWindow(shipped.code, shipped.code, nil, shipped.strings)
+    end
+
+    -- The same window built by a French client that picked another language in
+    -- the Advanced tab: word for word the window that language's own client
+    -- builds, or a string copied at load was left behind in French.
+    local byCode = {}
+    for index, build in ipairs(builds) do byCode[build.code] = { build = build, shipped = shippedLocales[index] } end
+    for _, choice in ipairs(ns.LOCALE_CHOICES) do
+        local own = byCode[choice.code]
+        if own and choice.code ~= "frFR" then
+            local label = choice.code .. " picked on a French client"
+            local picked = buildWindow(label, "frFR", choice.code, own.shipped.strings)
+            equal(#picked.texts, #own.build.texts, label .. ": the same texts as its own client's window")
+            -- One text differs by design: the closed language menu shows the
+            -- choice saved, "auto" on one side and the language on the other.
+            local differing = {}
+            for index, entry in ipairs(own.build.texts) do
+                local other = picked.texts[index]
+                if entry.owner == "SanctuaryLanguageMenu" then
+                    if other and other.text ~= entry.text then
+                        equal(other.text, choice.name, label .. ": the closed menu names the language picked")
+                    end
+                elseif not other or other.text ~= entry.text then
+                    differing[#differing + 1] = string.format("%s \"%s\" for \"%s\"", entry.owner,
+                        tostring(other and other.text), tostring(entry.text))
+                end
+            end
+            equal(#differing, 0, label .. ": every text in it (" .. table.concat(differing, " | ") .. ")")
+        end
+    end
+    SanctuaryDB.locale = "auto"
 
     local reference = {}
     for _, build in ipairs(builds) do

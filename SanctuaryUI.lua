@@ -3007,6 +3007,31 @@ local function buildAdvancedTab(parent)
     advanced.minimap:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
     y = y - 40
 
+    -- The language of this window and of its messages, for Sanctuary alone: the
+    -- game keeps its own. Each language is listed in itself, and only those this
+    -- copy ships. A pick is saved at once and shown after a reload -- the strings
+    -- were laid out when the files loaded -- and the reload is the player's to
+    -- click: the client allows it from a click and from nothing else.
+    advanced.languageSection = newSection(parent, L["ADV_LANGUAGE_TITLE"], nil, width)
+    advanced.languageSection:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
+    y = y - 34
+    local languageRows = { { value = "auto", text = L["LANGUAGE_AUTO"], tip = L["LANGUAGE_TIP"] } }
+    for _, choice in ipairs(ns.LOCALE_CHOICES or {}) do
+        if ns.isLocaleAvailable(choice.code) then
+            languageRows[#languageRows + 1] = { value = choice.code, text = choice.name,
+                tip = L["LANGUAGE_TIP"] }
+        end
+    end
+    advanced.language = newDropdown(parent, "SanctuaryLanguageMenu", 220, languageRows,
+        function() return SanctuaryDB and SanctuaryDB.locale or "auto" end,
+        function(value)
+            if not SanctuaryDB or SanctuaryDB.locale == value then return end
+            SanctuaryDB.locale = value
+            StaticPopup_Show("SANCTUARY_RELOAD_LOCALE")
+        end)
+    advanced.language:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
+    y = y - 40
+
     advanced.status = newLabel(parent, "", FONT_BODY, C.dim)
     advanced.status:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
     advanced.status:SetWidth(width)
@@ -3023,7 +3048,7 @@ applyTabWidth.advanced = function()
     if not advanced.status then return end
     local width = innerWidth()
     for _, section in ipairs({ advanced.diagSection, advanced.journalSection,
-        advanced.minimapSection }) do
+        advanced.minimapSection, advanced.languageSection }) do
         section:SetSectionWidth(width)
     end
     advanced.debugDesc:SetWidth(math.max(60, width - 26))
@@ -3034,6 +3059,7 @@ end
 refreshTab.advanced = function()
     advanced.debug:Refresh()
     advanced.minimap:Refresh()
+    advanced.language:Refresh()
     advanced.maxInput:SetText(tostring(SanctuaryDB and SanctuaryDB.logging.maxEntries or 5000))
     advanced.maxInput:RefreshHint()
 
@@ -4174,6 +4200,37 @@ StaticPopupDialogs["SANCTUARY_CLEAR_DEBUG_LOG"] = {
     end,
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
+
+-- A new language for Sanctuary shows after a reload, and a reload can only
+-- follow a click. "Later" keeps the choice saved for the next one.
+StaticPopupDialogs["SANCTUARY_RELOAD_LOCALE"] = {
+    text = L["LANGUAGE_RELOAD_TEXT"],
+    button1 = L["LANGUAGE_RELOAD_NOW"],
+    button2 = L["LANGUAGE_RELOAD_LATER"],
+    OnAccept = function()
+        if C_UI and C_UI.Reload then C_UI.Reload() elseif ReloadUI then ReloadUI() end
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- The four dialogs above copy their words when this file loads, which is before
+-- the saved variables say which language Sanctuary speaks. When a language was
+-- picked for it, the core applies it and calls this to write them again.
+function ns.refreshPopupTexts()
+    for which, keys in pairs({
+        SANCTUARY_CLEAR_LOG = { "LOGS_CLEAR_CONFIRM", "LOGS_CLEAR_YES", "LOGS_CLEAR_NO" },
+        SANCTUARY_MAIL_DELETE_ATTACHMENTS = { "MAIL_DELETE_CONFIRM", "MAIL_DELETE_OK",
+            "MAIL_DELETE_CANCEL" },
+        SANCTUARY_CLEAR_DEBUG_LOG = { "DEBUG_CLEAR_CONFIRM", "LOGS_CLEAR_YES", "LOGS_CLEAR_NO" },
+        SANCTUARY_RELOAD_LOCALE = { "LANGUAGE_RELOAD_TEXT", "LANGUAGE_RELOAD_NOW",
+            "LANGUAGE_RELOAD_LATER" },
+    }) do
+        local dialog = StaticPopupDialogs[which]
+        if dialog then
+            dialog.text, dialog.button1, dialog.button2 = L[keys[1]], L[keys[2]], L[keys[3]]
+        end
+    end
+end
 
 -- ============================================================================
 -- SECTION 13: Frame, header, tabs

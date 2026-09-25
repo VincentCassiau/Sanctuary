@@ -135,6 +135,9 @@ local ACCOUNT_DEFAULTS = {
         -- ask. The "Show the text of blocked messages" box brings it back.
         showMessageColumn = false,
     },
+    -- The language Sanctuary speaks: "auto" follows the game's, a code picks
+    -- one for the add-on alone (Advanced tab). Read at load, see ADDON_LOADED.
+    locale = "auto",
     debugEnabled = false,
     debugLog = {},
     -- Retention accounting for the debug log. It lives in SavedVariables on
@@ -7850,6 +7853,17 @@ function handlers.ADDON_LOADED(addonName)
     if filters and filters.say ~= filters.yell then
         local blocked = (filters.say or filters.yell) and true or false
         filters.say, filters.yell = blocked, blocked
+    end
+
+    -- The language picked for Sanctuary alone, if one was. The strings were laid
+    -- out for the game's language when the files loaded, before the saved
+    -- variables existed: a choice is applied now, before the first line is
+    -- printed, and the dialogs written at load are written again in it. A value
+    -- this copy cannot honour is put back to "auto".
+    SanctuaryDB.locale = ns.normalizeLocaleChoice(SanctuaryDB.locale)
+    if SanctuaryDB.locale ~= "auto" then
+        ns.applyLocale(SanctuaryDB.locale)
+        if ns.refreshPopupTexts then ns.refreshPopupTexts() end
     end
 
     if not SanctuaryCharDB then
