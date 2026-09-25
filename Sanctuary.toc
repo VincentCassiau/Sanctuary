@@ -10,12 +10,15 @@
 ## IconTexture: Interface\AddOns\Sanctuary\media\logo
 ## Category: Chat
 ## Category-frFR: Discussion
+## Notes-deDE: Schutz vor Belästigung
+## Category-deDE: Chat
 ## SavedVariables: SanctuaryDB
 ## SavedVariablesPerCharacter: SanctuaryCharDB
 ## DefaultState: enabled
 
 Locales\enUS.lua
 Locales\frFR.lua
+Locales\deDE.lua
 Locales\apply.lua
 Sanctuary.lua
 SanctuaryUI.lua

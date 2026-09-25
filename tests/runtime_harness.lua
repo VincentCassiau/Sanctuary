@@ -7403,6 +7403,16 @@ KNOWN_IDENTICAL.frFR = {
     -- Three durations of the anti-spam menu, written the same in both.
     ANTISPAM_D_5M = true, ANTISPAM_D_10M = true, ANTISPAM_D_30M = true,
 }
+-- German: the game's own words for the channel and the emote, and "Normal",
+    -- "OK" and "offline" as German writes them.
+-- The rest are format strings with nothing in them to translate.
+KNOWN_IDENTICAL.deDE = {
+    LOG_TYPE_CHANNEL = true, LOG_TYPE_EMOTE = true, MAIL_ICON_NORMAL = true,
+    MAIL_DELETE_OK = true, WL_BNET_OFFLINE = true, ABOUT_VERSION = true,
+    LOGS_SPAM_BADGE = true, ABOUT_GITHUB = true, DIAG_SPAM_PROBE_LINE = true,
+    LIST_END = true, LIST_SEPARATOR = true, LOGS_GROUP_HEADER = true,
+    LOGS_TIME_RANGE = true, MINIMAP_TIP_TITLE = true, WL_BNET_ROW = true,
+}
 for _, locale in ipairs(shippedLocales) do
     if locale.code ~= "enUS" then
         local allowed = KNOWN_IDENTICAL[locale.file]
