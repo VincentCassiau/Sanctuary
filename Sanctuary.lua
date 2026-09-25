@@ -643,6 +643,23 @@ do
         text = text:lower()
         return (text:gsub("[\194-\223][\128-\191]", foldPair))
     end
+
+    -- The same table read the other way, for the one sentence the interface
+    -- puts together from parts: its first letter in capitals, in whichever
+    -- script the language is written. Only the first letter, and only one the
+    -- table knows; "i", whose capital is İ only in Turkish, stays ASCII's.
+    local RAISE = {}
+    for upper, lower in pairs(FOLD) do
+        if #lower == 2 then RAISE[lower] = upper end
+    end
+    function ns.upperFirst(text)
+        if type(text) ~= "string" or text == "" then return text end
+        local first = text:sub(1, 1)
+        if first:match("%l") then return first:upper() .. text:sub(2) end
+        local raised = RAISE[text:sub(1, 2)]
+        if raised then return raised .. text:sub(3) end
+        return text
+    end
 end
 
 -- Forward declaration: the one rule that says where a pseudo ends lives further
@@ -3143,15 +3160,16 @@ end
 -- trace" for it.
 -- The word the chat line uses for a block: the Journal's own label for the type,
 -- lower-cased, never the identifier the code goes by. "whisper", "groupInvite"
--- and "mail" were printed as such since 1.0.0. `%u` is ASCII, so the two accented capitals a French
--- label can open on are folded by hand.
-local ACCENTED_LOWER = { ["\195\137"] = "\195\169", ["\195\128"] = "\195\160" }
+-- and "mail" were printed as such since 1.0.0. Only the first letter is folded,
+-- through `foldCase`, which knows the accented and the Cyrillic capitals a label
+-- can open on. A language that capitalises its nouns -- German -- keeps the
+-- label as it is: `applyLocale` says which.
 local function blockTypeLabel(blockType)
     local label = ns.getLogEntryDisplayType and ns.getLogEntryDisplayType({ type = blockType })
     if type(label) ~= "string" or label == "" then label = tostring(blockType) end
-    label = label:gsub("^%u", string.lower)
-    label = label:gsub("^(\195[\137\128])", ACCENTED_LOWER)
-    return label
+    if ns.localeKeepsLabelCase then return label end
+    local first = label:match("^[\194-\223][\128-\191]") or label:sub(1, 1)
+    return foldCase(first) .. label:sub(#first + 1)
 end
 
 local function accountForBlock(blockType, sourceText, maskedRepeat)

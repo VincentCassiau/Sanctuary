@@ -49,11 +49,16 @@ L["HEADER_TIP_NOTHING"] = "Nothing is being filtered."
 L["HEADER_TIP_ALLOWED"] = "%s allowed people."
 L["HEADER_TIP_CLICK_OFF"] = "Click to turn Sanctuary off."
 L["HEADER_TIP_CLICK_ON"] = "Click to turn Sanctuary on."
-L["KIND_GROUP_INVITE"] = "Group invitations"
+-- The five kinds are joined into one sentence by the two keys below them, and
+-- the first one to come takes a capital: each is written as it reads inside
+-- the list.
+L["KIND_GROUP_INVITE"] = "group invitations"
 L["KIND_WHISPER"] = "private messages"
 L["KIND_DUEL"] = "duels"
 L["KIND_TRADE"] = "trades"
 L["KIND_GUILD_INVITE"] = "guild invitations"
+L["LIST_SEPARATOR"] = ", "
+L["LIST_END"] = "."
 
 -- Tabs
 L["TAB_PROTECTION"] = "Protection"

@@ -15,6 +15,11 @@ local _, ns = ...
 -- answers enUS. A locale with no file at all reads English.
 local LOCALE_FILES = { esES = "es", esMX = "es" }
 
+-- German writes every noun with a capital, in the middle of a sentence too: the
+-- label of a block keeps its capital in the chat line, where the other languages
+-- fold it to lower case.
+local KEEPS_LABEL_CASE = { deDE = true }
+
 local L = ns.L or {}
 ns.L = L
 
@@ -26,6 +31,7 @@ function ns.applyLocale(code)
     if overrides and overrides ~= english then
         for key, value in pairs(overrides) do L[key] = value end
     end
+    ns.localeKeepsLabelCase = (overrides and KEEPS_LABEL_CASE[code]) or false
 end
 
 ns.applyLocale(GetLocale())

@@ -4206,8 +4206,14 @@ local function stateTooltipText()
         local key = KIND_LABEL_KEYS[kind]
         if key then parts[#parts + 1] = L[key] end
     end
+    -- One sentence built from parts, and each language decides how its lists are
+    -- punctuated. Every kind is written in lower case, as it reads inside the
+    -- list, and whichever comes first takes the capital: with the group
+    -- invitations unticked, the sentence used to open on a lower-case letter.
     local lines = {}
-    lines[#lines + 1] = #parts > 0 and (table.concat(parts, ", ") .. ".") or L["HEADER_TIP_NOTHING"]
+    lines[#lines + 1] = #parts > 0
+        and ns.upperFirst(table.concat(parts, L["LIST_SEPARATOR"]) .. L["LIST_END"])
+        or L["HEADER_TIP_NOTHING"]
     lines[#lines + 1] = string.format(L["HEADER_TIP_ALLOWED"], tostring(info.allowedCount))
     lines[#lines + 1] = info.enabled and L["HEADER_TIP_CLICK_OFF"] or L["HEADER_TIP_CLICK_ON"]
     return table.concat(lines, "\n")
@@ -4247,7 +4253,13 @@ local function layoutTabs()
     local stripWidth = frameWidth - FRAME_EDGE * 2
     local widths, total = {}, 0
     for index, def in ipairs(visible) do
-        widths[index] = math.max(70, (#L[def.labelKey] * 8) + 34)
+        -- Bytes, as the comment above says -- with one exception. A Cyrillic
+        -- letter is two bytes and draws about as wide as a Latin one, so its
+        -- second byte is not counted: counted, a Russian tab took twice the
+        -- room its word needs. A Latin accent keeps its two.
+        local label = L[def.labelKey]
+        local _, cyrillic = label:gsub("[\208\209][\128-\191]", "")
+        widths[index] = math.max(70, ((#label - cyrillic) * 8) + 34)
         total = total + widths[index]
     end
     if total > stripWidth and total > 0 then

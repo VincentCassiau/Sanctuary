@@ -7403,6 +7403,8 @@ KNOWN_IDENTICAL.frFR = {
     LOGS_SPAM_BADGE = true, LOGS_TIME_RANGE = true,
     -- The accept button of the mailbox dialog. "OK" in both languages.
     MAIL_DELETE_OK = true,
+    -- How the header's tooltip punctuates its list: a comma, a full stop.
+    LIST_SEPARATOR = true, LIST_END = true,
 }
 for _, locale in ipairs(shippedLocales) do
     if locale.code ~= "enUS" then
@@ -7439,7 +7441,7 @@ assertModelAtRest()
 -- reaches it. The size of the reference is pinned: a key added or removed on
 -- purpose moves this number with it, and one lost by accident stops here.
 do
-    local REFERENCE_KEYS = 253
+    local REFERENCE_KEYS = 255
 
     local handle = assert(io.open(repoRoot .. "/Sanctuary.toc", "r"))
     local manifest = handle:read("a")
@@ -13758,10 +13760,11 @@ SanctuaryDB.notifications.mode = keptMode
 SanctuaryDB.logging.enabled = keptLogging
 
 -- 2. The header's tooltip, for each of the 32 combinations of the five kinds.
--- Its first line is the kinds joined by ", " and closed by ".", each as the
--- locale writes it: only the group invitations open on a capital, so a sentence
--- that does not start with them starts in lower case. That is a defect, pinned
--- here as it is so that the fix shows up as the one line of this block it moves.
+-- Its first line is the kinds joined by the locale's separator and closed by its
+-- full stop, each kind as it reads inside the list, and the sentence opens on a
+-- capital whichever kind comes first. Before, only the group invitations were
+-- written with one, so with them unticked the sentence opened in lower case:
+-- masks 30 and 24 below are the lines that fix moved, and the only ones.
 local KIND_ORDER = { "groupInvite", "whisper", "duel", "trade", "guildInvite" }
 local KIND_KEYS = {
     groupInvite = "KIND_GROUP_INVITE", whisper = "KIND_WHISPER", duel = "KIND_DUEL",
@@ -13770,17 +13773,28 @@ local KIND_KEYS = {
 local FIRST_LINES = {
     enUS = {
         [31] = "Group invitations, private messages, duels, trades, guild invitations.",
-        [30] = "private messages, duels, trades, guild invitations.",
-        [24] = "trades, guild invitations.",
+        [30] = "Private messages, duels, trades, guild invitations.",
+        [24] = "Trades, guild invitations.",
         [0] = "Nothing is being filtered.",
     },
     frFR = {
         [31] = "Invitations de groupe, messages privés, duels, échanges, invitations de guilde.",
-        [30] = "messages privés, duels, échanges, invitations de guilde.",
-        [24] = "échanges, invitations de guilde.",
+        [30] = "Messages privés, duels, échanges, invitations de guilde.",
+        [24] = "Échanges, invitations de guilde.",
         [0] = "Rien n'est filtré.",
     },
 }
+-- The capital, worked out here without the add-on's own helper: ASCII, and the
+-- Latin-1 lower case both languages can open on.
+local function capitalised(text)
+    local ascii = text:match("^%l")
+    if ascii then return ascii:upper() .. text:sub(2) end
+    local trail = text:match("^\195([\160-\190])")
+    if trail and trail ~= "\183" then
+        return "\195" .. string.char(trail:byte() - 32) .. text:sub(3)
+    end
+    return text
+end
 
 local stateButton = _G.SanctuaryStateButton
 local function headerTip()
@@ -13812,7 +13826,7 @@ for _, locale in ipairs(LOCALES) do
             SanctuaryDB.filters[kind] = on
             if on then parts[#parts + 1] = locale.strings[KIND_KEYS[kind]] end
         end
-        local first = #parts > 0 and (table.concat(parts, ", ") .. ".")
+        local first = #parts > 0 and capitalised(table.concat(parts, ", ") .. ".")
             or locale.strings.HEADER_TIP_NOTHING
         local shown = headerTip() or ""
         equal(shown, first .. "\n" .. allowedLine .. "\n" .. clickLine,
@@ -13876,6 +13890,59 @@ for _, locale in ipairs(LOCALES) do
             end
         end
     end
+end
+SanctuaryDB.debugEnabled = keptDebug
+SanctuaryDB.uiSize = keptSize
+UIParent.GetHeight = keptScreen
+
+-- 4. And what the same three do with a third script, where a byte is not a
+-- letter and `%u` is not a capital.
+equal(ns.upperFirst("échanges, duels."), "Échanges, duels.", "a sentence can open on an accented capital")
+equal(ns.upperFirst("мир"), "Мир", "or a Cyrillic one")
+equal(ns.upperFirst("ёж"), "Ёж", "Ё included")
+equal(ns.upperFirst("Gruppeneinladungen"), "Gruppeneinladungen", "a capital stays one")
+equal(ns.upperFirst("5 minutes"), "5 minutes", "and what is not a letter is left alone")
+equal(ns.upperFirst(""), "", "as is nothing at all")
+
+local russian, keptCase = {}, ns.localeKeepsLabelCase
+for key, value in pairs(defaultLocale) do russian[key] = value end
+russian.LOG_TYPE_TRADE = "Обмен"
+russian.BLOCKED_VERBOSE = "Заблокировано: %s от %s"
+SanctuaryDB.notifications.mode = "verbose"
+SanctuaryDB.logging.enabled = true
+useStrings(russian)
+ns.localeKeepsLabelCase = false
+chatMessages = {}
+now = now + 5
+ns.logBlock("trade", "Pinned-TestRealm", nil, nil, nil)
+check((chatMessages[#chatMessages] or ""):find("обмен", 1, true) ~= nil,
+    "a Cyrillic label is lower-cased in the verbose line, not left as it opens")
+russian.LOG_TYPE_TRADE = "Handel"
+useStrings(russian)
+ns.localeKeepsLabelCase = true
+chatMessages = {}
+now = now + 5
+ns.logBlock("trade", "Pinned-TestRealm", nil, nil, nil)
+check((chatMessages[#chatMessages] or ""):find("Handel", 1, true) ~= nil,
+    "and a language that capitalises its nouns keeps the capital")
+ns.localeKeepsLabelCase = keptCase
+ns.clearJournal()
+SanctuaryDB.notifications.mode = keptMode
+SanctuaryDB.logging.enabled = keptLogging
+
+-- Six Cyrillic letters are twelve bytes and one word of six letters: the tab is
+-- sized for the six, as a Latin word of six would be.
+russian.TAB_PROTECTION, russian.TAB_JOURNAL = "Защита", "Журнал"
+russian.TAB_ADVANCED, russian.TAB_ABOUT = "Дополнительно", "О программе"
+useStrings(russian)
+UIParent.GetHeight = function() return 768 end
+SanctuaryDB.debugEnabled = false
+SanctuaryDB.uiSize = { 900, 700 }
+ns.refreshTabBar()
+ns.refreshUI()
+for index, key in ipairs({ "protection", "journal", "advanced", "about" }) do
+    equal(_G["SanctuaryTab_" .. key]:GetWidth(), ({ 82, 82, 138, 122 })[index],
+        "a Cyrillic " .. key .. " tab is sized by its letters, not its bytes")
 end
 SanctuaryDB.debugEnabled = keptDebug
 SanctuaryDB.uiSize = keptSize
