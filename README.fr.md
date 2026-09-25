@@ -86,6 +86,12 @@ Les personnes de confiance viennent de plusieurs sources, toutes actives en mêm
 
 Ouvrez l'onglet Avancé et activez le mode debug. Reproduisez le problème, puis copiez le journal depuis l'onglet Journal et collez-le dans une issue GitHub. Rien n'est envoyé automatiquement.
 
+## Langues
+
+Sanctuary parle anglais, français, allemand, espagnol (Espagne et Amérique latine), portugais du Brésil, russe et italien. Il suit la langue de votre jeu, et l'onglet Avancé permet d'en choisir une autre pour Sanctuary seul : le jeu garde la sienne.
+
+Les traductions allemande, espagnole, portugaise, russe et italienne sont des premières versions qu'aucune personne de langue maternelle n'a encore relues. Si un mot sonne faux, ouvrez une issue ou une pull request : chaque langue tient dans un fichier de `Locales/`.
+
 ## Compatibilité
 
 - WoW Retail (Midnight). Classic et les autres clients ne sont pas pris en charge pour le moment.
