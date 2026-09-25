@@ -7375,6 +7375,17 @@ do
         end
     end
 end
+-- And which ones they are. Every check below walks the list above, so a language
+-- dropped from the manifest would leave them all green: the eight client
+-- languages Sanctuary speaks are named here, and none may go quietly.
+do
+    local EXPECTED = { "deDE", "enUS", "esES", "esMX", "frFR", "itIT", "ptBR", "ruRU" }
+    local shipped = {}
+    for _, locale in ipairs(shippedLocales) do shipped[#shipped + 1] = locale.code end
+    table.sort(shipped)
+    equal(table.concat(shipped, " "), table.concat(EXPECTED, " "),
+        "the manifest ships the eight client languages")
+end
 
 -- Format strings and a handful of proper nouns are identical in two languages on
 -- purpose; the check is that nothing NEW slips through untranslated, so each
@@ -7432,6 +7443,16 @@ KNOWN_IDENTICAL.ptBR = {
 -- Russian: nothing beyond the format strings.
 -- The rest are format strings with nothing in them to translate.
 KNOWN_IDENTICAL.ruRU = {
+    ABOUT_GITHUB = true, DIAG_SPAM_PROBE_LINE = true, LIST_END = true,
+    LIST_SEPARATOR = true, LOGS_GROUP_HEADER = true, LOGS_TIME_RANGE = true,
+    MINIMAP_TIP_TITLE = true, WL_BNET_ROW = true,
+}
+-- Italian: "No", "OK", "offline" and the emote as Italian writes them, and
+    -- the pattern tag, the word being borrowed as in French.
+-- The rest are format strings with nothing in them to translate.
+KNOWN_IDENTICAL.itIT = {
+    ANTISPAM_NO_TITLE = true, MAIL_DELETE_OK = true, WL_BNET_OFFLINE = true,
+    LOG_TYPE_EMOTE = true, EXPORT_SUSPECT_TAG = true, LOGS_SPAM_BADGE = true,
     ABOUT_GITHUB = true, DIAG_SPAM_PROBE_LINE = true, LIST_END = true,
     LIST_SEPARATOR = true, LOGS_GROUP_HEADER = true, LOGS_TIME_RANGE = true,
     MINIMAP_TIP_TITLE = true, WL_BNET_ROW = true,
