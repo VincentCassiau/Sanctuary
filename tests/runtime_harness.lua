@@ -13351,6 +13351,210 @@ end)()
 
 assertModelAtRest()
 -- ---------------------------------------------------------------------------
+-- What the three surfaces that shape a translated word print today
+-- ---------------------------------------------------------------------------
+
+-- Three places do more with a translation than show it: the verbose chat line
+-- lower-cases the Journal's label for the type, the header's tooltip joins the
+-- names of the five kinds into a sentence, and the tab strip sizes each tab from
+-- its label. What they print is pinned here, word for word and pixel for pixel,
+-- in English and in French, before the locales leave their single file and
+-- before any code learns a third language: a change to either of these two
+-- languages has to show up as a change to this block.
+--
+-- A language is applied by refilling `ns.L` in place, which is the table both
+-- files hold from the moment they load -- the same move the add-on makes.
+
+;(function()
+
+local frenchAsFound = {}
+for key, value in pairs(ns.L) do frenchAsFound[key] = value end
+local function useStrings(strings)
+    for key in pairs(ns.L) do ns.L[key] = nil end
+    for key, value in pairs(strings) do ns.L[key] = value end
+end
+local LOCALES = {
+    { code = "enUS", strings = defaultLocale },
+    { code = "frFR", strings = frenchLocale },
+}
+
+-- 1. The word a verbose line uses for a block: the Journal's label, its first
+-- letter lower-cased. Every type `logBlock` is ever handed is here.
+local BLOCK_WORDS = {
+    enUS = {
+        groupInvite = "group invitation", whisper = "private message", say = "say",
+        yell = "yell", emote = "emote", duel = "duel", trade = "trade",
+        guildInvite = "guild invitation", channel = "channel", group = "group",
+        mail = "mail",
+    },
+    frFR = {
+        groupInvite = "invitation de groupe", whisper = "message privé", say = "dire",
+        yell = "crier", emote = "émote", duel = "duel", trade = "échange",
+        guildInvite = "invitation de guilde", channel = "canal", group = "groupe",
+        mail = "courrier",
+    },
+}
+local BLOCK_TYPES = { "groupInvite", "whisper", "say", "yell", "emote", "duel", "trade",
+    "guildInvite", "channel", "group", "mail" }
+
+local keptMode = SanctuaryDB.notifications.mode
+local keptLogging = SanctuaryDB.logging.enabled
+SanctuaryDB.notifications.mode = "verbose"
+SanctuaryDB.logging.enabled = true
+ns.clearJournal()
+for _, locale in ipairs(LOCALES) do
+    useStrings(locale.strings)
+    for _, blockType in ipairs(BLOCK_TYPES) do
+        chatMessages = {}
+        now = now + 5
+        ns.logBlock(blockType, "Pinned-TestRealm", "pinned " .. blockType .. " " .. locale.code, nil, nil)
+        local line = (chatMessages[#chatMessages] or "")
+            :gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+        local expected = string.format(locale.strings.BLOCKED_VERBOSE,
+            BLOCK_WORDS[locale.code][blockType], "Pinned-TestRealm")
+        equal(#chatMessages, 1,
+            locale.code .. ": a block of type " .. blockType .. " prints one verbose line")
+        equal(line:sub(-#expected), expected,
+            locale.code .. ": the verbose line names the type " .. blockType .. " as it always did")
+    end
+end
+ns.clearJournal()
+SanctuaryDB.notifications.mode = keptMode
+SanctuaryDB.logging.enabled = keptLogging
+
+-- 2. The header's tooltip, for each of the 32 combinations of the five kinds.
+-- Its first line is the kinds joined by ", " and closed by ".", each as the
+-- locale writes it: only the group invitations open on a capital, so a sentence
+-- that does not start with them starts in lower case. That is a defect, pinned
+-- here as it is so that the fix shows up as the one line of this block it moves.
+local KIND_ORDER = { "groupInvite", "whisper", "duel", "trade", "guildInvite" }
+local KIND_KEYS = {
+    groupInvite = "KIND_GROUP_INVITE", whisper = "KIND_WHISPER", duel = "KIND_DUEL",
+    trade = "KIND_TRADE", guildInvite = "KIND_GUILD_INVITE",
+}
+local FIRST_LINES = {
+    enUS = {
+        [31] = "Group invitations, private messages, duels, trades, guild invitations.",
+        [30] = "private messages, duels, trades, guild invitations.",
+        [24] = "trades, guild invitations.",
+        [0] = "Nothing is being filtered.",
+    },
+    frFR = {
+        [31] = "Invitations de groupe, messages privés, duels, échanges, invitations de guilde.",
+        [30] = "messages privés, duels, échanges, invitations de guilde.",
+        [24] = "échanges, invitations de guilde.",
+        [0] = "Rien n'est filtré.",
+    },
+}
+
+local stateButton = _G.SanctuaryStateButton
+local function headerTip()
+    rawset(GameTooltip, "__lastText", nil)
+    stateButton:GetScript("OnEnter")(stateButton)
+    local text = rawget(GameTooltip, "__lastText")
+    stateButton:GetScript("OnLeave")(stateButton)
+    return text
+end
+
+local keptFilters = {}
+for _, kind in ipairs(KIND_ORDER) do keptFilters[kind] = SanctuaryDB.filters[kind] end
+local keptPreset, keptScope = SanctuaryDB.filters.preset, SanctuaryDB.filters.scope
+-- A per-character answer would win over the account's, and none is wanted here.
+local keptCharFilters = SanctuaryCharDB.overrides.filters
+SanctuaryCharDB.overrides.filters = {}
+SanctuaryDB.filters.preset = "custom"
+SanctuaryDB.filters.scope = "strangers"
+for _, locale in ipairs(LOCALES) do
+    useStrings(locale.strings)
+    local info = ns.describeProtection()
+    local allowedLine = string.format(locale.strings.HEADER_TIP_ALLOWED, tostring(info.allowedCount))
+    local clickLine = info.enabled and locale.strings.HEADER_TIP_CLICK_OFF
+        or locale.strings.HEADER_TIP_CLICK_ON
+    for mask = 0, 31 do
+        local parts = {}
+        for bit, kind in ipairs(KIND_ORDER) do
+            local on = math.floor(mask / 2 ^ (bit - 1)) % 2 == 1
+            SanctuaryDB.filters[kind] = on
+            if on then parts[#parts + 1] = locale.strings[KIND_KEYS[kind]] end
+        end
+        local first = #parts > 0 and (table.concat(parts, ", ") .. ".")
+            or locale.strings.HEADER_TIP_NOTHING
+        local shown = headerTip() or ""
+        equal(shown, first .. "\n" .. allowedLine .. "\n" .. clickLine,
+            locale.code .. ": the header tooltip for kinds mask " .. mask)
+        if FIRST_LINES[locale.code][mask] then
+            equal(shown:match("^[^\n]*"), FIRST_LINES[locale.code][mask],
+                locale.code .. ": the first line for mask " .. mask .. ", word for word")
+        end
+    end
+end
+for _, kind in ipairs(KIND_ORDER) do SanctuaryDB.filters[kind] = keptFilters[kind] end
+SanctuaryDB.filters.preset, SanctuaryDB.filters.scope = keptPreset, keptScope
+SanctuaryCharDB.overrides.filters = keptCharFilters
+
+-- 3. The tab strip. Each tab is sized from the BYTES of its label: eight pixels
+-- a byte plus 34, never under 70, and the whole row scaled down to the strip
+-- (the window less its two 2 px edges) when it does not fit. The widths below
+-- are that rule's answers for the four and the five tabs of each language.
+local TAB_KEYS = { "protection", "journal", "advanced", "about", "diagnostics" }
+local TAB_WIDTHS = {
+    enUS = {
+        [false] = { [500] = { 114, 90, 98, 74 }, [640] = { 114, 90, 98, 74 },
+            [900] = { 114, 90, 98, 74 } },
+        [true] = { [500] = { 113, 89, 97, 73, 121 }, [640] = { 114, 90, 98, 74, 122 },
+            [900] = { 114, 90, 98, 74, 122 } },
+    },
+    frFR = {
+        [false] = { [500] = { 114, 90, 90, 106 }, [640] = { 114, 90, 90, 106 },
+            [900] = { 114, 90, 90, 106 } },
+        [true] = { [500] = { 108, 85, 85, 100, 115 }, [640] = { 114, 90, 90, 106, 122 },
+            [900] = { 114, 90, 90, 106, 122 } },
+    },
+}
+local keptScreen, keptSize = UIParent.GetHeight, SanctuaryDB.uiSize
+local keptDebug = SanctuaryDB.debugEnabled
+local keptShown = mainFrame:IsShown()
+UIParent.GetHeight = function() return 768 end
+if not keptShown then mainFrame:Show() end
+for _, locale in ipairs(LOCALES) do
+    useStrings(locale.strings)
+    for _, debugOn in ipairs({ false, true }) do
+        for _, width in ipairs({ 500, 640, 900 }) do
+            SanctuaryDB.debugEnabled = debugOn
+            SanctuaryDB.uiSize = { width, 700 }
+            ns.refreshTabBar()
+            ns.refreshUI()
+            local expected = TAB_WIDTHS[locale.code][debugOn][width]
+            local x = 0
+            for index, key in ipairs(TAB_KEYS) do
+                local tab = _G["SanctuaryTab_" .. key]
+                local label = locale.code .. " " .. width .. " px, "
+                    .. (debugOn and "five" or "four") .. " tabs: " .. key
+                if expected[index] then
+                    local _, _, _, tabX = tab:GetPoint()
+                    equal(tab:GetWidth(), expected[index], label .. " keeps its width")
+                    equal(tabX, x, label .. " follows the one before it")
+                    x = x + expected[index]
+                else
+                    check(not tab:IsShown(), label .. " stays off the strip")
+                end
+            end
+        end
+    end
+end
+SanctuaryDB.debugEnabled = keptDebug
+SanctuaryDB.uiSize = keptSize
+UIParent.GetHeight = keptScreen
+
+useStrings(frenchAsFound)
+ns.refreshTabBar()
+ns.refreshUI()
+if not keptShown then mainFrame:Hide() end
+
+end)()
+
+assertModelAtRest()
+-- ---------------------------------------------------------------------------
 -- The day's fold survives a /reload
 -- ---------------------------------------------------------------------------
 
