@@ -7155,9 +7155,14 @@ local function newWidget(kind, name, parent, template)
     -- enhanced-filtering label's orange mention were 84 px of nothing, enough to
     -- fold the row an extra line at the narrow end of the window and to make
     -- every height measured from here wrong about it.
+    --
+    -- A Cyrillic letter is two bytes and draws about as wide as a Latin one, so
+    -- it is counted once. A Latin accent keeps its two bytes: that over-estimate
+    -- is the one every French measure in this file was taken with.
     function w:GetStringWidth()
         local text = (self.__text or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-        return #text * 7
+        local _, cyrillic = text:gsub("[\208\209][\128-\191]", "")
+        return (#text - cyrillic) * 7
     end
     function w:SetWordWrap(value) self.__wordWrap = value and true or false end
     -- Recorded, because "does changing screen put the shared frame back at the
@@ -7338,17 +7343,45 @@ end
 
 local defaultLocale = loadLocale("enUS")
 local frenchLocale = loadLocale("frFR")
-local untranslated = {}
-for key, value in pairs(defaultLocale) do
-    if frenchLocale[key] == value and usedKeys[key] then
-        untranslated[#untranslated + 1] = key
+
+-- Which file each client locale WoW has reads: its own, the one Spanish file
+-- both Spanish clients share, or none -- the English reference. enGB is listed
+-- for completeness only: that client answers enUS and never reaches here.
+local CLIENT_FILES = {
+    { "enUS", "enUS" }, { "enGB", "enUS" }, { "frFR", "frFR" }, { "deDE", "deDE" },
+    { "esES", "es" }, { "esMX", "es" }, { "itIT", "itIT" }, { "ptBR", "ptBR" },
+    { "ruRU", "ruRU" }, { "koKR", "enUS" }, { "zhCN", "enUS" }, { "zhTW", "enUS" },
+}
+
+-- Every client that reads a language of its own, with the table it reads: the
+-- reference first, then each client whose file the manifest lists. The checks
+-- below that hold a VALUE to a rule walk this list, so a language added to the
+-- manifest is held to every one of them without being named anywhere else.
+local shippedLocales = {}
+do
+    local handle = assert(io.open(repoRoot .. "/Sanctuary.toc", "r"))
+    local manifest = handle:read("a")
+    handle:close()
+    local listed = {}
+    for file in manifest:gmatch("Locales[\\/]([%w_]+)%.lua") do listed[file] = true end
+    for _, pair in ipairs(CLIENT_FILES) do
+        local client, file = pair[1], pair[2]
+        if listed[file] and (file ~= "enUS" or client == "enUS") then
+            shippedLocales[#shippedLocales + 1] = {
+                code = client, file = file,
+                strings = (client == "enUS" and defaultLocale)
+                    or (client == "frFR" and frenchLocale) or loadLocale(client),
+            }
+        end
     end
 end
-table.sort(untranslated)
--- Format strings and a handful of proper nouns are identical in both locales on
--- purpose; the check is that nothing NEW slips through untranslated, so the
--- list is compared against the keys that were already like that.
-local KNOWN_IDENTICAL = {
+
+-- Format strings and a handful of proper nouns are identical in two languages on
+-- purpose; the check is that nothing NEW slips through untranslated, so each
+-- language's list is compared against the keys that were already like that.
+-- Keyed by file: the two Spanish clients read one.
+local KNOWN_IDENTICAL = {}
+KNOWN_IDENTICAL.frFR = {
     DATE_FORMAT = true, TAB_SUSPECTS = true, TAB_WHITELIST = true, TAB_LOGS = true,
     GROUP_DEBUG = true, TAB_DIAGNOSTICS = true, LOGS_GROUP_HEADER = true,
     WL_GROUP_ROW = true, DIAG_ARG_FILTER = true,
@@ -7371,12 +7404,23 @@ local KNOWN_IDENTICAL = {
     -- The accept button of the mailbox dialog. "OK" in both languages.
     MAIL_DELETE_OK = true,
 }
-local unexpected = {}
-for _, key in ipairs(untranslated) do
-    if not KNOWN_IDENTICAL[key] then unexpected[#unexpected + 1] = key end
+for _, locale in ipairs(shippedLocales) do
+    if locale.code ~= "enUS" then
+        local allowed = KNOWN_IDENTICAL[locale.file]
+        check(type(allowed) == "table",
+            locale.code .. " has its list of keys that read the same as in English")
+        local unexpected = {}
+        for key, value in pairs(defaultLocale) do
+            if locale.strings[key] == value and usedKeys[key]
+                and not (allowed and allowed[key]) then
+                unexpected[#unexpected + 1] = key
+            end
+        end
+        table.sort(unexpected)
+        equal(#unexpected, 0, "every used key is translated in " .. locale.code
+            .. " (" .. table.concat(unexpected, ", ") .. ")")
+    end
 end
-equal(#unexpected, 0,
-    "every used key is translated in frFR (" .. table.concat(unexpected, ", ") .. ")")
 
 assertModelAtRest()
 -- ---------------------------------------------------------------------------
@@ -7525,16 +7569,9 @@ do
     -- locale WoW has, so that no edit to that choice can hand one language's
     -- text to another client, and no translation can sit in the manifest under
     -- a name no client asks for.
-    local FILE_FOR_CLIENT = {
-        enUS = "enUS", enGB = "enUS", frFR = "frFR", deDE = "deDE", esES = "es",
-        esMX = "es", itIT = "itIT", ptBR = "ptBR", ruRU = "ruRU",
-        koKR = "enUS", zhCN = "enUS", zhTW = "enUS",
-    }
-    local CLIENTS = { "enUS", "enGB", "frFR", "deDE", "esES", "esMX", "itIT", "ptBR",
-        "ruRU", "koKR", "zhCN", "zhTW" }
     local readBySomeClient = {}
-    for _, client in ipairs(CLIENTS) do
-        local file = FILE_FOR_CLIENT[client]
+    for _, pair in ipairs(CLIENT_FILES) do
+        local client, file = pair[1], pair[2]
         local overrides = registeredByCode[file]
         if overrides then readBySomeClient[file] = true end
         local expected = {}
@@ -7592,9 +7629,20 @@ assertModelAtRest()
 -- ---------------------------------------------------------------------------
 
 -- "Whitelist" and "blacklist" are gone from the screen: the person protecting
--- themselves should not have to learn a vocabulary. And "passer" was banned for
--- being untrue -- a name is never "let through", it is simply not blocked.
-local BANNED_WORDS = { "whitelist", "blacklist", " passe" }
+-- themselves should not have to learn a vocabulary -- in any language, so each
+-- one bans its own words for them too. In Russian that is also the game's name
+-- for the Ignore list, which Sanctuary never touches and must never seem to.
+-- And "passer" was banned for being untrue -- a name is never "let through", it
+-- is simply not blocked.
+local BANNED_WORDS = {
+    all = { "whitelist", "blacklist" },
+    frFR = { " passe", "liste blanche", "liste noire" },
+    deDE = { "weiße liste", "schwarze liste" },
+    es = { "lista blanca", "lista negra" },
+    ptBR = { "lista branca", "lista negra" },
+    ruRU = { "белый список", "черный список", "чёрный список" },
+    itIT = { "lista bianca", "lista nera" },
+}
 -- " passe" is banned in ONE sense, the one the rule above names: a name is never
 -- "let through". "passer pour", to be mistaken for something, is a different
 -- verb, and it is the word the validated sentence uses about the minimap icon
@@ -7612,13 +7660,36 @@ local function carriesBanned(text, word)
     end
 end
 local offenders = {}
-for _, locale in ipairs({ defaultLocale, frenchLocale }) do
-    for key, value in pairs(locale) do
-        if type(value) == "string" then
-            local lowered = value:lower()
-            for _, word in ipairs(BANNED_WORDS) do
-                if carriesBanned(lowered, word) then
-                    offenders[#offenders + 1] = key .. " (" .. word .. ")"
+do
+    -- `string.lower` only knows ASCII: the capitals of Latin-1 and of Cyrillic
+    -- are folded here as well, or "Schwarze Liste" would slip by as "schwarze
+    -- liste" does not.
+    local function lowered(text)
+        text = text:lower():gsub("\195([\128-\158])", function(trail)
+            if trail == "\151" then return nil end
+            return "\195" .. string.char(trail:byte() + 32)
+        end)
+        return (text:gsub("\208([\128-\175])", function(trail)
+            local byte = trail:byte()
+            if byte == 0x81 then return "\209\145" end
+            if byte >= 0x90 and byte <= 0x9F then return "\208" .. string.char(byte + 0x20) end
+            if byte >= 0xA0 then return "\209" .. string.char(byte - 0x20) end
+            return nil
+        end))
+    end
+    equal(lowered("Schwarze Liste ÉTÉ Черный Список Ёж"), "schwarze liste été черный список ёж",
+        "banned words are matched whatever the case, in Latin and in Cyrillic")
+    for _, locale in ipairs(shippedLocales) do
+        local words = {}
+        for _, word in ipairs(BANNED_WORDS.all) do words[#words + 1] = word end
+        for _, word in ipairs(BANNED_WORDS[locale.file] or {}) do words[#words + 1] = word end
+        for key, value in pairs(locale.strings) do
+            if type(value) == "string" then
+                local text = lowered(value)
+                for _, word in ipairs(words) do
+                    if carriesBanned(text, word) then
+                        offenders[#offenders + 1] = locale.code .. "." .. key .. " (" .. word .. ")"
+                    end
                 end
             end
         end
@@ -7645,7 +7716,8 @@ assertModelAtRest()
 -- wrong. WoW renders such a string with a replacement glyph or truncates it at
 -- the bad byte, so the check is on the bytes themselves.
 local invalidUtf8 = {}
-for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) do
+for _, shipped in ipairs(shippedLocales) do
+    local entry = { shipped.code, shipped.strings }
     for key, value in pairs(entry[2]) do
         if type(value) == "string" and not utf8.len(value) then
             invalidUtf8[#invalidUtf8 + 1] = entry[1] .. "." .. key
@@ -7679,20 +7751,26 @@ do
         0x017E, 0x0178 }) do
         FONT_EXTRA[code] = true
     end
-    local function outsideFont(text)
+    -- A Russian client draws the same window in the Cyrillic cut of the face,
+    -- which adds the Cyrillic block and nothing else: a Russian value may use
+    -- it, and no other language may.
+    local CYRILLIC_FONT = { ruRU = true }
+    local function outsideFont(text, locale)
         if not utf8.len(text) then return nil end
         for _, code in utf8.codes(text) do
-            if code >= 0x100 and not FONT_EXTRA[code] then
+            if code >= 0x100 and not FONT_EXTRA[code]
+                and not (CYRILLIC_FONT[locale] and code >= 0x0400 and code <= 0x04FF) then
                 return string.format("U+%04X", code)
             end
         end
         return nil
     end
     local unrenderable = {}
-    for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) do
+    for _, shipped in ipairs(shippedLocales) do
+        local entry = { shipped.code, shipped.strings }
         for key, value in pairs(entry[2]) do
             if type(value) == "string" then
-                local code = outsideFont(value)
+                local code = outsideFont(value, entry[1])
                 if code then
                     unrenderable[#unrenderable + 1] = entry[1] .. "." .. key .. " " .. code
                 end
@@ -7754,7 +7832,8 @@ assertModelAtRest()
 -- is not one of them -- it joins two numbers, not two clauses.
 do
     local dashed = {}
-    for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) do
+    for _, shipped in ipairs(shippedLocales) do
+        local entry = { shipped.code, shipped.strings }
         for key, value in pairs(entry[2]) do
             if type(value) == "string" then
                 local body = value:gsub("^\226\128\148 ?", "")
@@ -7768,6 +7847,125 @@ do
     equal(#dashed, 0,
         "no visible sentence is held together by an em dash ("
         .. table.concat(dashed, ", ") .. ")")
+end
+
+assertModelAtRest()
+-- ---------------------------------------------------------------------------
+-- A translation keeps its placeholders, its numbers, and plain bytes
+-- ---------------------------------------------------------------------------
+
+do
+    -- 1. The placeholders of a value are the arguments the code hands it, in the
+    -- order it hands them. A `%s` lost from a translation drops a name from the
+    -- sentence, one too many raises an error the moment the line is built, and a
+    -- `%d` where the code passes a word does the same. So every translation keeps
+    -- the reference's placeholders, in the reference's order -- French included,
+    -- which nothing checked before. Numbered placeholders (`%2$s`) are refused:
+    -- the game reads them, the Lua this harness runs on does not, so a sentence
+    -- that needed one could never be checked here.
+    local function placeholders(text)
+        local found = {}
+        for spec in text:gmatch("%%([-+ #0]*%d*%.?%d*[%a%%])") do
+            if spec ~= "%" then found[#found + 1] = spec end
+        end
+        return table.concat(found, " ")
+    end
+    equal(placeholders(defaultLocale.ADV_STATUS), "s s s s s s",
+        "the placeholders of a value are read in order")
+    equal(placeholders("100%% of %d"), "d", "and an escaped percent sign is not one")
+
+    local mismatched, numbered = {}, {}
+    for _, shipped in ipairs(shippedLocales) do
+        for key, reference in pairs(defaultLocale) do
+            local value = shipped.strings[key]
+            if key ~= "DATE_TIME_FORMAT" and type(value) == "string" then
+                if placeholders(value) ~= placeholders(reference) then
+                    mismatched[#mismatched + 1] = shipped.code .. "." .. key
+                end
+            end
+            if type(value) == "string" and value:find("%%%d+%$") then
+                numbered[#numbered + 1] = shipped.code .. "." .. key
+            end
+        end
+    end
+    table.sort(mismatched)
+    table.sort(numbered)
+    equal(#mismatched, 0, "every translation keeps the placeholders of the reference, in order ("
+        .. table.concat(mismatched, ", ") .. ")")
+    equal(#numbered, 0, "no value uses a numbered placeholder (" .. table.concat(numbered, ", ") .. ")")
+
+    -- DATE_TIME_FORMAT is not a sentence but a pattern for `date`, and each
+    -- language orders the day its own way. What it may not do is use a
+    -- conversion the client's `date` could refuse: the Journal export calls it
+    -- without a guard.
+    for _, shipped in ipairs(shippedLocales) do
+        local pattern = shipped.strings.DATE_TIME_FORMAT
+        local unsafe = {}
+        for spec in pattern:gmatch("%%(.)") do
+            if not ("YymdHMS"):find(spec, 1, true) then unsafe[#unsafe + 1] = spec end
+        end
+        equal(#unsafe, 0, shipped.code .. ": the date pattern only uses year, month, day and time ("
+            .. table.concat(unsafe, " ") .. ")")
+        check(pcall(os.date, pattern, 0), shipped.code .. ": and it formats a date")
+    end
+
+    -- 2. The numbers a sentence promises are the numbers the code applies: the
+    -- trust threshold is five minutes, and saying another in any language would
+    -- be a promise the add-on does not keep.
+    for _, shipped in ipairs(shippedLocales) do
+        for _, key in ipairs({ "FILTER_AUTO_TRUST", "ADV_TRUST_DESC" }) do
+            local value = shipped.strings[key] or ""
+            check(value:find("%f[%d]5%f[%D]") ~= nil,
+                shipped.code .. "." .. key .. " says five minutes, as the code does")
+        end
+    end
+
+    -- 3. Each locale file is plain UTF-8, as its header says: no byte-order mark,
+    -- no invalid sequence, and no escaped byte in a value. `\x41` and `\u{416}`
+    -- deserve a word: the Lua this harness runs on reads both, and the game's
+    -- Lua 5.1 prints them as written -- a check green here and a screen full of
+    -- backslashes there. Only the quote, the backslash and the line break may be
+    -- escaped.
+    local handle = assert(io.open(repoRoot .. "/Sanctuary.toc", "r"))
+    local manifest = handle:read("a")
+    handle:close()
+    for file in manifest:gmatch("(Locales[\\/][%w_]+%.lua)") do
+        local path = repoRoot .. "/" .. file:gsub("\\", "/")
+        local source = assert(io.open(path, "rb"))
+        local bytes = source:read("a")
+        source:close()
+        check(bytes:sub(1, 3) ~= "\239\187\191", file .. " has no byte-order mark")
+        check(utf8.len(bytes) ~= nil, file .. " is valid UTF-8")
+        local escaped = {}
+        for line in bytes:gmatch("[^\n]+") do
+            local key, value = line:match('^L%["([%w_]+)"%]%s*=%s*"(.*)"%s*$')
+            if value then
+                for at, escape in value:gmatch("()\\(.)") do
+                    if escape ~= '"' and escape ~= "\\" and escape ~= "n" then
+                        escaped[#escaped + 1] = key .. " (" .. value:sub(at, at + 3) .. ")"
+                    end
+                end
+            end
+        end
+        equal(#escaped, 0, file .. " writes every character as itself ("
+            .. table.concat(escaped, ", ") .. ")")
+    end
+
+    -- 4. The client describes the add-on in the list of add-ons, in the player's
+    -- language: every language shipped gives it a line of notes and a category
+    -- there, written as the manifest reads them -- plain UTF-8, since a .toc
+    -- knows no escape.
+    for _, shipped in ipairs(shippedLocales) do
+        if shipped.code ~= "enUS" then
+            for _, field in ipairs({ "Notes", "Category" }) do
+                local value = manifestField(field .. "-" .. shipped.code)
+                check(value ~= nil and value ~= "",
+                    "the manifest carries ## " .. field .. "-" .. shipped.code)
+                check(value == nil or (utf8.len(value) ~= nil and not value:find("\\", 1, true)),
+                    "and writes it as plain text (" .. tostring(value) .. ")")
+            end
+        end
+    end
 end
 
 assertModelAtRest()
@@ -8343,19 +8541,21 @@ do
         math.floor((_G.SanctuaryQ2Note.__colorR or 0) * 255 + 0.5),
         math.floor((_G.SanctuaryQ2Note.__colorG or 0) * 255 + 0.5),
         math.floor((_G.SanctuaryQ2Note.__colorB or 0) * 255 + 0.5))
-    for locale, name in pairs({ [frenchLocale] = "French", [defaultLocale] = "default" }) do
-        local label = locale.FILTER_STRICT_GROUP_INVITE_SYSTEM
+    for _, shipped in ipairs(shippedLocales) do
+        local name = shipped.code
+        local label = shipped.strings.FILTER_STRICT_GROUP_INVITE_SYSTEM
         equal(label:match("|c%x%x(%x%x%x%x%x%x)%("), orange,
             "the " .. name .. " mention wears the orange of the state notes")
-        check(label:find("|r", 1, true) > label:find("|c", 1, true),
+        check((label:find("|r", 1, true) or 0) > (label:find("|c", 1, true) or math.huge),
             "and the " .. name .. " label closes the colour before it ends")
         equal(select(2, label:gsub("|c%x%x%x%x%x%x%x%x", "")), 1,
             "one coloured run in the " .. name .. " label, no more")
     end
     -- The warning of 167b left the locales with the dialog (decision 170c).
     for _, key in ipairs({ "STRICT_CONFIRM", "STRICT_CONFIRM_OK", "STRICT_CONFIRM_CANCEL" }) do
-        equal(frenchLocale[key], nil, key .. " is gone from the French locale")
-        equal(defaultLocale[key], nil, "and from the default locale")
+        for _, shipped in ipairs(shippedLocales) do
+            equal(shipped.strings[key], nil, key .. " is gone from the " .. shipped.code .. " locale")
+        end
     end
     -- The tooltip validated at decision 170d, to the letter: it opens on
     -- "Exp\195\169rimental", it says what turning the option on costs, and the
@@ -10001,8 +10201,8 @@ end
 -- The longest name the green answer can be handed: a 12-character pseudo, which
 -- is WoW's own ceiling, on a realm of twice that.
 local LONGEST_ENTRY = string.rep("W", 12) .. "-" .. string.rep("W", 24)
-for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) do
-    local localeName, strings = entry[1], entry[2]
+for _, shipped in ipairs(shippedLocales) do
+    local localeName, strings = shipped.code, shipped.strings
     check(noteLines(strings["REFUSED_NAME"]) <= 1,
         "REFUSED_NAME fits the one line the name fields keep (" .. localeName .. ")")
     check(noteLines(strings["REFUSED_PATTERN"]) <= 1,
@@ -13867,6 +14067,176 @@ resetModelState()
 SanctuaryDB.logging.enabled = asFound.reloadRecording
 
 end
+
+assertModelAtRest()
+-- ---------------------------------------------------------------------------
+-- Every shipped language builds the whole interface, and fits in it
+-- ---------------------------------------------------------------------------
+
+-- The run above is French from end to end, and every measure it takes is a
+-- French one. Here each shipped language gets the add-on to itself: loaded as a
+-- client of that language loads it, the window built, every tab and both panels
+-- opened at the narrowest, the default and the widest window, with and without
+-- the debug tab, with the sections that only show on an answer shown. An error
+-- anywhere in that is a language that breaks the window.
+--
+-- And a measure. A text that cannot fold -- a label told not to wrap, a word on
+-- a button -- has the room its widget gives it, and English and French are the
+-- two languages that were looked at on screen. So a text is held to the widest
+-- of those two on the same widget: longer than both AND longer than its room is
+-- a word that will be cut or spill, and the fix is a shorter translation, never
+-- a wider widget.
+--
+-- After the /reload section, and for the same reason: every language registers
+-- its own frames under the same global names, and nothing may be tested through
+-- the first window once this has run. A function of its own, the enclosing one
+-- being at Lua's 200-local ceiling.
+;(function()
+    local keptLocale = GetLocale
+    local keptScreen = UIParent.GetHeight
+    local keptSize, keptDebug = SanctuaryDB.uiSize, SanctuaryDB.debugEnabled
+    local keptPreset = SanctuaryDB.filters.preset
+    local keptMail = SanctuaryDB.mail.mode
+    local keptAntiSpam = SanctuaryDB.antiSpam.enabled
+    local keptDialogs = {}
+    local DIALOGS = { "SANCTUARY_CLEAR_LOG", "SANCTUARY_MAIL_DELETE_ATTACHMENTS",
+        "SANCTUARY_CLEAR_DEBUG_LOG" }
+    for _, which in ipairs(DIALOGS) do keptDialogs[which] = StaticPopupDialogs[which] end
+    UIParent.GetHeight = function() return 768 end
+
+    local TAB_KEYS = { "protection", "journal", "advanced", "about", "diagnostics" }
+    local builds = {}
+    for _, shipped in ipairs(shippedLocales) do
+        local code = shipped.code
+        local scope = {}
+        GetLocale = function() return code end
+        local first = #createdWidgets + 1
+        local loaded, loadError = pcall(function()
+            loadLocaleFiles(scope)
+            assert(loadfile(repoRoot .. "/Sanctuary.lua"))("Sanctuary", scope)
+            assert(loadfile(repoRoot .. "/SanctuaryUI.lua"))("Sanctuary", scope)
+        end)
+        GetLocale = keptLocale
+        check(loaded, code .. ": the add-on loads (" .. tostring(loadError) .. ")")
+        equal(scope.L and scope.L.TAB_PROTECTION, shipped.strings.TAB_PROTECTION,
+            code .. ": and reads its own language")
+
+        local failures = {}
+        local function try(label, action)
+            local ok, err = pcall(action)
+            if not ok then failures[#failures + 1] = label .. ": " .. tostring(err) end
+        end
+        if loaded then
+            SanctuaryDB.filters.preset = "custom"
+            SanctuaryDB.mail.mode = "delete"
+            SanctuaryDB.antiSpam.enabled = true
+            try("open", function() scope.ToggleUI() end)
+            for _, debugOn in ipairs({ false, true }) do
+                for _, width in ipairs({ 900, 780, 500 }) do
+                    SanctuaryDB.debugEnabled = debugOn
+                    SanctuaryDB.uiSize = { width, 700 }
+                    try("refresh " .. width, function()
+                        scope.refreshTabBar()
+                        scope.refreshUI()
+                    end)
+                    local far = 0
+                    for _, key in ipairs(TAB_KEYS) do
+                        local tab = _G["SanctuaryTab_" .. key]
+                        if tab and tab:IsShown() then
+                            try("tab " .. key .. " at " .. width, function() tab:Click() end)
+                            local _, _, _, tabX = tab:GetPoint()
+                            far = math.max(far, (tabX or 0) + (tab:GetWidth() or 0))
+                        end
+                    end
+                    check(far <= width + 1, code .. ": the tabs fit the strip at " .. width
+                        .. " px" .. (debugOn and ", debug tab included" or "") .. " (" .. far .. ")")
+                    for _, panel in ipairs({ "allowed", "blocked" }) do
+                        try("panel " .. panel .. " at " .. width, function()
+                            scope.OpenPanel(panel)
+                            scope.ClosePanel()
+                        end)
+                    end
+                end
+            end
+            _G.SanctuaryTab_protection:Click()
+            try("header tooltip", function()
+                local button = _G.SanctuaryStateButton
+                button:GetScript("OnEnter")(button)
+                button:GetScript("OnLeave")(button)
+            end)
+            for _, which in ipairs(DIALOGS) do
+                local dialog = StaticPopupDialogs[which]
+                check(dialog and dialog.text and dialog.button1 and dialog.button2 and true,
+                    code .. ": " .. which .. " has its text and its two buttons")
+            end
+            equal(StaticPopupDialogs.SANCTUARY_CLEAR_LOG.text, shipped.strings.LOGS_CLEAR_CONFIRM,
+                code .. ": the dialogs speak the language of the window")
+        end
+        equal(#failures, 0, code .. ": the window opens every screen without an error ("
+            .. table.concat(failures, " | ") .. ")")
+
+        -- What each text asks of its widget, read once everything was shown at
+        -- the narrowest width.
+        local texts = {}
+        for index = first, #createdWidgets do
+            local widget = createdWidgets[index]
+            if widget.__kind == "FontString" then
+                local text = widget.__text
+                local room
+                local parent = widget.__parent
+                if widget.__wordWrap == false and widget.__widthPosted then
+                    room = widget.__width
+                elseif not widget.__widthPosted and parent and parent.__kind == "Button"
+                    and parent.__widthPosted then
+                    room = parent.__width
+                end
+                local owner = widget
+                while owner and not owner.__name do owner = owner.__parent end
+                texts[#texts + 1] = {
+                    text = text, room = room,
+                    width = type(text) == "string" and widget:GetStringWidth() or 0,
+                    owner = owner and owner.__name or "?",
+                }
+            end
+        end
+        builds[#builds + 1] = { code = code, texts = texts }
+    end
+
+    local reference = {}
+    for _, build in ipairs(builds) do
+        if build.code == "enUS" or build.code == "frFR" then reference[#reference + 1] = build end
+    end
+    for _, build in ipairs(builds) do
+        equal(#build.texts, #reference[1].texts,
+            build.code .. ": the window holds the same texts as the English one")
+        local tooWide, missing = {}, {}
+        for index, entry in ipairs(build.texts) do
+            local widest = 0
+            for _, other in ipairs(reference) do
+                local seen = other.texts[index]
+                if seen then widest = math.max(widest, seen.width) end
+            end
+            if entry.room and entry.width > entry.room and entry.width > widest then
+                tooWide[#tooWide + 1] = string.format("%s \"%s\" %d/%d px",
+                    entry.owner, tostring(entry.text), entry.width, entry.room)
+            end
+            local english = reference[1].texts[index]
+            if type(entry.text) ~= "string" and english and type(english.text) == "string" then
+                missing[#missing + 1] = entry.owner
+            end
+        end
+        equal(#tooWide, 0, build.code .. ": no text that cannot fold is wider than its widget"
+            .. " and than English and French (" .. table.concat(tooWide, " | ") .. ")")
+        equal(#missing, 0, build.code .. ": and none is missing (" .. table.concat(missing, ", ") .. ")")
+    end
+
+    for _, which in ipairs(DIALOGS) do StaticPopupDialogs[which] = keptDialogs[which] end
+    SanctuaryDB.filters.preset = keptPreset
+    SanctuaryDB.mail.mode = keptMail
+    SanctuaryDB.antiSpam.enabled = keptAntiSpam
+    SanctuaryDB.uiSize, SanctuaryDB.debugEnabled = keptSize, keptDebug
+    UIParent.GetHeight = keptScreen
+end)()
 
 end)()
 
