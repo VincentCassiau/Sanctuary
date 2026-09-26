@@ -14391,6 +14391,43 @@ assertModelAtRest()
     end
     SanctuaryDB.locale = "auto"
 
+    -- One more window, built where a unit is not a whole pixel: every frame at
+    -- a scale of 2/3, and a PixelUtil that answers 0.8 units for one pixel. The
+    -- rules drawn as textures -- between the questions, under each section
+    -- title, the dashes of the dotted one, the two of the tab strip -- are one
+    -- pixel and off the grid, like the one-unit borders. Snapped at one unit,
+    -- the rule between questions 3 and 4 of the Russian window was not drawn.
+    do
+        local keptPixel, plainIndex = PixelUtil, widgetMeta.__index
+        widgetMeta.__index = function(widget, key)
+            if key == "GetEffectiveScale" then return function() return 2 / 3 end end
+            return plainIndex(widget, key)
+        end
+        PixelUtil = { GetNearestPixelSize = function() return 0.8 end }
+        local first = #createdWidgets + 1
+        buildWindow("enUS at a scale of 2/3", "enUS", nil, shippedLocales[1].strings)
+        widgetMeta.__index = plainIndex
+        PixelUtil = keptPixel
+        local snapped, hairlines = {}, 0
+        for index = first, #createdWidgets do
+            local widget = createdWidgets[index]
+            if widget.__kind == "Texture" then
+                if widget.__height == 1 then
+                    local owner = widget
+                    while owner and not owner.__name do owner = owner.__parent end
+                    snapped[#snapped + 1] = owner and owner.__name or "?"
+                elseif widget.__height == 0.8 and widget.__snapToPixelGrid == false
+                    and widget.__texelSnappingBias == 0 then
+                    hairlines = hairlines + 1
+                end
+            end
+        end
+        equal(#snapped, 0, "no texture is left one unit tall on the pixel grid ("
+            .. table.concat(snapped, " | ") .. ")")
+        check(hairlines >= 5 + 2, "the rules of the home screen and the tab strip are among the "
+            .. hairlines .. " drawn one pixel tall off the grid")
+    end
+
     local reference = {}
     for _, build in ipairs(builds) do
         if build.code == "enUS" or build.code == "frFR" then reference[#reference + 1] = build end

@@ -307,6 +307,25 @@ local function applyBackdrop(frame, bg, border, edgeSize)
     if border then frame:SetBackdropBorderColor(unpack(border)) end
 end
 
+-- A one-unit rule drawn as a texture, on the same terms and for the same
+-- reason: the rule between questions 3 and 4 of the Russian window was not
+-- drawn at all. Where a rule lands depends on how tall the questions above it
+-- came out, so any language at any width could lose one. `owner` is the frame
+-- whose scale the rule is drawn at.
+local function applyHairline(texture, owner)
+    local scale = PixelUtil and PixelUtil.GetNearestPixelSize
+        and owner.GetEffectiveScale and owner:GetEffectiveScale()
+    if not scale then
+        texture:SetHeight(1)
+        return
+    end
+    texture:SetHeight(PixelUtil.GetNearestPixelSize(1, scale, 1))
+    if texture.SetSnapToPixelGrid then
+        texture:SetSnapToPixelGrid(false)
+        texture:SetTexelSnappingBias(0)
+    end
+end
+
 -- The mask Retail ships for exactly this: a circle that scales to whatever size
 -- the texture is given. The radios of the mock-up are round (`border-radius:50%`)
 -- and the add-on draws every widget itself, so the shape has to come from
@@ -1345,7 +1364,7 @@ local function newSection(parent, titleText, descText, width)
     section.count = newLabel(section, "", FONT_BODY, C.dim)
     section.count:SetPoint("LEFT", section.title, "RIGHT", 8, 0)
     section.rule = section:CreateTexture(nil, "ARTWORK")
-    section.rule:SetHeight(1)
+    applyHairline(section.rule, section)
     section.rule:SetPoint("TOPLEFT", section.title, "BOTTOMLEFT", 0, -6)
     section.rule:SetPoint("TOPRIGHT", section, "TOPRIGHT", 0, -6)
     section.rule:SetColorTexture(unpack(C.border))
@@ -1578,7 +1597,7 @@ local function buildProtectionTab(parent)
     protection.rules = {}
     for index = 1, 5 do
         local rule = parent:CreateTexture(nil, "ARTWORK")
-        rule:SetHeight(1)
+        applyHairline(rule, parent)
         rule:SetColorTexture(unpack(C.rule))
         protection.rules[index] = rule
     end
@@ -1605,7 +1624,7 @@ local function buildProtectionTab(parent)
             local dash = self.dashes[index]
             if not dash then
                 dash = self:CreateTexture(nil, "ARTWORK")
-                dash:SetHeight(1)
+                applyHairline(dash, self)
                 dash:SetColorTexture(unpack(C.dash))
                 self.dashes[index] = dash
             end
@@ -4815,7 +4834,7 @@ local function createMainFrame()
     applyBackdrop(tabBar, C.tabBar, nil)
     for _, edge in ipairs({ "TOP", "BOTTOM" }) do
         local rule = tabBar:CreateTexture(nil, "ARTWORK")
-        rule:SetHeight(TAB_RULE)
+        applyHairline(rule, tabBar)
         rule:SetPoint(edge .. "LEFT", tabBar, edge .. "LEFT", 0, 0)
         rule:SetPoint(edge .. "RIGHT", tabBar, edge .. "RIGHT", 0, 0)
         rule:SetColorTexture(unpack(C.border))
