@@ -14231,6 +14231,42 @@ assertModelAtRest()
                 button:GetScript("OnEnter")(button)
                 button:GetScript("OnLeave")(button)
             end)
+            -- The two columns of "I choose" at the narrowest window, where the
+            -- most labels fold: each row starts under the folded block of the
+            -- row above it, the child box under its parent included. Its label
+            -- carries "(experimental)", and a row booked at the flat height let
+            -- the second line run into the box under it.
+            local function span(widget)
+                local _, relative, relativePoint, _, top = widget:GetPoint()
+                if relativePoint == "BOTTOMLEFT" then
+                    local _, _, _, _, parentTop = relative:GetPoint()
+                    top = parentTop - (relative:GetHeight() or 0) + top
+                end
+                local bottom = top - (widget:GetHeight() or 0)
+                if widget.label then
+                    local _, _, _, _, drop = widget.label:GetPoint()
+                    bottom = math.min(bottom, top + (drop or 0) - (widget.label:GetStringHeight() or 0))
+                end
+                return top, bottom
+            end
+            local overlaps = {}
+            for _, column in ipairs({
+                { "SanctuaryFilter_groupInvite", "SanctuaryStrictCheck", "SanctuaryFilter_whisper",
+                    "SanctuaryFilter_sayYell", "SanctuaryFilter_emote" },
+                { "SanctuaryFilter_duel", "SanctuaryFilter_trade", "SanctuaryFilter_guildInvite",
+                    "SanctuaryChannelsLabel" },
+            }) do
+                for index = 2, #column do
+                    local _, above = span(_G[column[index - 1]])
+                    local below = span(_G[column[index]])
+                    if below > above then
+                        overlaps[#overlaps + 1] = string.format("%s at %s, over %s ending at %s",
+                            column[index], below, column[index - 1], above)
+                    end
+                end
+            end
+            equal(#overlaps, 0, code .. ": no row of \"I choose\" starts inside the one above it at 500 px ("
+                .. table.concat(overlaps, " | ") .. ")")
             for _, which in ipairs(DIALOGS) do
                 local dialog = StaticPopupDialogs[which]
                 check(dialog and dialog.text and dialog.button1 and dialog.button2 and true,

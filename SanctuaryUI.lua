@@ -1991,7 +1991,14 @@ local function buildProtectionTab(parent)
                 -- whether the box is there or not. The box itself hangs from the
                 -- parent check, not from this number: only the room is booked
                 -- here, so the column below it does not climb over the child.
-                colY[col] = colY[col] - HOME.rowHeight
+                -- Booked at the height its own label comes to at the indented
+                -- width: "(experimental)" is part of that label, and it folds
+                -- at the narrowest window, and in some languages at the default.
+                -- A flat row let the second line run into the box under it.
+                -- The refresh fits the label again for the mode it is in.
+                colY[col] = colY[col] - math.max(HOME.rowHeight,
+                    protection.strict:FitLabel(protection.checkLabelWidth - HOME.subIndent)
+                        + (HOME.rowHeight - HOME.checkSize))
             end
         end
 
