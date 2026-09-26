@@ -14456,6 +14456,42 @@ assertModelAtRest()
         equal(#missing, 0, build.code .. ": and none is missing (" .. table.concat(missing, ", ") .. ")")
     end
 
+    -- The six titles of the home screen do not fold: each is one line beside
+    -- its number, with no width of its own, so the check above never measures
+    -- them. They share one font and one place, so the room is the same for
+    -- all six, and the longest of them in English and French was seen to fit
+    -- the narrowest window. Longer than that is a title that runs off the
+    -- window's edge at 500 px: the anti-spam question did in Spanish, German
+    -- and Russian.
+    local probe = newWidget("FontString")
+    local function measure(text)
+        probe:SetText(text)
+        return probe:GetStringWidth()
+    end
+    local english, french
+    for _, shipped in ipairs(shippedLocales) do
+        if shipped.code == "enUS" then english = shipped.strings end
+        if shipped.code == "frFR" then french = shipped.strings end
+    end
+    local TITLE_KEYS = { "Q1_TITLE", "Q2_TITLE", "MAIL_Q_TITLE", "ANTISPAM_Q_TITLE",
+        "Q4_TITLE", "Q5_TITLE" }
+    local widest = 0
+    for _, key in ipairs(TITLE_KEYS) do
+        widest = math.max(widest, measure(english[key]), measure(french[key]))
+    end
+    for _, shipped in ipairs(shippedLocales) do
+        local tooLong = {}
+        for _, key in ipairs(TITLE_KEYS) do
+            local width = measure(shipped.strings[key])
+            if width > widest then
+                tooLong[#tooLong + 1] = string.format("%s \"%s\" %d/%d px", key,
+                    shipped.strings[key], width, widest)
+            end
+        end
+        equal(#tooLong, 0, shipped.code .. ": no title of the home screen is longer than"
+            .. " the longest English or French one (" .. table.concat(tooLong, " | ") .. ")")
+    end
+
     for _, which in ipairs(DIALOGS) do StaticPopupDialogs[which] = keptDialogs[which] end
     SanctuaryDB.filters.preset = keptPreset
     SanctuaryDB.mail.mode = keptMail

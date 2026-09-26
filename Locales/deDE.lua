@@ -108,7 +108,7 @@ L["MAIL_DELETE_OK"] = "OK"
 L["MAIL_DELETE_CANCEL"] = "Abbrechen"
 
 -- Question 4 -- the anti-spam of the public channels
-L["ANTISPAM_Q_TITLE"] = "Soll sich Sanctuary um Spam in den öffentlichen Channels kümmern?"
+L["ANTISPAM_Q_TITLE"] = "Soll Sanctuary gegen Spam in den Channels vorgehen?"
 L["ANTISPAM_YES_TITLE"] = "Ja, Wiederholungen ausblenden"
 L["ANTISPAM_YES_DESC"] = "Dieselbe Nachricht eines Fremden erscheint nur einmal."
 L["ANTISPAM_NO_TITLE"] = "Nein"
