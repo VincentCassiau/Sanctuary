@@ -7433,7 +7433,7 @@ KNOWN_IDENTICAL.frFR = {
     ANTISPAM_D_5M = true, ANTISPAM_D_10M = true, ANTISPAM_D_30M = true,
 }
 -- German: the game's own words for the channel and the emote, and "Normal",
-    -- "OK" and "offline" as German writes them.
+-- "OK" and "offline" as German writes them.
 -- The rest are format strings with nothing in them to translate.
 KNOWN_IDENTICAL.deDE = {
     LOG_TYPE_CHANNEL = true, LOG_TYPE_EMOTE = true, MAIL_ICON_NORMAL = true,
@@ -7463,10 +7463,10 @@ KNOWN_IDENTICAL.ptBR = {
 KNOWN_IDENTICAL.ruRU = {
     ABOUT_GITHUB = true, DIAG_SPAM_PROBE_LINE = true, LIST_END = true,
     LIST_SEPARATOR = true, LOGS_GROUP_HEADER = true, LOGS_TIME_RANGE = true,
-    MINIMAP_TIP_TITLE = true, WL_BNET_ROW = true,
+    MINIMAP_TIP_TITLE = true,
 }
 -- Italian: "No", "OK", "offline" and the emote as Italian writes them, and
-    -- the pattern tag, the word being borrowed as in French.
+-- the pattern tag, the word being borrowed as in French.
 -- The rest are format strings with nothing in them to translate.
 KNOWN_IDENTICAL.itIT = {
     ANTISPAM_NO_TITLE = true, MAIL_DELETE_OK = true, WL_BNET_OFFLINE = true,
@@ -7831,17 +7831,32 @@ for _, code in ipairs({ 0x20AC, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
     0x017E, 0x0178 }) do
     WINDOW_FONT_EXTRA[code] = true
 end
+-- The Cyrillic cut of the face adds the Cyrillic block, and loses some of the
+-- rest on the way. Looked at in game, a French client drawing each character in
+-- UNIT_NAME_FONT_CYRILLIC: the accented letters, the angle quotes, the ellipsis,
+-- the dashes, the bullet and the typographic quotes are all there, but the
+-- middle dot, Z and z with caron are white rectangles, and the others below
+-- come out as a different letter (a French "oe" ligature drawn as a Cyrillic
+-- "nje"). So a text the Cyrillic cut draws may use none of them.
+WINDOW_FONT_EXTRA.cyrillicCutLacks = {}
+for _, code in ipairs({ 0x00B7, 0x017D, 0x017E,
+    0x0152, 0x0153, 0x0160, 0x0161, 0x0178, 0x0192, 0x02C6, 0x02DC,
+    0x00A8, 0x00AA, 0x00AF, 0x00B2, 0x00B3, 0x00B4, 0x00B8, 0x00B9, 0x00BA,
+    0x00BC, 0x00BD, 0x00BE }) do
+    WINDOW_FONT_EXTRA.cyrillicCutLacks[code] = true
+end
 do
     local FONT_EXTRA = WINDOW_FONT_EXTRA
-    -- A Russian client draws the same window in the Cyrillic cut of the face,
-    -- which adds the Cyrillic block and nothing else: a Russian value may use
-    -- it, and no other language may.
+    -- A Russian client draws the same window in the Cyrillic cut of the face:
+    -- a Russian value may use the Cyrillic block, and no other language may,
+    -- and a Russian value may not use what that cut lacks.
     local CYRILLIC_FONT = { ruRU = true }
     local function outsideFont(text, locale)
         if not utf8.len(text) then return nil end
         for _, code in utf8.codes(text) do
-            if code >= 0x100 and not FONT_EXTRA[code]
-                and not (CYRILLIC_FONT[locale] and code >= 0x0400 and code <= 0x04FF) then
+            if (code >= 0x100 and not FONT_EXTRA[code]
+                and not (CYRILLIC_FONT[locale] and code >= 0x0400 and code <= 0x04FF))
+                or (CYRILLIC_FONT[locale] and FONT_EXTRA.cyrillicCutLacks[code]) then
                 return string.format("U+%04X", code)
             end
         end
@@ -14310,16 +14325,18 @@ assertModelAtRest()
         -- Each text drawn in a font that has its letters: judged by the file the
         -- label was actually given, not by the language the text is in. The Latin
         -- cut of the face draws Latin-1 and the Windows-1252 additions; the
-        -- Cyrillic cut adds the Cyrillic block. And only Russian text is handed
-        -- the Cyrillic cut, unless the client or Sanctuary speaks Russian: every
-        -- other label keeps the file the game gave it.
+        -- Cyrillic cut adds the Cyrillic block and lacks a few of the others
+        -- (`cyrillicCutLacks`). And only Russian text is handed the Cyrillic
+        -- cut, unless the client or Sanctuary speaks Russian: every other label
+        -- keeps the file the game gave it.
         local undrawable, recut, menuText = {}, {}, nil
         for _, entry in ipairs(texts) do
             local cyrillicCut = entry.font:find("CYR", 1, true) ~= nil
             if type(entry.text) == "string" and utf8.len(entry.text) then
                 for _, point in utf8.codes(entry.text) do
-                    if point >= 0x100 and not WINDOW_FONT_EXTRA[point]
-                        and not (cyrillicCut and point >= 0x0400 and point <= 0x04FF) then
+                    if (point >= 0x100 and not WINDOW_FONT_EXTRA[point]
+                        and not (cyrillicCut and point >= 0x0400 and point <= 0x04FF))
+                        or (cyrillicCut and WINDOW_FONT_EXTRA.cyrillicCutLacks[point]) then
                         undrawable[#undrawable + 1] = string.format("%s \"%s\" U+%04X in %s",
                             entry.owner, entry.text, point, entry.font)
                         break
