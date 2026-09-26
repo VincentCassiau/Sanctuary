@@ -7052,7 +7052,17 @@ local function newWidget(kind, name, parent, template)
     w.__template = template
     -- What "BackdropTemplate" mixes in, and only when it is asked for.
     if type(template) == "string" and template:find("BackdropTemplate", 1, true) then
-        function w:SetBackdrop(info) self.__backdrop = info end
+        function w:SetBackdrop(info)
+            self.__backdrop = info
+            -- The eight textures the template draws a border with, made once
+            -- on the frame as the client makes them.
+            if info and info.edgeFile then
+                for _, key in ipairs({ "TopEdge", "BottomEdge", "LeftEdge", "RightEdge",
+                    "TopLeftCorner", "TopRightCorner", "BottomLeftCorner", "BottomRightCorner" }) do
+                    if not rawget(self, key) then rawset(self, key, newWidget("Texture", nil, self)) end
+                end
+            end
+        end
         function w:SetBackdropColor(r, g, b, a) self.__backdropColor = { r, g, b, a } end
         function w:SetBackdropBorderColor(r, g, b, a) self.__backdropBorder = { r, g, b, a } end
     end
@@ -7248,6 +7258,11 @@ local function newWidget(kind, name, parent, template)
         self.__children[#self.__children + 1] = mask
         return mask
     end
+    -- Recorded: whether a border is kept off the pixel grid is the whole of
+    -- the fix for the bottom border that rounded to nothing, and a stub would
+    -- answer for it without a word.
+    function w:SetSnapToPixelGrid(value) self.__snapToPixelGrid = value end
+    function w:SetTexelSnappingBias(value) self.__texelSnappingBias = value end
     function w:SetScrollChild(child) self.__scrollChild = child end
     function w:GetScrollChild() return self.__scrollChild end
     -- Recorded rather than auto-stubbed: what the grip may do to the window is
@@ -13671,6 +13686,51 @@ ns.refreshTabBar()
 ns.refreshUI()
 if not keptShown then mainFrame:Hide() end
 
+end)()
+
+assertModelAtRest()
+-- ---------------------------------------------------------------------------
+-- A one-unit border is one physical pixel, off the pixel grid
+-- ---------------------------------------------------------------------------
+
+-- At a UI scale of 0.67 on a 1440 px screen, a unit is 1.25 pixels, and the
+-- client snapping a border that thin to the pixel grid rounded the bottom one
+-- of the cards under questions 2 and 5 to nothing -- seen on screen, and found
+-- again by scrolling the window a few pixels, which brought it back. The fix is
+-- in what the add-on asks for: the size of one physical pixel, from PixelUtil,
+-- and the eight pieces kept off the grid. What the client then draws is for the
+-- screenshots to show; this holds the asking.
+;(function()
+local keptPixel = PixelUtil
+local asked = {}
+PixelUtil = { GetNearestPixelSize = function(size, scale, minPixels)
+    asked[#asked + 1] = { size = size, scale = scale, minPixels = minPixels }
+    return 0.8
+end }
+local keptShown = mainFrame:IsShown()
+if not keptShown then mainFrame:Show() end
+_G.SanctuaryTab_protection:Click()
+local card = _G.SanctuaryQ2_all
+rawset(card, "GetEffectiveScale", function() return 2 / 3 end)
+ns.refreshUI()
+equal(card.__backdrop.edgeSize, 0.8, "a card's one-unit border is drawn one physical pixel thick")
+local last = asked[#asked] or {}
+equal(last.size, 1, "the size asked for is one unit")
+equal(last.scale, 2 / 3, "at the card's own scale")
+equal(last.minPixels, 1, "and never under one pixel")
+for _, key in ipairs({ "TopEdge", "BottomEdge", "LeftEdge", "RightEdge", "TopLeftCorner",
+    "TopRightCorner", "BottomLeftCorner", "BottomRightCorner" }) do
+    equal(card[key] and card[key].__snapToPixelGrid, false, "its " .. key .. " stays off the pixel grid")
+    equal(card[key] and card[key].__texelSnappingBias, 0, "with no texel snapping either")
+end
+-- The window's own border is two units wide and drew well: it is not touched.
+equal(mainFrame.__backdrop.edgeSize, 2, "the window's two-unit border is left as it was")
+
+PixelUtil = keptPixel
+rawset(card, "GetEffectiveScale", nil)
+ns.refreshUI()
+equal(card.__backdrop.edgeSize, 1, "and a client without PixelUtil keeps the one unit")
+if not keptShown then mainFrame:Hide() end
 end)()
 
 assertModelAtRest()

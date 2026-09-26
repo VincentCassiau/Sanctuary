@@ -274,14 +274,35 @@ local LIST_REFRESH_SECONDS = 10
 -- list alone would be a field the other sweep never visits.
 local LIST_INPUT_KEYS = { "addInput", "nameInput", "patternInput" }
 
+-- A one-unit border is drawn one physical pixel thick, and its pieces are kept
+-- off the pixel grid. Snapped to it, a line that thin can round to nothing:
+-- at a UI scale of 0.67 on a 1440 px screen, 1.25 pixels a unit, the bottom
+-- border of the cards under questions 2 and 5 was not drawn at all, and came
+-- back as soon as the window scrolled by a few pixels. Exactly one pixel and
+-- unsnapped, it always covers one row of pixels, never none. The wider borders,
+-- the window's own included, draw well and are left as they were.
 local function applyBackdrop(frame, bg, border, edgeSize)
     if not frame.SetBackdrop then return end
+    local size = edgeSize or 1
+    local thin = border and size == 1 and PixelUtil and PixelUtil.GetNearestPixelSize
+        and frame.GetEffectiveScale and frame:GetEffectiveScale()
+    if thin then size = PixelUtil.GetNearestPixelSize(1, thin, 1) end
     frame:SetBackdrop({
         bgFile   = "Interface\\Buttons\\WHITE8x8",
         edgeFile = border and "Interface\\Buttons\\WHITE8x8" or nil,
-        edgeSize = edgeSize or 1,
+        edgeSize = size,
         insets   = { left = 0, right = 0, top = 0, bottom = 0 },
     })
+    if thin then
+        for _, key in ipairs({ "TopEdge", "BottomEdge", "LeftEdge", "RightEdge", "TopLeftCorner",
+            "TopRightCorner", "BottomLeftCorner", "BottomRightCorner" }) do
+            local piece = frame[key]
+            if piece and piece.SetSnapToPixelGrid then
+                piece:SetSnapToPixelGrid(false)
+                piece:SetTexelSnappingBias(0)
+            end
+        end
+    end
     if bg then frame:SetBackdropColor(unpack(bg)) end
     if border then frame:SetBackdropBorderColor(unpack(border)) end
 end
