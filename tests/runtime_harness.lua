@@ -14449,6 +14449,51 @@ assertModelAtRest()
             equal(#differing, 0, label .. ": every text in it (" .. table.concat(differing, " | ") .. ")")
         end
     end
+
+    -- And each language picked on a Russian client. That client draws the
+    -- whole window in the Cyrillic cut of the game font, whatever language
+    -- Sanctuary speaks there: the Russian names the Journal and the lists
+    -- show need it. The cut has no middle dot and draws the ordinal indicator
+    -- as another letter (seen in game), so on that client alone the two are
+    -- written as a bullet and a degree sign. Every other text is the one the
+    -- language's own client shows, and the font check above holds it to the
+    -- letters the Cyrillic cut draws.
+    local CYRILLIC_CUT_SWAPS = { ["\194\183"] = "\226\128\162", ["\194\186"] = "\194\176" }
+    for _, choice in ipairs(ns.LOCALE_CHOICES) do
+        local own = byCode[choice.code]
+        if own and choice.code ~= "ruRU" then
+            local label = choice.code .. " picked on a Russian client"
+            local picked = buildWindow(label, "ruRU", choice.code, own.shipped.strings)
+            equal(#picked.texts, #own.build.texts, label .. ": the same texts as its own client's window")
+            equal(picked.menuText, choice.name, label .. ": the closed menu names the language picked")
+            local differing = {}
+            for index, entry in ipairs(own.build.texts) do
+                local other = picked.texts[index]
+                local expected = entry.text
+                if type(expected) == "string" then
+                    expected = expected:gsub("\194[\183\186]", CYRILLIC_CUT_SWAPS)
+                end
+                if entry.owner ~= "SanctuaryLanguageMenu" and (not other or other.text ~= expected) then
+                    differing[#differing + 1] = string.format("%s \"%s\" for \"%s\"", entry.owner,
+                        tostring(other and other.text), tostring(expected))
+                end
+            end
+            equal(#differing, 0, label .. ": every text in it, the two swaps aside ("
+                .. table.concat(differing, " | ") .. ")")
+        end
+    end
+    -- Only there: every other client reads each string exactly as its file
+    -- writes it, the middle dots of English and French included.
+    for index, build in ipairs(builds) do
+        local shipped = shippedLocales[index]
+        local changed = {}
+        for key, value in pairs(shipped.strings) do
+            if build.scope.L[key] ~= value then changed[#changed + 1] = key end
+        end
+        table.sort(changed)
+        equal(#changed, 0, shipped.code .. ": its client reads every string as the file writes it ("
+            .. table.concat(changed, ", ") .. ")")
+    end
     SanctuaryDB.locale = "auto"
 
     -- One more window, built where a unit is not a whole pixel: every frame at

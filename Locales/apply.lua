@@ -20,6 +20,15 @@ local LOCALE_FILES = { esES = "es", esMX = "es" }
 -- fold it to lower case.
 local KEEPS_LABEL_CASE = { deDE = true }
 
+-- A Russian client draws the whole window in the Cyrillic cut of the game font,
+-- whatever language Sanctuary speaks there (see `ns.windowFontFile`): the
+-- Russian names the Journal and the lists show need it. Seen in game, that cut
+-- has no middle dot, a white rectangle between two counts, and draws the
+-- ordinal indicator of "n.º" as another letter. On that client alone, the two
+-- are written as a bullet and a degree sign, which it draws. Every other
+-- client reads each string exactly as its file writes it.
+local CYRILLIC_CUT_SWAPS = { ["\194\183"] = "\226\128\162", ["\194\186"] = "\194\176" }
+
 local L = ns.L or {}
 ns.L = L
 
@@ -30,6 +39,13 @@ function ns.applyLocale(code)
     local overrides = ns.locales[LOCALE_FILES[code] or code]
     if overrides and overrides ~= english then
         for key, value in pairs(overrides) do L[key] = value end
+    end
+    if GetLocale() == "ruRU" then
+        for key, value in pairs(L) do
+            if type(value) == "string" then
+                L[key] = value:gsub("\194[\183\186]", CYRILLIC_CUT_SWAPS)
+            end
+        end
     end
     ns.localeKeepsLabelCase = (overrides and KEEPS_LABEL_CASE[code]) or false
     ns.appliedLocale = (overrides and overrides ~= english) and code or "enUS"
