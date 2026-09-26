@@ -4,4 +4,9 @@ ignore:
   - tests
   - media/screenshots
   - README.fr.md
+  - README.de.md
+  - README.es.md
+  - README.pt-BR.md
+  - README.ru.md
+  - README.it.md
   - .github
