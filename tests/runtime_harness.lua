@@ -7052,8 +7052,12 @@ local function newWidget(kind, name, parent, template)
     w.__template = template
     -- What "BackdropTemplate" mixes in, and only when it is asked for.
     if type(template) == "string" and template:find("BackdropTemplate", 1, true) then
+        -- Setting a backdrop again leaves its colours to whoever sets them
+        -- next, as the pessimistic reading of the client's mixin: whatever has
+        -- to keep a colour across a new backdrop has to put it back itself.
         function w:SetBackdrop(info)
             self.__backdrop = info
+            self.__backdropColor, self.__backdropBorder = nil, nil
             -- The eight textures the template draws a border with, made once
             -- on the frame as the client makes them.
             if info and info.edgeFile then
@@ -7065,6 +7069,13 @@ local function newWidget(kind, name, parent, template)
         end
         function w:SetBackdropColor(r, g, b, a) self.__backdropColor = { r, g, b, a } end
         function w:SetBackdropBorderColor(r, g, b, a) self.__backdropBorder = { r, g, b, a } end
+        function w:GetBackdrop() return self.__backdrop end
+        function w:GetBackdropColor()
+            if self.__backdropColor then return unpack(self.__backdropColor) end
+        end
+        function w:GetBackdropBorderColor()
+            if self.__backdropBorder then return unpack(self.__backdropBorder) end
+        end
     end
     w.__scripts = {}
     w.__children = {}
@@ -14402,7 +14413,7 @@ assertModelAtRest()
             .. table.concat(undrawable, " | ") .. ")")
         equal(#recut, 0, code .. ": and only Russian text is drawn in the Cyrillic cut ("
             .. table.concat(recut, " | ") .. ")")
-        return { code = code, texts = texts, menuText = menuText }
+        return { code = code, texts = texts, menuText = menuText, scope = scope }
     end
     for _, shipped in ipairs(shippedLocales) do
         local build = buildWindow(shipped.code, shipped.code, nil, shipped.strings)
@@ -14448,15 +14459,17 @@ assertModelAtRest()
     -- the rule between questions 3 and 4 of the Russian window was not drawn.
     do
         local keptPixel, plainIndex = PixelUtil, widgetMeta.__index
-        widgetMeta.__index = function(widget, key)
-            if key == "GetEffectiveScale" then return function() return 2 / 3 end end
-            return plainIndex(widget, key)
+        -- A UI scale, and the one pixel PixelUtil answers for it.
+        local function setScale(scale, pixel)
+            widgetMeta.__index = function(widget, key)
+                if key == "GetEffectiveScale" then return function() return scale end end
+                return plainIndex(widget, key)
+            end
+            PixelUtil = { GetNearestPixelSize = function() return pixel end }
         end
-        PixelUtil = { GetNearestPixelSize = function() return 0.8 end }
+        setScale(2 / 3, 0.8)
         local first = #createdWidgets + 1
-        buildWindow("enUS at a scale of 2/3", "enUS", nil, shippedLocales[1].strings)
-        widgetMeta.__index = plainIndex
-        PixelUtil = keptPixel
+        local build = buildWindow("enUS at a scale of 2/3", "enUS", nil, shippedLocales[1].strings)
         local snapped, hairlines = {}, 0
         for index = first, #createdWidgets do
             local widget = createdWidgets[index]
@@ -14475,6 +14488,46 @@ assertModelAtRest()
             .. table.concat(snapped, " | ") .. ")")
         check(hairlines >= 5 + 2, "the rules of the home screen and the tab strip are among the "
             .. hairlines .. " drawn one pixel tall off the grid")
+        -- The borders two units wide are not lines of one pixel: the window's
+        -- own keeps its two units at any scale.
+        equal(_G.SanctuaryMainFrame.__backdrop.edgeSize, 2,
+            "the window's two-unit border is left as it was at a scale of 2/3")
+
+        -- Then the UI scale changes under the open window, and one pixel is a
+        -- whole unit. Every line sized for the old scale is sized again when
+        -- the client says so, and a border keeps the colour it wears: a line
+        -- left at 0.8 units would cover less than a pixel, off the grid.
+        local lines, borders, watcher = {}, {}, nil
+        for index = first, #createdWidgets do
+            local widget = createdWidgets[index]
+            if widget.__kind == "Texture" and widget.__height == 0.8 then lines[#lines + 1] = widget end
+            if widget.__backdrop and widget.__backdrop.edgeSize == 0.8 then borders[#borders + 1] = widget end
+            if widget.__events and widget.__events.UI_SCALE_CHANGED then watcher = widget end
+        end
+        check(watcher ~= nil and watcher.__events.DISPLAY_SIZE_CHANGED,
+            "the window listens for the UI scale and the screen size")
+        check(#lines >= 7 and #borders > 0, "lines and borders one pixel thick are there to follow ("
+            .. #lines .. " lines, " .. #borders .. " borders)")
+        local worn = borders[1]
+        worn:SetBackdropBorderColor(0.1, 0.2, 0.3, 1)
+        setScale(1, 1)
+        if watcher then watcher.__scripts.OnEvent(watcher, "UI_SCALE_CHANGED") end
+        local stale = 0
+        for _, line in ipairs(lines) do if line.__height ~= 1 then stale = stale + 1 end end
+        for _, frame in ipairs(borders) do
+            if frame.__backdrop.edgeSize ~= 1 then stale = stale + 1 end
+        end
+        equal(stale, 0, "after a UI scale change every line is one pixel at the new scale")
+        equal(table.concat(worn.__backdropBorder or {}, ","), "0.1,0.2,0.3,1",
+            "and a border keeps the colour it wore")
+        -- And a refresh does the same, for a change no event announced.
+        setScale(2 / 3, 0.8)
+        build.scope.refreshUI()
+        stale = 0
+        for _, line in ipairs(lines) do if line.__height ~= 0.8 then stale = stale + 1 end end
+        equal(stale, 0, "a refresh sizes the lines for the scale of the moment too")
+        widgetMeta.__index = plainIndex
+        PixelUtil = keptPixel
     end
 
     local reference = {}

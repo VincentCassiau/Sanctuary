@@ -281,12 +281,39 @@ local LIST_INPUT_KEYS = { "addInput", "nameInput", "patternInput" }
 -- back as soon as the window scrolled by a few pixels. Exactly one pixel and
 -- unsnapped, it always covers one row of pixels, never none. The wider borders,
 -- the window's own included, draw well and are left as they were.
-local function applyBackdrop(frame, bg, border, edgeSize)
+--
+-- One pixel is a number of units that only holds at the scale it was measured
+-- at. Every line sized here is kept, with what it was sized for, and measured
+-- again when the UI scale or the screen changes and on every refresh: kept at
+-- the old size, a line drawn at a lower scale covers less than a pixel, off
+-- the grid, and goes back to vanishing wherever it lands between two rows.
+--
+-- In a block of their own: the file is at Lua 5.1's 200-local ceiling.
+local applyBackdrop, applyHairline
+do
+local thinBorders, hairlines = {}, {}
+local BORDER_PIECES = { "TopEdge", "BottomEdge", "LeftEdge", "RightEdge", "TopLeftCorner",
+    "TopRightCorner", "BottomLeftCorner", "BottomRightCorner" }
+
+-- One physical pixel in `frame`'s units, or nil where the client cannot say.
+local function onePixel(frame)
+    local scale = PixelUtil and PixelUtil.GetNearestPixelSize
+        and frame.GetEffectiveScale and frame:GetEffectiveScale()
+    return scale and PixelUtil.GetNearestPixelSize(1, scale, 1) or nil
+end
+
+local function unsnap(texture)
+    if texture and texture.SetSnapToPixelGrid then
+        texture:SetSnapToPixelGrid(false)
+        texture:SetTexelSnappingBias(0)
+    end
+end
+
+function applyBackdrop(frame, bg, border, edgeSize)
     if not frame.SetBackdrop then return end
     local size = edgeSize or 1
-    local thin = border and size == 1 and PixelUtil and PixelUtil.GetNearestPixelSize
-        and frame.GetEffectiveScale and frame:GetEffectiveScale()
-    if thin then size = PixelUtil.GetNearestPixelSize(1, thin, 1) end
+    local thin = border and size == 1 and onePixel(frame)
+    if thin then size = thin end
     frame:SetBackdrop({
         bgFile   = "Interface\\Buttons\\WHITE8x8",
         edgeFile = border and "Interface\\Buttons\\WHITE8x8" or nil,
@@ -294,14 +321,8 @@ local function applyBackdrop(frame, bg, border, edgeSize)
         insets   = { left = 0, right = 0, top = 0, bottom = 0 },
     })
     if thin then
-        for _, key in ipairs({ "TopEdge", "BottomEdge", "LeftEdge", "RightEdge", "TopLeftCorner",
-            "TopRightCorner", "BottomLeftCorner", "BottomRightCorner" }) do
-            local piece = frame[key]
-            if piece and piece.SetSnapToPixelGrid then
-                piece:SetSnapToPixelGrid(false)
-                piece:SetTexelSnappingBias(0)
-            end
-        end
+        thinBorders[frame] = true
+        for _, key in ipairs(BORDER_PIECES) do unsnap(frame[key]) end
     end
     if bg then frame:SetBackdropColor(unpack(bg)) end
     if border then frame:SetBackdropBorderColor(unpack(border)) end
@@ -312,18 +333,39 @@ end
 -- drawn at all. Where a rule lands depends on how tall the questions above it
 -- came out, so any language at any width could lose one. `owner` is the frame
 -- whose scale the rule is drawn at.
-local function applyHairline(texture, owner)
-    local scale = PixelUtil and PixelUtil.GetNearestPixelSize
-        and owner.GetEffectiveScale and owner:GetEffectiveScale()
-    if not scale then
+function applyHairline(texture, owner)
+    local size = onePixel(owner)
+    if not size then
         texture:SetHeight(1)
         return
     end
-    texture:SetHeight(PixelUtil.GetNearestPixelSize(1, scale, 1))
-    if texture.SetSnapToPixelGrid then
-        texture:SetSnapToPixelGrid(false)
-        texture:SetTexelSnappingBias(0)
+    hairlines[texture] = owner
+    texture:SetHeight(size)
+    unsnap(texture)
+end
+
+-- Every line sized above, sized again for the scale it is drawn at now. A
+-- border keeps the colours it wears at this moment -- a focused field, a
+-- hovered button -- and only its width changes.
+function ns.refitThinLines()
+    for texture, owner in pairs(hairlines) do
+        local size = onePixel(owner)
+        if size then texture:SetHeight(size) end
     end
+    for frame in pairs(thinBorders) do
+        local size = onePixel(frame)
+        local backdrop = size and frame.GetBackdrop and frame:GetBackdrop()
+        if backdrop and backdrop.edgeSize ~= size then
+            local r, g, b, a = frame:GetBackdropColor()
+            local br, bg, bb, ba = frame:GetBackdropBorderColor()
+            backdrop.edgeSize = size
+            frame:SetBackdrop(backdrop)
+            for _, key in ipairs(BORDER_PIECES) do unsnap(frame[key]) end
+            if r then frame:SetBackdropColor(r, g, b, a) end
+            if br then frame:SetBackdropBorderColor(br, bg, bb, ba) end
+        end
+    end
+end
 end
 
 -- The mask Retail ships for exactly this: a circle that scales to whatever size
@@ -4651,6 +4693,7 @@ end
 
 function ns.refreshUI()
     if not mainFrame or not mainFrame:IsShown() then return end
+    ns.refitThinLines()
     refreshStateButton()
     -- The width first, before a single screen measures itself -- the strip of
     -- tabs included, which sizes its row against it. `applyHeight` applies it
@@ -5342,3 +5385,13 @@ loader:RegisterEvent("PLAYER_LOGIN")
 loader:SetScript("OnEvent", function()
     ns.InitializeUI()
 end)
+
+-- The UI scale and the screen can change under an open window: the lines one
+-- pixel thick follow them (`ns.refitThinLines`), as they do on every refresh.
+-- A function of its own, the file being at Lua 5.1's 200-local ceiling.
+;(function()
+    local scaleWatcher = CreateFrame("Frame")
+    scaleWatcher:RegisterEvent("UI_SCALE_CHANGED")
+    scaleWatcher:RegisterEvent("DISPLAY_SIZE_CHANGED")
+    scaleWatcher:SetScript("OnEvent", function() ns.refitThinLines() end)
+end)()
