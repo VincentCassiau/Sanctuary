@@ -2980,6 +2980,9 @@ end
 -- ============================================================================
 
 local advanced = {}
+-- The room the debug paragraph has above its two buttons, and the air it keeps
+-- from them when it needs more.
+local DEBUG_DESC_ROOM, DEBUG_DESC_GAP = 46, 10
 
 -- Advanced keeps what a person only ever opens on purpose: diagnostics, the
 -- journal's size, the minimap button and the technical line. Automatic trust
@@ -2988,6 +2991,14 @@ local advanced = {}
 local function buildAdvancedTab(parent)
     local width = innerWidth()
     local y = 0
+    -- Everything under the debug paragraph, with the place it takes when the
+    -- paragraph fits its room: the width pass moves it all down together when
+    -- the paragraph folds over more lines than that.
+    advanced.below = {}
+    local function placeBelow(widget, x, rowY)
+        widget:SetPoint("TOPLEFT", parent, "TOPLEFT", x, rowY)
+        advanced.below[#advanced.below + 1] = { widget = widget, x = x, y = rowY }
+    end
 
     advanced.diagSection = newSection(parent, L["ADV_DIAG_TITLE"], nil, width)
     advanced.diagSection:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
@@ -3009,13 +3020,14 @@ local function buildAdvancedTab(parent)
     advanced.debugDesc = newLabel(parent, L["ADV_DEBUG_DESC"], FONT_BODY, C.dim)
     advanced.debugDesc:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + 26, y)
     advanced.debugDesc:SetWidth(width - 26)
-    y = y - 46
+    advanced.debugDescY = y
+    y = y - DEBUG_DESC_ROOM
 
     advanced.exportBtn = newButton(parent, nil, L["DEBUG_EXPORT_BTN"], 170, 24, function()
         ns.ShowTextWindow(L["DEBUG_EXPORT_TITLE"],
             ns.buildExportReportText and ns.buildExportReportText() or "")
     end)
-    advanced.exportBtn:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + 26, y)
+    placeBelow(advanced.exportBtn, PAD + 26, y)
     advanced.clearDebugBtn = newButton(parent, nil, L["DEBUG_CLEAR_BTN"], 150, 24, function()
         StaticPopup_Show("SANCTUARY_CLEAR_DEBUG_LOG",
             SanctuaryDB and #(SanctuaryDB.debugLog or {}) or 0)
@@ -3024,10 +3036,10 @@ local function buildAdvancedTab(parent)
     y = y - 44
 
     advanced.journalSection = newSection(parent, L["ADV_JOURNAL_TITLE"], nil, width)
-    advanced.journalSection:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
+    placeBelow(advanced.journalSection, PAD, y)
     y = y - 34
     advanced.maxLabel = newLabel(parent, L["ADV_MAXENTRIES"], FONT_BODY, C.soft)
-    advanced.maxLabel:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
+    placeBelow(advanced.maxLabel, PAD, y)
     -- Bounded on write, not on display: a value typed outside the range is
     -- clamped and shown clamped, so nobody leaves thinking they set 50.
     advanced.maxInput = newInput(parent, "SanctuaryMaxEntriesInput", 90, "", function(text)
@@ -3044,13 +3056,13 @@ local function buildAdvancedTab(parent)
         advanced.maxInput:RefreshHint()
         if ns.refreshUI then ns.refreshUI() end
     end, true)
-    advanced.maxInput:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + 130, y + 4)
+    placeBelow(advanced.maxInput, PAD + 130, y + 4)
     advanced.maxUnit = newLabel(parent, L["ADV_ENTRIES"], FONT_BODY, C.dim)
     advanced.maxUnit:SetPoint("LEFT", advanced.maxInput, "RIGHT", 8, 0)
     y = y - 40
 
     advanced.minimapSection = newSection(parent, L["ADV_MINIMAP_TITLE"], nil, width)
-    advanced.minimapSection:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
+    placeBelow(advanced.minimapSection, PAD, y)
     y = y - 34
     advanced.minimap = newCheck(parent, "SanctuaryMinimapCheck", L["ADV_MINIMAP_SHOW"], nil,
         function() return SanctuaryDB and not SanctuaryDB.minimap.hide end,
@@ -3058,7 +3070,7 @@ local function buildAdvancedTab(parent)
             SanctuaryDB.minimap.hide = not value
             if ns.RefreshMinimapButton then ns.RefreshMinimapButton() end
         end)
-    advanced.minimap:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
+    placeBelow(advanced.minimap, PAD, y)
     y = y - 40
 
     -- The language of this window and of its messages, for Sanctuary alone: the
@@ -3067,7 +3079,7 @@ local function buildAdvancedTab(parent)
     -- were laid out when the files loaded -- and the reload is the player's to
     -- click: the client allows it from a click and from nothing else.
     advanced.languageSection = newSection(parent, L["ADV_LANGUAGE_TITLE"], nil, width)
-    advanced.languageSection:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
+    placeBelow(advanced.languageSection, PAD, y)
     y = y - 34
     local languageRows = { { value = "auto", text = L["LANGUAGE_AUTO"], tip = L["LANGUAGE_TIP"] } }
     for _, choice in ipairs(ns.LOCALE_CHOICES or {}) do
@@ -3083,12 +3095,13 @@ local function buildAdvancedTab(parent)
             SanctuaryDB.locale = value
             StaticPopup_Show("SANCTUARY_RELOAD_LOCALE")
         end)
-    advanced.language:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
+    placeBelow(advanced.language, PAD, y)
     y = y - 40
 
     advanced.status = newLabel(parent, "", FONT_BODY, C.dim)
-    advanced.status:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
+    placeBelow(advanced.status, PAD, y)
     advanced.status:SetWidth(width)
+    advanced.baseStatusY = y
     advanced.statusY = y
 end
 
@@ -3108,9 +3121,24 @@ applyTabWidth.advanced = function()
     advanced.debugDesc:SetWidth(math.max(60, width - 26))
     advanced.status:SetWidth(width)
     advanced.maxInput:RefreshNoteWidth()
+    -- The paragraph has DEBUG_DESC_ROOM less a gap above the two buttons: two
+    -- lines in English and French at the usual widths, three at the
+    -- narrowest. A longer language or a narrower window folds it further, and
+    -- whatever it takes past its room pushes the rest of the screen down by as
+    -- much, rather than running into the buttons.
+    local drop = math.max(0, (advanced.debugDesc:GetStringHeight() or 0)
+        + DEBUG_DESC_GAP - DEBUG_DESC_ROOM)
+    for _, entry in ipairs(advanced.below) do
+        entry.widget:ClearAllPoints()
+        entry.widget:SetPoint("TOPLEFT", entry.widget:GetParent(), "TOPLEFT", entry.x, entry.y - drop)
+    end
+    advanced.statusY = advanced.baseStatusY - drop
 end
 
 refreshTab.advanced = function()
+    -- The widths first, like the home screen: the height this answers is
+    -- measured from where the width pass put the last line.
+    applyTabWidth.advanced()
     advanced.debug:Refresh()
     advanced.minimap:Refresh()
     advanced.language:Refresh()

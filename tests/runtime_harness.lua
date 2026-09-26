@@ -14282,6 +14282,55 @@ assertModelAtRest()
             end
             equal(#overlaps, 0, code .. ": no row of \"I choose\" starts inside the one above it at 500 px ("
                 .. table.concat(overlaps, " | ") .. ")")
+            -- The debug paragraph of Advanced folds over more lines in a longer
+            -- language or a narrower window. At 500 px its two buttons start
+            -- under its last line, and the screen is as tall as what was pushed
+            -- down: the technical line at its bottom stays inside the height,
+            -- and the one refresh that follows a narrowing already answers the
+            -- height a second one would. The window is at its lowest, so the
+            -- screen is taller than it and the height is the screen's own.
+            local oneRefresh, twoRefreshes
+            try("advanced at 500", function()
+                SanctuaryDB.uiSize = { 900, 380 }
+                scope.refreshUI()
+                _G.SanctuaryTab_advanced:Click()
+                SanctuaryDB.uiSize = { 500, 380 }
+                scope.refreshUI()
+                oneRefresh = _G.SanctuaryTabContent_advanced:GetHeight()
+                scope.refreshUI()
+                twoRefreshes = _G.SanctuaryTabContent_advanced:GetHeight()
+            end)
+            equal(oneRefresh, twoRefreshes, code .. ": Advanced answers its height at 500 px from the"
+                .. " first refresh after a narrowing")
+            local desc, export, status
+            for index = first, #createdWidgets do
+                local widget = createdWidgets[index]
+                if widget.__kind == "FontString" and widget.__text == strings.ADV_DEBUG_DESC then
+                    desc = widget
+                elseif widget.__kind == "Button" and widget.label
+                    and widget.label.__text == strings.DEBUG_EXPORT_BTN then
+                    export = widget
+                elseif widget.__kind == "FontString" and type(widget.__text) == "string"
+                    and widget.__text:find(" 20%d%d%d%d%d%d%-%d") then
+                    status = widget
+                end
+            end
+            check(desc and export and status and true, code .. ": the debug paragraph, its export button"
+                .. " and the technical line are found")
+            if desc and export and status then
+                local _, _, _, _, descY = desc:GetPoint()
+                local _, _, _, _, exportY = export:GetPoint()
+                local _, _, _, _, statusY = status:GetPoint()
+                local descBottom = descY - (desc:GetStringHeight() or 0)
+                check(exportY <= descBottom - 4, code .. ": the debug buttons start under the folded paragraph"
+                    .. " at 500 px (" .. exportY .. " against " .. descBottom .. ")")
+                local screen = _G.SanctuaryTabContent_advanced
+                local needed = -statusY + (status:GetStringHeight() or 0)
+                check((screen:GetHeight() or 0) >= needed, code .. ": and the screen reaches the technical line ("
+                    .. tostring(screen:GetHeight()) .. " for " .. needed .. ")")
+            end
+            SanctuaryDB.uiSize = { 500, 700 }
+            _G.SanctuaryTab_protection:Click()
             for _, which in ipairs(DIALOGS) do
                 local dialog = StaticPopupDialogs[which]
                 check(dialog and dialog.text and dialog.button1 and dialog.button2 and true,
