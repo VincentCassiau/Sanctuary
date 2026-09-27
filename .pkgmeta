@@ -1,5 +1,9 @@
 package-as: Sanctuary
 
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+
 ignore:
   - tests
   - media/screenshots
