@@ -2,7 +2,7 @@
 
 > Protección contra el acoso y el spam para World of Warcraft: Sanctuary bloquea las invitaciones, los mensajes, los susurros y otras interacciones tóxicas de jugadores malintencionados antes de que puedan molestarte.
 
-*[English](README.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)*
+*[English](README.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Español](README.es.md) · [Português](README.pt.md) · [Русский](README.ru.md) · [Italiano](README.it.md)*
 
 *Esta traducción es un borrador que ningún hablante nativo ha revisado todavía. Las correcciones son bienvenidas en GitHub.*
 

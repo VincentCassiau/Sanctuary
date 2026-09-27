@@ -2,7 +2,7 @@
 
 > Защита от преследований и спама для World of Warcraft: Sanctuary блокирует приглашения, сообщения, шепот и другие токсичные взаимодействия от недоброжелательных игроков, прежде чем они успеют вас побеспокоить.
 
-*[English](README.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)*
+*[English](README.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Español](README.es.md) · [Português](README.pt.md) · [Русский](README.ru.md) · [Italiano](README.it.md)*
 
 *Это черновик перевода, который еще не проверил ни один носитель языка. Исправления приветствуются на GitHub.*
 

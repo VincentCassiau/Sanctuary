@@ -2,7 +2,7 @@
 
 > Protection contre le harcèlement et le spam dans World of Warcraft : Sanctuary bloque les invitations, messages, chuchotements et autres interactions toxiques des personnes néfastes avant même que vous ne soyez dérangé.
 
-*[English](README.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)*
+*[English](README.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Español](README.es.md) · [Português](README.pt.md) · [Русский](README.ru.md) · [Italiano](README.it.md)*
 
 ![Écran principal de Sanctuary](media/screenshots/fr-protection.png)
 

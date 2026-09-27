@@ -6,7 +6,7 @@ ignore:
   - README.fr.md
   - README.de.md
   - README.es.md
-  - README.pt-BR.md
+  - README.pt.md
   - README.ru.md
   - README.it.md
   - .github

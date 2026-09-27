@@ -2,7 +2,7 @@
 
 > Anti-harassment and anti-spam protection for World of Warcraft: Sanctuary blocks invitations, messages, whispers and other toxic interactions from harmful players before they can bother you.
 
-*[English](README.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)*
+*[English](README.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Español](README.es.md) · [Português](README.pt.md) · [Русский](README.ru.md) · [Italiano](README.it.md)*
 
 ![Sanctuary's main screen](media/screenshots/en-protection.png)
 
