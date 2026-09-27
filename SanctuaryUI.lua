@@ -274,16 +274,98 @@ local LIST_REFRESH_SECONDS = 10
 -- list alone would be a field the other sweep never visits.
 local LIST_INPUT_KEYS = { "addInput", "nameInput", "patternInput" }
 
-local function applyBackdrop(frame, bg, border, edgeSize)
+-- A one-unit border is drawn one physical pixel thick, and its pieces are kept
+-- off the pixel grid. Snapped to it, a line that thin can round to nothing:
+-- at a UI scale of 0.67 on a 1440 px screen, 1.25 pixels a unit, the bottom
+-- border of the cards under questions 2 and 5 was not drawn at all, and came
+-- back as soon as the window scrolled by a few pixels. Exactly one pixel and
+-- unsnapped, it always covers one row of pixels, never none. The wider borders,
+-- the window's own included, draw well and are left as they were.
+--
+-- One pixel is a number of units that only holds at the scale it was measured
+-- at. Every line sized here is kept, with what it was sized for, and measured
+-- again when the UI scale or the screen changes and on every refresh: kept at
+-- the old size, a line drawn at a lower scale covers less than a pixel, off
+-- the grid, and goes back to vanishing wherever it lands between two rows.
+--
+-- In a block of their own: the file is at Lua 5.1's 200-local ceiling.
+local applyBackdrop, applyHairline
+do
+local thinBorders, hairlines = {}, {}
+local BORDER_PIECES = { "TopEdge", "BottomEdge", "LeftEdge", "RightEdge", "TopLeftCorner",
+    "TopRightCorner", "BottomLeftCorner", "BottomRightCorner" }
+
+-- One physical pixel in `frame`'s units, or nil where the client cannot say.
+local function onePixel(frame)
+    local scale = PixelUtil and PixelUtil.GetNearestPixelSize
+        and frame.GetEffectiveScale and frame:GetEffectiveScale()
+    return scale and PixelUtil.GetNearestPixelSize(1, scale, 1) or nil
+end
+
+local function unsnap(texture)
+    if texture and texture.SetSnapToPixelGrid then
+        texture:SetSnapToPixelGrid(false)
+        texture:SetTexelSnappingBias(0)
+    end
+end
+
+function applyBackdrop(frame, bg, border, edgeSize)
     if not frame.SetBackdrop then return end
+    local size = edgeSize or 1
+    local thin = border and size == 1 and onePixel(frame)
+    if thin then size = thin end
     frame:SetBackdrop({
         bgFile   = "Interface\\Buttons\\WHITE8x8",
         edgeFile = border and "Interface\\Buttons\\WHITE8x8" or nil,
-        edgeSize = edgeSize or 1,
+        edgeSize = size,
         insets   = { left = 0, right = 0, top = 0, bottom = 0 },
     })
+    if thin then
+        thinBorders[frame] = true
+        for _, key in ipairs(BORDER_PIECES) do unsnap(frame[key]) end
+    end
     if bg then frame:SetBackdropColor(unpack(bg)) end
     if border then frame:SetBackdropBorderColor(unpack(border)) end
+end
+
+-- A one-unit rule drawn as a texture, on the same terms and for the same
+-- reason: the rule between questions 3 and 4 of the Russian window was not
+-- drawn at all. Where a rule lands depends on how tall the questions above it
+-- came out, so any language at any width could lose one. `owner` is the frame
+-- whose scale the rule is drawn at.
+function applyHairline(texture, owner)
+    local size = onePixel(owner)
+    if not size then
+        texture:SetHeight(1)
+        return
+    end
+    hairlines[texture] = owner
+    texture:SetHeight(size)
+    unsnap(texture)
+end
+
+-- Every line sized above, sized again for the scale it is drawn at now. A
+-- border keeps the colours it wears at this moment -- a focused field, a
+-- hovered button -- and only its width changes.
+function ns.refitThinLines()
+    for texture, owner in pairs(hairlines) do
+        local size = onePixel(owner)
+        if size then texture:SetHeight(size) end
+    end
+    for frame in pairs(thinBorders) do
+        local size = onePixel(frame)
+        local backdrop = size and frame.GetBackdrop and frame:GetBackdrop()
+        if backdrop and backdrop.edgeSize ~= size then
+            local r, g, b, a = frame:GetBackdropColor()
+            local br, bg, bb, ba = frame:GetBackdropBorderColor()
+            backdrop.edgeSize = size
+            frame:SetBackdrop(backdrop)
+            for _, key in ipairs(BORDER_PIECES) do unsnap(frame[key]) end
+            if r then frame:SetBackdropColor(r, g, b, a) end
+            if br then frame:SetBackdropBorderColor(br, bg, bb, ba) end
+        end
+    end
+end
 end
 
 -- The mask Retail ships for exactly this: a circle that scales to whatever size
@@ -315,7 +397,11 @@ end
 -- by itself, which needs a global to reach.
 local function newLabel(parent, text, size, color, justify, name)
     local label = parent:CreateFontString(name, "OVERLAY", "GameFontNormal")
-    local fontFile = label:GetFont()
+    -- The game's own file, except for Russian text on a client whose file has
+    -- no Cyrillic: see `ns.windowFontFile`. The game's file is kept, for a label
+    -- whose text changes script later -- the closed language menu.
+    label.gameFontFile = label:GetFont()
+    local fontFile = ns.windowFontFile(label.gameFontFile, text)
     label:SetFont(fontFile, size or FONT_BODY, "")
     label:SetTextColor(unpack(color or C.ink))
     label:SetText(text or "")
@@ -1046,6 +1132,9 @@ local function newDropdown(parent, name, width, rows, get, set)
         for _, row in ipairs(rows) do
             if row.value == current then text = row.text end
         end
+        -- The value is the one label here whose script can change: "Русский"
+        -- picked, and the reload put off, shows in a window still drawn in Latin.
+        self.value:SetFont(ns.windowFontFile(self.value.gameFontFile, text), FONT_BODY, "")
         self.value:SetText(text)
         self.value:SetTextColor(unpack(self.enabled and C.ink or C.disabled))
         self.caret:SetCaretColor(self.enabled and C.dim or C.disabled)
@@ -1317,7 +1406,7 @@ local function newSection(parent, titleText, descText, width)
     section.count = newLabel(section, "", FONT_BODY, C.dim)
     section.count:SetPoint("LEFT", section.title, "RIGHT", 8, 0)
     section.rule = section:CreateTexture(nil, "ARTWORK")
-    section.rule:SetHeight(1)
+    applyHairline(section.rule, section)
     section.rule:SetPoint("TOPLEFT", section.title, "BOTTOMLEFT", 0, -6)
     section.rule:SetPoint("TOPRIGHT", section, "TOPRIGHT", 0, -6)
     section.rule:SetColorTexture(unpack(C.border))
@@ -1550,7 +1639,7 @@ local function buildProtectionTab(parent)
     protection.rules = {}
     for index = 1, 5 do
         local rule = parent:CreateTexture(nil, "ARTWORK")
-        rule:SetHeight(1)
+        applyHairline(rule, parent)
         rule:SetColorTexture(unpack(C.rule))
         protection.rules[index] = rule
     end
@@ -1577,7 +1666,7 @@ local function buildProtectionTab(parent)
             local dash = self.dashes[index]
             if not dash then
                 dash = self:CreateTexture(nil, "ARTWORK")
-                dash:SetHeight(1)
+                applyHairline(dash, self)
                 dash:SetColorTexture(unpack(C.dash))
                 self.dashes[index] = dash
             end
@@ -1963,7 +2052,14 @@ local function buildProtectionTab(parent)
                 -- whether the box is there or not. The box itself hangs from the
                 -- parent check, not from this number: only the room is booked
                 -- here, so the column below it does not climb over the child.
-                colY[col] = colY[col] - HOME.rowHeight
+                -- Booked at the height its own label comes to at the indented
+                -- width: "(experimental)" is part of that label, and it folds
+                -- at the narrowest window, and in some languages at the default.
+                -- A flat row let the second line run into the box under it.
+                -- The refresh fits the label again for the mode it is in.
+                colY[col] = colY[col] - math.max(HOME.rowHeight,
+                    protection.strict:FitLabel(protection.checkLabelWidth - HOME.subIndent)
+                        + (HOME.rowHeight - HOME.checkSize))
             end
         end
 
@@ -2090,7 +2186,7 @@ local function buildProtectionTab(parent)
     protection.testInput:MakeClearable()
     protection.testAnswer = parent:CreateFontString("SanctuaryTestAnswer", "OVERLAY", "GameFontNormal")
     do
-        local fontFile = protection.testAnswer:GetFont()
+        local fontFile = ns.windowFontFile(protection.testAnswer:GetFont())
         protection.testAnswer:SetFont(fontFile, FONT_BODY, "")
         protection.testAnswer:SetJustifyH("LEFT")
     end
@@ -2926,6 +3022,9 @@ end
 -- ============================================================================
 
 local advanced = {}
+-- The room the debug paragraph has above its two buttons, and the air it keeps
+-- from them when it needs more.
+local DEBUG_DESC_ROOM, DEBUG_DESC_GAP = 46, 10
 
 -- Advanced keeps what a person only ever opens on purpose: diagnostics, the
 -- journal's size, the minimap button and the technical line. Automatic trust
@@ -2934,6 +3033,14 @@ local advanced = {}
 local function buildAdvancedTab(parent)
     local width = innerWidth()
     local y = 0
+    -- Everything under the debug paragraph, with the place it takes when the
+    -- paragraph fits its room: the width pass moves it all down together when
+    -- the paragraph folds over more lines than that.
+    advanced.below = {}
+    local function placeBelow(widget, x, rowY)
+        widget:SetPoint("TOPLEFT", parent, "TOPLEFT", x, rowY)
+        advanced.below[#advanced.below + 1] = { widget = widget, x = x, y = rowY }
+    end
 
     advanced.diagSection = newSection(parent, L["ADV_DIAG_TITLE"], nil, width)
     advanced.diagSection:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
@@ -2955,13 +3062,14 @@ local function buildAdvancedTab(parent)
     advanced.debugDesc = newLabel(parent, L["ADV_DEBUG_DESC"], FONT_BODY, C.dim)
     advanced.debugDesc:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + 26, y)
     advanced.debugDesc:SetWidth(width - 26)
-    y = y - 46
+    advanced.debugDescY = y
+    y = y - DEBUG_DESC_ROOM
 
     advanced.exportBtn = newButton(parent, nil, L["DEBUG_EXPORT_BTN"], 170, 24, function()
         ns.ShowTextWindow(L["DEBUG_EXPORT_TITLE"],
             ns.buildExportReportText and ns.buildExportReportText() or "")
     end)
-    advanced.exportBtn:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + 26, y)
+    placeBelow(advanced.exportBtn, PAD + 26, y)
     advanced.clearDebugBtn = newButton(parent, nil, L["DEBUG_CLEAR_BTN"], 150, 24, function()
         StaticPopup_Show("SANCTUARY_CLEAR_DEBUG_LOG",
             SanctuaryDB and #(SanctuaryDB.debugLog or {}) or 0)
@@ -2970,10 +3078,10 @@ local function buildAdvancedTab(parent)
     y = y - 44
 
     advanced.journalSection = newSection(parent, L["ADV_JOURNAL_TITLE"], nil, width)
-    advanced.journalSection:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
+    placeBelow(advanced.journalSection, PAD, y)
     y = y - 34
     advanced.maxLabel = newLabel(parent, L["ADV_MAXENTRIES"], FONT_BODY, C.soft)
-    advanced.maxLabel:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
+    placeBelow(advanced.maxLabel, PAD, y)
     -- Bounded on write, not on display: a value typed outside the range is
     -- clamped and shown clamped, so nobody leaves thinking they set 50.
     advanced.maxInput = newInput(parent, "SanctuaryMaxEntriesInput", 90, "", function(text)
@@ -2990,13 +3098,13 @@ local function buildAdvancedTab(parent)
         advanced.maxInput:RefreshHint()
         if ns.refreshUI then ns.refreshUI() end
     end, true)
-    advanced.maxInput:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD + 130, y + 4)
+    placeBelow(advanced.maxInput, PAD + 130, y + 4)
     advanced.maxUnit = newLabel(parent, L["ADV_ENTRIES"], FONT_BODY, C.dim)
     advanced.maxUnit:SetPoint("LEFT", advanced.maxInput, "RIGHT", 8, 0)
     y = y - 40
 
     advanced.minimapSection = newSection(parent, L["ADV_MINIMAP_TITLE"], nil, width)
-    advanced.minimapSection:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
+    placeBelow(advanced.minimapSection, PAD, y)
     y = y - 34
     advanced.minimap = newCheck(parent, "SanctuaryMinimapCheck", L["ADV_MINIMAP_SHOW"], nil,
         function() return SanctuaryDB and not SanctuaryDB.minimap.hide end,
@@ -3004,12 +3112,38 @@ local function buildAdvancedTab(parent)
             SanctuaryDB.minimap.hide = not value
             if ns.RefreshMinimapButton then ns.RefreshMinimapButton() end
         end)
-    advanced.minimap:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
+    placeBelow(advanced.minimap, PAD, y)
+    y = y - 40
+
+    -- The language of this window and of its messages, for Sanctuary alone: the
+    -- game keeps its own. Each language is listed in itself, and only those this
+    -- copy ships. A pick is saved at once and shown after a reload -- the strings
+    -- were laid out when the files loaded -- and the reload is the player's to
+    -- click: the client allows it from a click and from nothing else.
+    advanced.languageSection = newSection(parent, L["ADV_LANGUAGE_TITLE"], nil, width)
+    placeBelow(advanced.languageSection, PAD, y)
+    y = y - 34
+    local languageRows = { { value = "auto", text = L["LANGUAGE_AUTO"], tip = L["LANGUAGE_TIP"] } }
+    for _, choice in ipairs(ns.LOCALE_CHOICES or {}) do
+        if ns.isLocaleAvailable(choice.code) then
+            languageRows[#languageRows + 1] = { value = choice.code, text = choice.name,
+                tip = L["LANGUAGE_TIP"] }
+        end
+    end
+    advanced.language = newDropdown(parent, "SanctuaryLanguageMenu", 220, languageRows,
+        function() return SanctuaryDB and SanctuaryDB.locale or "auto" end,
+        function(value)
+            if not SanctuaryDB or SanctuaryDB.locale == value then return end
+            SanctuaryDB.locale = value
+            StaticPopup_Show("SANCTUARY_RELOAD_LOCALE")
+        end)
+    placeBelow(advanced.language, PAD, y)
     y = y - 40
 
     advanced.status = newLabel(parent, "", FONT_BODY, C.dim)
-    advanced.status:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, y)
+    placeBelow(advanced.status, PAD, y)
     advanced.status:SetWidth(width)
+    advanced.baseStatusY = y
     advanced.statusY = y
 end
 
@@ -3023,17 +3157,33 @@ applyTabWidth.advanced = function()
     if not advanced.status then return end
     local width = innerWidth()
     for _, section in ipairs({ advanced.diagSection, advanced.journalSection,
-        advanced.minimapSection }) do
+        advanced.minimapSection, advanced.languageSection }) do
         section:SetSectionWidth(width)
     end
     advanced.debugDesc:SetWidth(math.max(60, width - 26))
     advanced.status:SetWidth(width)
     advanced.maxInput:RefreshNoteWidth()
+    -- The paragraph has DEBUG_DESC_ROOM less a gap above the two buttons: two
+    -- lines in English and French at the usual widths, three at the
+    -- narrowest. A longer language or a narrower window folds it further, and
+    -- whatever it takes past its room pushes the rest of the screen down by as
+    -- much, rather than running into the buttons.
+    local drop = math.max(0, (advanced.debugDesc:GetStringHeight() or 0)
+        + DEBUG_DESC_GAP - DEBUG_DESC_ROOM)
+    for _, entry in ipairs(advanced.below) do
+        entry.widget:ClearAllPoints()
+        entry.widget:SetPoint("TOPLEFT", entry.widget:GetParent(), "TOPLEFT", entry.x, entry.y - drop)
+    end
+    advanced.statusY = advanced.baseStatusY - drop
 end
 
 refreshTab.advanced = function()
+    -- The widths first, like the home screen: the height this answers is
+    -- measured from where the width pass put the last line.
+    applyTabWidth.advanced()
     advanced.debug:Refresh()
     advanced.minimap:Refresh()
+    advanced.language:Refresh()
     advanced.maxInput:SetText(tostring(SanctuaryDB and SanctuaryDB.logging.maxEntries or 5000))
     advanced.maxInput:RefreshHint()
 
@@ -4175,6 +4325,37 @@ StaticPopupDialogs["SANCTUARY_CLEAR_DEBUG_LOG"] = {
     timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
 
+-- A new language for Sanctuary shows after a reload, and a reload can only
+-- follow a click. "Later" keeps the choice saved for the next one.
+StaticPopupDialogs["SANCTUARY_RELOAD_LOCALE"] = {
+    text = L["LANGUAGE_RELOAD_TEXT"],
+    button1 = L["LANGUAGE_RELOAD_NOW"],
+    button2 = L["LANGUAGE_RELOAD_LATER"],
+    OnAccept = function()
+        if C_UI and C_UI.Reload then C_UI.Reload() elseif ReloadUI then ReloadUI() end
+    end,
+    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+}
+
+-- The four dialogs above copy their words when this file loads, which is before
+-- the saved variables say which language Sanctuary speaks. When a language was
+-- picked for it, the core applies it and calls this to write them again.
+function ns.refreshPopupTexts()
+    for which, keys in pairs({
+        SANCTUARY_CLEAR_LOG = { "LOGS_CLEAR_CONFIRM", "LOGS_CLEAR_YES", "LOGS_CLEAR_NO" },
+        SANCTUARY_MAIL_DELETE_ATTACHMENTS = { "MAIL_DELETE_CONFIRM", "MAIL_DELETE_OK",
+            "MAIL_DELETE_CANCEL" },
+        SANCTUARY_CLEAR_DEBUG_LOG = { "DEBUG_CLEAR_CONFIRM", "LOGS_CLEAR_YES", "LOGS_CLEAR_NO" },
+        SANCTUARY_RELOAD_LOCALE = { "LANGUAGE_RELOAD_TEXT", "LANGUAGE_RELOAD_NOW",
+            "LANGUAGE_RELOAD_LATER" },
+    }) do
+        local dialog = StaticPopupDialogs[which]
+        if dialog then
+            dialog.text, dialog.button1, dialog.button2 = L[keys[1]], L[keys[2]], L[keys[3]]
+        end
+    end
+end
+
 -- ============================================================================
 -- SECTION 13: Frame, header, tabs
 -- ============================================================================
@@ -4206,8 +4387,14 @@ local function stateTooltipText()
         local key = KIND_LABEL_KEYS[kind]
         if key then parts[#parts + 1] = L[key] end
     end
+    -- One sentence built from parts, and each language decides how its lists are
+    -- punctuated. Every kind is written in lower case, as it reads inside the
+    -- list, and whichever comes first takes the capital: with the group
+    -- invitations unticked, the sentence used to open on a lower-case letter.
     local lines = {}
-    lines[#lines + 1] = #parts > 0 and (table.concat(parts, ", ") .. ".") or L["HEADER_TIP_NOTHING"]
+    lines[#lines + 1] = #parts > 0
+        and ns.upperFirst(table.concat(parts, L["LIST_SEPARATOR"]) .. L["LIST_END"])
+        or L["HEADER_TIP_NOTHING"]
     lines[#lines + 1] = string.format(L["HEADER_TIP_ALLOWED"], tostring(info.allowedCount))
     lines[#lines + 1] = info.enabled and L["HEADER_TIP_CLICK_OFF"] or L["HEADER_TIP_CLICK_ON"]
     return table.concat(lines, "\n")
@@ -4247,7 +4434,13 @@ local function layoutTabs()
     local stripWidth = frameWidth - FRAME_EDGE * 2
     local widths, total = {}, 0
     for index, def in ipairs(visible) do
-        widths[index] = math.max(70, (#L[def.labelKey] * 8) + 34)
+        -- Bytes, as the comment above says -- with one exception. A Cyrillic
+        -- letter is two bytes and draws about as wide as a Latin one, so its
+        -- second byte is not counted: counted, a Russian tab took twice the
+        -- room its word needs. A Latin accent keeps its two.
+        local label = L[def.labelKey]
+        local _, cyrillic = label:gsub("[\208\209][\128-\191]", "")
+        widths[index] = math.max(70, ((#label - cyrillic) * 8) + 34)
         total = total + widths[index]
     end
     if total > stripWidth and total > 0 then
@@ -4500,6 +4693,7 @@ end
 
 function ns.refreshUI()
     if not mainFrame or not mainFrame:IsShown() then return end
+    ns.refitThinLines()
     refreshStateButton()
     -- The width first, before a single screen measures itself -- the strip of
     -- tabs included, which sizes its row against it. `applyHeight` applies it
@@ -4711,7 +4905,7 @@ local function createMainFrame()
     applyBackdrop(tabBar, C.tabBar, nil)
     for _, edge in ipairs({ "TOP", "BOTTOM" }) do
         local rule = tabBar:CreateTexture(nil, "ARTWORK")
-        rule:SetHeight(TAB_RULE)
+        applyHairline(rule, tabBar)
         rule:SetPoint(edge .. "LEFT", tabBar, edge .. "LEFT", 0, 0)
         rule:SetPoint(edge .. "RIGHT", tabBar, edge .. "RIGHT", 0, 0)
         rule:SetColorTexture(unpack(C.border))
@@ -5191,3 +5385,13 @@ loader:RegisterEvent("PLAYER_LOGIN")
 loader:SetScript("OnEvent", function()
     ns.InitializeUI()
 end)
+
+-- The UI scale and the screen can change under an open window: the lines one
+-- pixel thick follow them (`ns.refitThinLines`), as they do on every refresh.
+-- A function of its own, the file being at Lua 5.1's 200-local ceiling.
+;(function()
+    local scaleWatcher = CreateFrame("Frame")
+    scaleWatcher:RegisterEvent("UI_SCALE_CHANGED")
+    scaleWatcher:RegisterEvent("DISPLAY_SIZE_CHANGED")
+    scaleWatcher:SetScript("OnEvent", function() ns.refitThinLines() end)
+end)()

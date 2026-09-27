@@ -681,7 +681,28 @@ local scriptPath = (arg and arg[0]) or "tests/runtime_harness.lua"
 local scriptDir = scriptPath:match("^(.*)[/\\][^/\\]+$") or "."
 local repoRoot = scriptDir:match("^(.*)[/\\]tests$") or "."
 
-assert(loadfile(repoRoot .. "/Locales.lua"))("Sanctuary", ns)
+-- The locale files, loaded from the manifest's own list and in its order --
+-- every language registers its table, and Locales\apply.lua, last, builds the
+-- one the add-on reads for the client's `GetLocale()`. Read off the .toc rather
+-- than listed here: a file the client loads and the harness does not is a file
+-- nothing checks. Every chunk that stands in for the add-on loads through this.
+local function loadLocaleFiles(scope)
+    local handle = assert(io.open(repoRoot .. "/Sanctuary.toc", "r"))
+    local manifest = handle:read("a")
+    handle:close()
+    local loaded = 0
+    for line in manifest:gmatch("[^\r\n]+") do
+        local file = line:match("^(Locales[\\/][%w_]+%.lua)%s*$")
+        if file then
+            assert(loadfile(repoRoot .. "/" .. (file:gsub("\\", "/"))))("Sanctuary", scope)
+            loaded = loaded + 1
+        end
+    end
+    assert(loaded > 0, "the manifest lists no locale file")
+    return scope
+end
+
+loadLocaleFiles(ns)
 assert(loadfile(repoRoot .. "/Sanctuary.lua"))("Sanctuary", ns)
 
 local function fire(event, ...)
@@ -935,7 +956,7 @@ for _, event in ipairs({
     check(eventFrames[event] ~= nil, "the add-on registers " .. event)
 end
 
-equal(ns.VERSION, "1.1.0", "version exported")
+equal(ns.VERSION, "1.2.0", "version exported")
 equal(#muted, 0, "no global sound files muted at rest")
 equal(StaticPopupDialogs.PARTY_INVITE.sound, nil, "party invite dialog sound suppressed while group filter active")
 equal(StaticPopupDialogs.DUEL_REQUESTED.sound, nil, "duel dialog sound suppressed while duel filter active")
@@ -5079,14 +5100,14 @@ chatMessages = {}
 playedSounds = {}
 popup.shown = false
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 5, "a file from the previous build gets the title and one line per point")
+equal(#chatMessages, 4, "a file from the previous build gets the title and one line per point")
 check(chatMessages[1]:find(ns.L["ADDON_LOADED_ACTIVE"], 1, true) ~= nil,
     "the load line still comes first")
-check(chatMessages[2]:find(ns.L["CHANGELOG_1_1_0_TITLE"], 1, true) ~= nil,
+check(chatMessages[2]:find(ns.L["CHANGELOG_1_2_0_TITLE"], 1, true) ~= nil,
     "then the title line naming the version")
-check(chatMessages[3]:find(ns.L["CHANGELOG_1_1_0_MAIL"], 1, true) ~= nil,
+check(chatMessages[3]:find(ns.L["CHANGELOG_1_2_0_LANGUAGES"], 1, true) ~= nil,
     "then one line per point")
-check(chatMessages[4]:find(ns.L["CHANGELOG_1_1_0_SAY_YELL"], 1, true) ~= nil,
+check(chatMessages[4]:find(ns.L["CHANGELOG_1_2_0_POLISH"], 1, true) ~= nil,
     "in the order they are written")
 equal(#playedSounds, 0, "an update is worth two lines of chat and no sound")
 equal(popup.shown, false, "and no window")
@@ -5097,7 +5118,7 @@ check(type(openedAt) == "number", "the window opens at the first load that follo
 now = now + 3600
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 5, "an hour later the lines are still there")
+equal(#chatMessages, 4, "an hour later the lines are still there")
 equal(SanctuaryDB.changelog.firstAt, openedAt, "and the window has not moved")
 now = clockAsFound + DAY + 3600
 chatMessages = {}
@@ -5108,7 +5129,7 @@ equal(#chatMessages, 1, "a day later it stops on its own")
 SanctuaryDB.changelog.version = "1.0.9"
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 5, "the next build announces itself in turn")
+equal(#chatMessages, 4, "the next build announces itself in turn")
 check(SanctuaryDB.changelog.firstAt > openedAt, "on a window of its own")
 
 -- A clock put back leaves a stamp in the future, and the window would stay shut
@@ -5116,14 +5137,14 @@ check(SanctuaryDB.changelog.firstAt > openedAt, "on a window of its own")
 SanctuaryDB.changelog.firstAt = time() + 10 * DAY
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 5, "a clock put back does not swallow the lines")
+equal(#chatMessages, 4, "a clock put back does not swallow the lines")
 
 -- Turned off, the add-on says so and still says what changed.
 SanctuaryDB.changelog = {}
 SanctuaryCharDB.overrides.enabled = false
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 5, "an add-on switched off announces the update all the same")
+equal(#chatMessages, 4, "an add-on switched off announces the update all the same")
 check(chatMessages[1]:find(ns.L["ADDON_LOADED_INACTIVE"], 1, true) ~= nil,
     "under its own load line")
 
@@ -5133,7 +5154,7 @@ SanctuaryDB = { schemaVersion = 1 }
 SanctuaryCharDB = nil
 chatMessages = {}
 fire("ADDON_LOADED", "Sanctuary")
-equal(#chatMessages, 5, "a file the schema reset rebuilt announces the update")
+equal(#chatMessages, 4, "a file the schema reset rebuilt announces the update")
 
 now = clockAsFound
 
@@ -7031,9 +7052,30 @@ local function newWidget(kind, name, parent, template)
     w.__template = template
     -- What "BackdropTemplate" mixes in, and only when it is asked for.
     if type(template) == "string" and template:find("BackdropTemplate", 1, true) then
-        function w:SetBackdrop(info) self.__backdrop = info end
+        -- Setting a backdrop again leaves its colours to whoever sets them
+        -- next, as the pessimistic reading of the client's mixin: whatever has
+        -- to keep a colour across a new backdrop has to put it back itself.
+        function w:SetBackdrop(info)
+            self.__backdrop = info
+            self.__backdropColor, self.__backdropBorder = nil, nil
+            -- The eight textures the template draws a border with, made once
+            -- on the frame as the client makes them.
+            if info and info.edgeFile then
+                for _, key in ipairs({ "TopEdge", "BottomEdge", "LeftEdge", "RightEdge",
+                    "TopLeftCorner", "TopRightCorner", "BottomLeftCorner", "BottomRightCorner" }) do
+                    if not rawget(self, key) then rawset(self, key, newWidget("Texture", nil, self)) end
+                end
+            end
+        end
         function w:SetBackdropColor(r, g, b, a) self.__backdropColor = { r, g, b, a } end
         function w:SetBackdropBorderColor(r, g, b, a) self.__backdropBorder = { r, g, b, a } end
+        function w:GetBackdrop() return self.__backdrop end
+        function w:GetBackdropColor()
+            if self.__backdropColor then return unpack(self.__backdropColor) end
+        end
+        function w:GetBackdropBorderColor()
+            if self.__backdropBorder then return unpack(self.__backdropBorder) end
+        end
     end
     w.__scripts = {}
     w.__children = {}
@@ -7134,9 +7176,14 @@ local function newWidget(kind, name, parent, template)
     -- enhanced-filtering label's orange mention were 84 px of nothing, enough to
     -- fold the row an extra line at the narrow end of the window and to make
     -- every height measured from here wrong about it.
+    --
+    -- A Cyrillic letter is two bytes and draws about as wide as a Latin one, so
+    -- it is counted once. A Latin accent keeps its two bytes: that over-estimate
+    -- is the one every French measure in this file was taken with.
     function w:GetStringWidth()
         local text = (self.__text or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-        return #text * 7
+        local _, cyrillic = text:gsub("[\208\209][\128-\191]", "")
+        return (#text - cyrillic) * 7
     end
     function w:SetWordWrap(value) self.__wordWrap = value and true or false end
     -- Recorded, because "does changing screen put the shared frame back at the
@@ -7202,6 +7249,9 @@ local function newWidget(kind, name, parent, template)
     end
     function w:CreateFontString(fsName, _, _)
         local fs = newWidget("FontString", fsName, self)
+        -- What GameFontNormal hands a FontString: the client's own cut of the
+        -- face, which is the Cyrillic one on a Russian client.
+        if GetLocale() == "ruRU" then fs.__fontFile = "Fonts\\FRIZQT___CYR.TTF" end
         self.__children[#self.__children + 1] = fs
         return fs
     end
@@ -7219,6 +7269,11 @@ local function newWidget(kind, name, parent, template)
         self.__children[#self.__children + 1] = mask
         return mask
     end
+    -- Recorded: whether a border is kept off the pixel grid is the whole of
+    -- the fix for the bottom border that rounded to nothing, and a stub would
+    -- answer for it without a word.
+    function w:SetSnapToPixelGrid(value) self.__snapToPixelGrid = value end
+    function w:SetTexelSnappingBias(value) self.__texelSnappingBias = value end
     function w:SetScrollChild(child) self.__scrollChild = child end
     function w:GetScrollChild() return self.__scrollChild end
     -- Recorded rather than auto-stubbed: what the grip may do to the window is
@@ -7300,89 +7355,211 @@ assertModelAtRest()
 -- The French locale covers every key the default locale defines
 -- ---------------------------------------------------------------------------
 
--- The addon ships French as an override block. A key added to the default and
+-- The addon ships French as a file of overrides. A key added to the default and
 -- forgotten there shows up in English in a French client -- readable, so nobody
 -- reports it, and it drifts.
+--
+-- A locale here is the table a client of that language reads: every file of
+-- the manifest loaded into a fresh namespace, with `GetLocale()` answering it
+-- while they run, so the one that applies the language picks it.
 local realGetLocale = GetLocale
 local function loadLocale(locale)
     GetLocale = function() return locale end
-    local scoped = {}
-    assert(loadfile(repoRoot .. "/Locales.lua"))("Sanctuary", scoped)
+    local scoped = loadLocaleFiles({})
     GetLocale = realGetLocale
     return scoped.L
 end
 
 local defaultLocale = loadLocale("enUS")
 local frenchLocale = loadLocale("frFR")
-local untranslated = {}
-for key, value in pairs(defaultLocale) do
-    if frenchLocale[key] == value and usedKeys[key] then
-        untranslated[#untranslated + 1] = key
+
+-- Which file each client locale WoW has reads: its own, the one Spanish file
+-- both Spanish clients share, or none -- the English reference. enGB is listed
+-- for completeness only: that client answers enUS and never reaches here.
+local CLIENT_FILES = {
+    { "enUS", "enUS" }, { "enGB", "enUS" }, { "frFR", "frFR" }, { "deDE", "deDE" },
+    { "esES", "es" }, { "esMX", "es" }, { "itIT", "itIT" }, { "ptBR", "ptBR" },
+    { "ruRU", "ruRU" }, { "koKR", "enUS" }, { "zhCN", "enUS" }, { "zhTW", "enUS" },
+}
+
+-- Every client that reads a language of its own, with the table it reads: the
+-- reference first, then each client whose file the manifest lists. The checks
+-- below that hold a VALUE to a rule walk this list, so a language added to the
+-- manifest is held to every one of them without being named anywhere else.
+local shippedLocales = {}
+do
+    local handle = assert(io.open(repoRoot .. "/Sanctuary.toc", "r"))
+    local manifest = handle:read("a")
+    handle:close()
+    local listed = {}
+    for file in manifest:gmatch("Locales[\\/]([%w_]+)%.lua") do listed[file] = true end
+    for _, pair in ipairs(CLIENT_FILES) do
+        local client, file = pair[1], pair[2]
+        if listed[file] and (file ~= "enUS" or client == "enUS") then
+            shippedLocales[#shippedLocales + 1] = {
+                code = client, file = file,
+                strings = (client == "enUS" and defaultLocale)
+                    or (client == "frFR" and frenchLocale) or loadLocale(client),
+            }
+        end
     end
 end
-table.sort(untranslated)
--- Format strings and a handful of proper nouns are identical in both locales on
--- purpose; the check is that nothing NEW slips through untranslated, so the
--- list is compared against the keys that were already like that.
-local KNOWN_IDENTICAL = {
-    DATE_FORMAT = true, TAB_SUSPECTS = true, TAB_WHITELIST = true, TAB_LOGS = true,
-    GROUP_DEBUG = true, TAB_DIAGNOSTICS = true, LOGS_GROUP_HEADER = true,
-    WL_GROUP_ROW = true, DIAG_ARG_FILTER = true,
-    -- Already identical before this lot: proper nouns, format strings and words
-    -- French borrows unchanged. Listed rather than filtered out so that adding a
-    -- new one is a deliberate act.
-    ABOUT_VERSION = true, GROUP_COMMUNICATION = true, GROUP_INTERACTIONS = true,
-    GROUP_NOTIFICATIONS = true, LOG_TYPE_DUEL = true, LOG_TYPE_EMOTE = true,
-    LOG_TYPE_INVITE = true, LOG_TYPE_WHISPER = true, NOTIF_MINIMAL = true,
-    -- 1.0.0: proper nouns and format strings that read the same in both
-    -- languages. Listed rather than filtered out so adding one is deliberate.
-    ADV_DIAG_TITLE = true, ADV_JOURNAL_TITLE = true, EXPORT_COLUMNS = true,
-    PANEL_BLOCKED_PATTERNS = true, WL_BNET_ROW = true, TAB_PROTECTION = true,
-    TAB_JOURNAL = true, TAB_DIAGNOSTICS = true, KIND_DUEL = true,
-    Q4_MINIMAL_TITLE = true, LOG_TYPE_DUEL = true, ABOUT_VERSION = true,
-    LOGS_GROUP_HEADER = true, DATE_FORMAT = true, DIAG_ARG_FILTER = true,
+-- And which ones they are. Every check below walks the list above, so a language
+-- dropped from the manifest would leave them all green: the eight client
+-- languages Sanctuary speaks are named here, and none may go quietly.
+do
+    local EXPECTED = { "deDE", "enUS", "esES", "esMX", "frFR", "itIT", "ptBR", "ruRU" }
+    local shipped = {}
+    for _, locale in ipairs(shippedLocales) do shipped[#shipped + 1] = locale.code end
+    table.sort(shipped)
+    equal(table.concat(shipped, " "), table.concat(EXPECTED, " "),
+        "the manifest ships the eight client languages")
+end
+
+-- Format strings and a handful of proper nouns are identical in two languages on
+-- purpose; the check is that nothing NEW slips through untranslated, so each
+-- language lists the keys that read the same as in English -- and only those: a
+-- key that is gone, or has been translated since, comes off its list, or the
+-- list stops meaning anything. Every key of the reference is asked about, the
+-- ones the code reaches by a computed name included. Keyed by file: the two
+-- Spanish clients read one.
+local KNOWN_IDENTICAL = {}
+KNOWN_IDENTICAL.frFR = {
+    -- Words French borrows unchanged: two tabs, the sections that carry their
+    -- names, the duel, the patterns.
+    TAB_PROTECTION = true, TAB_JOURNAL = true, TAB_DIAGNOSTICS = true,
+    ADV_JOURNAL_TITLE = true, ADV_DIAG_TITLE = true, KIND_DUEL = true,
+    LOG_TYPE_DUEL = true, PANEL_BLOCKED_PATTERNS = true,
+    -- Format strings with a proper noun or nothing to translate in them.
+    ABOUT_VERSION = true, EXPORT_COLUMNS = true, LOGS_GROUP_HEADER = true,
+    WL_BNET_ROW = true,
     -- The Journal's badge and its time range: a count, a dash and the word
     -- SPAM, which French borrows unchanged.
     LOGS_SPAM_BADGE = true, LOGS_TIME_RANGE = true,
     -- The accept button of the mailbox dialog. "OK" in both languages.
     MAIL_DELETE_OK = true,
+    -- How the header's tooltip punctuates its list: a comma, a full stop.
+    LIST_SEPARATOR = true, LIST_END = true,
+    -- Three durations of the anti-spam menu, written the same in both.
+    ANTISPAM_D_5M = true, ANTISPAM_D_10M = true, ANTISPAM_D_30M = true,
 }
-local unexpected = {}
-for _, key in ipairs(untranslated) do
-    if not KNOWN_IDENTICAL[key] then unexpected[#unexpected + 1] = key end
+-- German: the game's own words for the channel and the emote, and "Normal",
+-- "OK" and "offline" as German writes them.
+-- The rest are format strings with nothing in them to translate.
+KNOWN_IDENTICAL.deDE = {
+    LOG_TYPE_CHANNEL = true, LOG_TYPE_EMOTE = true, MAIL_ICON_NORMAL = true,
+    MAIL_DELETE_OK = true, WL_BNET_OFFLINE = true, ABOUT_VERSION = true,
+    LOGS_SPAM_BADGE = true, ABOUT_GITHUB = true, DIAG_SPAM_PROBE_LINE = true,
+    LIST_END = true, LIST_SEPARATOR = true, LOGS_GROUP_HEADER = true,
+    LOGS_TIME_RANGE = true, MINIMAP_TIP_TITLE = true, WL_BNET_ROW = true,
+}
+-- Spanish: "No" and "Normal" as Spanish writes them.
+-- The rest are format strings with nothing in them to translate.
+KNOWN_IDENTICAL.es = {
+    ANTISPAM_NO_TITLE = true, MAIL_ICON_NORMAL = true, LOGS_SPAM_BADGE = true,
+    ABOUT_GITHUB = true, DIAG_SPAM_PROBE_LINE = true, LIST_END = true,
+    LIST_SEPARATOR = true, LOGS_GROUP_HEADER = true, LOGS_TIME_RANGE = true,
+    MINIMAP_TIP_TITLE = true, WL_BNET_ROW = true,
+}
+-- Portuguese: "Normal" as Portuguese writes it.
+-- The rest are format strings with nothing in them to translate.
+KNOWN_IDENTICAL.ptBR = {
+    MAIL_ICON_NORMAL = true, LOGS_SPAM_BADGE = true, ABOUT_GITHUB = true,
+    DIAG_SPAM_PROBE_LINE = true, LIST_END = true, LIST_SEPARATOR = true,
+    LOGS_GROUP_HEADER = true, LOGS_TIME_RANGE = true, MINIMAP_TIP_TITLE = true,
+    WL_BNET_ROW = true,
+}
+-- Russian: nothing beyond the format strings.
+-- The rest are format strings with nothing in them to translate.
+KNOWN_IDENTICAL.ruRU = {
+    ABOUT_GITHUB = true, DIAG_SPAM_PROBE_LINE = true, LIST_END = true,
+    LIST_SEPARATOR = true, LOGS_GROUP_HEADER = true, LOGS_TIME_RANGE = true,
+    MINIMAP_TIP_TITLE = true,
+}
+-- Italian: "No", "OK", "offline" and the emote as Italian writes them, and
+-- the pattern tag, the word being borrowed as in French.
+-- The rest are format strings with nothing in them to translate.
+KNOWN_IDENTICAL.itIT = {
+    ANTISPAM_NO_TITLE = true, MAIL_DELETE_OK = true, WL_BNET_OFFLINE = true,
+    LOG_TYPE_EMOTE = true, EXPORT_SUSPECT_TAG = true, LOGS_SPAM_BADGE = true,
+    ABOUT_GITHUB = true, DIAG_SPAM_PROBE_LINE = true, LIST_END = true,
+    LIST_SEPARATOR = true, LOGS_GROUP_HEADER = true, LOGS_TIME_RANGE = true,
+    MINIMAP_TIP_TITLE = true, WL_BNET_ROW = true,
+}
+for _, locale in ipairs(shippedLocales) do
+    if locale.code ~= "enUS" then
+        local allowed = KNOWN_IDENTICAL[locale.file]
+        check(type(allowed) == "table",
+            locale.code .. " has its list of keys that read the same as in English")
+        local unexpected, stale = {}, {}
+        for key, value in pairs(defaultLocale) do
+            if locale.strings[key] == value and not (allowed and allowed[key]) then
+                unexpected[#unexpected + 1] = key
+            end
+        end
+        for key in pairs(allowed or {}) do
+            if defaultLocale[key] == nil or locale.strings[key] ~= defaultLocale[key] then
+                stale[#stale + 1] = key
+            end
+        end
+        table.sort(unexpected)
+        table.sort(stale)
+        equal(#unexpected, 0, "every key is translated in " .. locale.code
+            .. " (" .. table.concat(unexpected, ", ") .. ")")
+        equal(#stale, 0, locale.code .. "'s list names only keys that still read as in English ("
+            .. table.concat(stale, ", ") .. ")")
+    end
 end
-equal(#unexpected, 0,
-    "every used key is translated in frFR (" .. table.concat(unexpected, ", ") .. ")")
 
 assertModelAtRest()
 -- ---------------------------------------------------------------------------
--- The two locale blocks define exactly the same keys
+-- Every locale file defines exactly the keys of the reference
 -- ---------------------------------------------------------------------------
 
 -- The check above it asks "is every key the code writes as L[\"NAME\"] translated",
 -- which is 147 keys of 228: the other 81 are reached by a computed name
--- (L[row.labelKey]) and were never submitted to it. And French is an OVERRIDE
--- block -- a key missing from it renders in English, readably, so nobody reports
--- it and it drifts.
+-- (L[row.labelKey]) and were never submitted to it. And a translation is a file
+-- of OVERRIDES -- a key missing from it renders in English, readably, so nobody
+-- reports it and it drifts.
 --
--- So this reads the file itself, both blocks, and holds them to the same set. It
--- is not a check on what the code uses: a key defined once is a key that has to
--- exist twice, whatever reaches it.
+-- So this reads the files themselves, every one the manifest lists, and holds
+-- each to the set of the English reference. It is not a check on what the code
+-- uses: a key defined once is a key every language has to define, whatever
+-- reaches it. The size of the reference is pinned: a key added or removed on
+-- purpose moves this number with it, and one lost by accident stops here.
 do
-    local handle = assert(io.open(repoRoot .. "/Locales.lua", "r"))
-    local source = handle:read("a")
-    handle:close()
-    local frenchAt = source:find('if GetLocale() == "frFR" then', 1, true)
-    local frenchEnd = source:find("\nend -- frFR", 1, true)
-    check(frenchAt ~= nil and frenchEnd ~= nil and frenchEnd > frenchAt,
-        "the French overrides are a block of their own, opened and closed")
+    local REFERENCE_KEYS = 260
 
-    -- One assignment a line, which is how the file is written; a value is read as
-    -- everything between the first and the last quote of the line, so escaped
-    -- quotes inside it cost nothing.
-    local function definitions(block)
-        local keys, order, duplicates, empty = {}, {}, {}, {}
-        for line in block:gmatch("[^\n]+") do
+    local handle = assert(io.open(repoRoot .. "/Sanctuary.toc", "r"))
+    local manifest = handle:read("a")
+    handle:close()
+    local listed, codes = {}, {}
+    for line in manifest:gmatch("[^\r\n]+") do
+        if line:match("%.lua%s*$") then listed[#listed + 1] = line:gsub("%s+$", "") end
+        local code = line:match("^Locales[\\/]([%w_]+)%.lua%s*$")
+        if code and code ~= "apply" then codes[#codes + 1] = code end
+    end
+    -- The reference first, the file that applies a language after every language,
+    -- and both before the add-on's own files, which take `ns.L` as they load.
+    equal(codes[1], "enUS", "the English reference is the first locale file the client loads")
+    local applyAt, addonAt
+    for index, file in ipairs(listed) do
+        if file:match("^Locales[\\/]apply%.lua$") then applyAt = index end
+        if file == "Sanctuary.lua" then addonAt = index end
+    end
+    equal(applyAt, #codes + 1, "Locales\\apply.lua is loaded right after the last language")
+    check(applyAt ~= nil and addonAt ~= nil and addonAt > applyAt,
+        "and before Sanctuary.lua reads ns.L")
+
+    -- One assignment a line, which is how the files are written; a value is read
+    -- as everything between the first and the last quote of the line, so escaped
+    -- quotes inside it cost nothing. Any other line is a blank, a comment or one of
+    -- the four statements every locale file opens with -- a string set any other
+    -- way would be a string this reading never sees.
+    local function definitions(code, source)
+        local keys, order, duplicates, empty, strays = {}, {}, {}, {}, {}
+        for line in source:gmatch("[^\n]+") do
+            line = line:gsub("\r$", "")
             local key, rest = line:match('^L%["([%w_]+)"%]%s*=%s*(.+)$')
             if key then
                 if keys[key] then duplicates[#duplicates + 1] = key end
@@ -7390,41 +7567,125 @@ do
                 if value == nil or value == "" then empty[#empty + 1] = key end
                 if not keys[key] then order[#order + 1] = key end
                 keys[key] = value or ""
+            elseif not (line:match("^%s*$") or line:match("^%-%-")
+                or line == "local _, ns = ..."
+                or line == "ns.locales = ns.locales or {}"
+                or line == "local L = {}"
+                or line == "ns.locales." .. code .. " = L") then
+                strays[#strays + 1] = line
             end
         end
-        return keys, order, duplicates, empty
+        return keys, order, duplicates, empty, strays
     end
 
-    local englishKeys, englishOrder, englishDupes, englishEmpty =
-        definitions(source:sub(1, (frenchAt or 1) - 1))
-    local frenchKeys, frenchOrder, frenchDupes, frenchEmpty =
-        definitions(source:sub(frenchAt or 1, (frenchEnd or #source) - 1))
+    local referenceKeys, registeredByCode = nil, {}
+    for _, code in ipairs(codes) do
+        local path = repoRoot .. "/Locales/" .. code .. ".lua"
+        local file = assert(io.open(path, "r"))
+        local source = file:read("a")
+        file:close()
+        local keys, order, dupes, empty, strays = definitions(code, source)
+        equal(#dupes, 0, code .. ": no key is defined twice (" .. table.concat(dupes, ", ") .. ")")
+        equal(#empty, 0, code .. ": no value is empty (" .. table.concat(empty, ", ") .. ")")
+        equal(#strays, 0, code .. ": every line is a comment, an opening statement or one assignment ("
+            .. table.concat(strays, " | ") .. ")")
 
-    equal(#englishOrder, 253, "the default locale defines 253 keys")
-    equal(#frenchOrder, 253, "and the French block defines 253")
-    equal(#englishDupes, 0,
-        "no key is defined twice in the default locale ("
-            .. table.concat(englishDupes, ", ") .. ")")
-    equal(#frenchDupes, 0,
-        "nor in the French block (" .. table.concat(frenchDupes, ", ") .. ")")
-    equal(#englishEmpty, 0,
-        "no default value is empty (" .. table.concat(englishEmpty, ", ") .. ")")
-    equal(#frenchEmpty, 0,
-        "no French value is empty (" .. table.concat(frenchEmpty, ", ") .. ")")
+        -- What the file registers when it runs is what its text says.
+        local scope = {}
+        assert(loadfile(path))("Sanctuary", scope)
+        local registered = scope.locales and scope.locales[code]
+        check(type(registered) == "table", code .. ": the file registers ns.locales." .. code)
+        registeredByCode[code] = registered
+        local count, unread = 0, {}
+        for key in pairs(registered or {}) do
+            count = count + 1
+            if keys[key] == nil then unread[#unread + 1] = key end
+        end
+        equal(count, #order, code .. ": it registers exactly the keys written in it")
+        equal(#unread, 0, code .. ": and none the reading missed (" .. table.concat(unread, ", ") .. ")")
 
-    local missingFrench, extraFrench = {}, {}
-    for _, key in ipairs(englishOrder) do
-        if frenchKeys[key] == nil then missingFrench[#missingFrench + 1] = key end
+        if code == "enUS" then
+            referenceKeys = keys
+            equal(#order, REFERENCE_KEYS, "the reference defines " .. REFERENCE_KEYS .. " keys")
+        else
+            local missing, extra = {}, {}
+            for key in pairs(referenceKeys or {}) do
+                if keys[key] == nil then missing[#missing + 1] = key end
+            end
+            for _, key in ipairs(order) do
+                if referenceKeys and referenceKeys[key] == nil then extra[#extra + 1] = key end
+            end
+            table.sort(missing)
+            equal(#missing, 0, code .. ": every key of the reference is written ("
+                .. table.concat(missing, ", ") .. ")")
+            equal(#extra, 0, code .. ": and the file invents none of its own ("
+                .. table.concat(extra, ", ") .. ")")
+        end
     end
-    for _, key in ipairs(frenchOrder) do
-        if englishKeys[key] == nil then extraFrench[#extraFrench + 1] = key end
+    check(#codes >= 2, "the manifest lists the reference and at least one translation")
+
+    -- And the other way round: a file in the folder that the manifest does not
+    -- list is a translation the client never loads, and every check above would
+    -- pass without it. Lua cannot list a folder, so the shell does.
+    local onWindows = package.config:sub(1, 1) == "\\"
+    local folder = repoRoot .. "/Locales"
+    local listing = io.popen(onWindows and ('dir /b "' .. (folder:gsub("/", "\\")) .. '"')
+        or ('ls "' .. folder .. '"'))
+    local inFolder = {}
+    if listing then
+        for name in listing:lines() do
+            local file = name:match("^([%w_]+%.lua)%s*$")
+            if file then inFolder[#inFolder + 1] = file end
+        end
+        listing:close()
     end
-    equal(#missingFrench, 0,
-        "every key of the default locale is written in French ("
-            .. table.concat(missingFrench, ", ") .. ")")
-    equal(#extraFrench, 0,
-        "and the French block invents none of its own ("
-            .. table.concat(extraFrench, ", ") .. ")")
+    local inManifest = {}
+    for _, file in ipairs(listed) do
+        local name = file:match("^Locales[\\/]([%w_]+%.lua)$")
+        if name then inManifest[name] = true end
+    end
+    local unlisted = {}
+    for _, file in ipairs(inFolder) do
+        if not inManifest[file] then unlisted[#unlisted + 1] = file end
+    end
+    check(#inFolder >= 3, "the Locales folder can be listed (" .. #inFolder .. " files)")
+    equal(#unlisted, 0, "every file of the Locales folder is in the manifest ("
+        .. table.concat(unlisted, ", ") .. ")")
+
+    -- Which table each client reads. The client names its language and
+    -- apply.lua picks the file: its own, the one Spanish file both Spanish
+    -- clients share, or none, which is English. Held here for every client
+    -- locale WoW has, so that no edit to that choice can hand one language's
+    -- text to another client, and no translation can sit in the manifest under
+    -- a name no client asks for.
+    local readBySomeClient = {}
+    for _, pair in ipairs(CLIENT_FILES) do
+        local client, file = pair[1], pair[2]
+        local overrides = registeredByCode[file]
+        if overrides then readBySomeClient[file] = true end
+        local expected = {}
+        for key, value in pairs(registeredByCode.enUS or {}) do expected[key] = value end
+        if file ~= "enUS" then
+            for key, value in pairs(overrides or {}) do expected[key] = value end
+        end
+        local read = loadLocale(client)
+        local wrong = {}
+        for key, value in pairs(expected) do
+            if read[key] ~= value then wrong[#wrong + 1] = key end
+        end
+        for key in pairs(read) do
+            if expected[key] == nil then wrong[#wrong + 1] = key end
+        end
+        table.sort(wrong)
+        local what = (file == "enUS" or not overrides) and "English"
+            or ("Locales\\" .. file .. ".lua over English")
+        equal(#wrong, 0, "the " .. client .. " client reads " .. what .. ", and only that ("
+            .. table.concat(wrong, ", ", 1, math.min(#wrong, 5)) .. ")")
+    end
+    for _, code in ipairs(codes) do
+        check(code == "enUS" or readBySomeClient[code],
+            "Locales\\" .. code .. ".lua is the file of at least one client locale")
+    end
 end
 
 assertModelAtRest()
@@ -7457,9 +7718,20 @@ assertModelAtRest()
 -- ---------------------------------------------------------------------------
 
 -- "Whitelist" and "blacklist" are gone from the screen: the person protecting
--- themselves should not have to learn a vocabulary. And "passer" was banned for
--- being untrue -- a name is never "let through", it is simply not blocked.
-local BANNED_WORDS = { "whitelist", "blacklist", " passe" }
+-- themselves should not have to learn a vocabulary -- in any language, so each
+-- one bans its own words for them too. In Russian that is also the game's name
+-- for the Ignore list, which Sanctuary never touches and must never seem to.
+-- And "passer" was banned for being untrue -- a name is never "let through", it
+-- is simply not blocked.
+local BANNED_WORDS = {
+    all = { "whitelist", "blacklist" },
+    frFR = { " passe", "liste blanche", "liste noire" },
+    deDE = { "weiße liste", "schwarze liste" },
+    es = { "lista blanca", "lista negra" },
+    ptBR = { "lista branca", "lista negra" },
+    ruRU = { "белый список", "черный список", "чёрный список" },
+    itIT = { "lista bianca", "lista nera" },
+}
 -- " passe" is banned in ONE sense, the one the rule above names: a name is never
 -- "let through". "passer pour", to be mistaken for something, is a different
 -- verb, and it is the word the validated sentence uses about the minimap icon
@@ -7477,13 +7749,36 @@ local function carriesBanned(text, word)
     end
 end
 local offenders = {}
-for _, locale in ipairs({ defaultLocale, frenchLocale }) do
-    for key, value in pairs(locale) do
-        if type(value) == "string" then
-            local lowered = value:lower()
-            for _, word in ipairs(BANNED_WORDS) do
-                if carriesBanned(lowered, word) then
-                    offenders[#offenders + 1] = key .. " (" .. word .. ")"
+do
+    -- `string.lower` only knows ASCII: the capitals of Latin-1 and of Cyrillic
+    -- are folded here as well, or "Schwarze Liste" would slip by as "schwarze
+    -- liste" does not.
+    local function lowered(text)
+        text = text:lower():gsub("\195([\128-\158])", function(trail)
+            if trail == "\151" then return nil end
+            return "\195" .. string.char(trail:byte() + 32)
+        end)
+        return (text:gsub("\208([\128-\175])", function(trail)
+            local byte = trail:byte()
+            if byte == 0x81 then return "\209\145" end
+            if byte >= 0x90 and byte <= 0x9F then return "\208" .. string.char(byte + 0x20) end
+            if byte >= 0xA0 then return "\209" .. string.char(byte - 0x20) end
+            return nil
+        end))
+    end
+    equal(lowered("Schwarze Liste ÉTÉ Черный Список Ёж"), "schwarze liste été черный список ёж",
+        "banned words are matched whatever the case, in Latin and in Cyrillic")
+    for _, locale in ipairs(shippedLocales) do
+        local words = {}
+        for _, word in ipairs(BANNED_WORDS.all) do words[#words + 1] = word end
+        for _, word in ipairs(BANNED_WORDS[locale.file] or {}) do words[#words + 1] = word end
+        for key, value in pairs(locale.strings) do
+            if type(value) == "string" then
+                local text = lowered(value)
+                for _, word in ipairs(words) do
+                    if carriesBanned(text, word) then
+                        offenders[#offenders + 1] = locale.code .. "." .. key .. " (" .. word .. ")"
+                    end
                 end
             end
         end
@@ -7504,13 +7799,14 @@ assertModelAtRest()
 -- Every locale value is valid UTF-8
 -- ---------------------------------------------------------------------------
 
--- Accented characters are written as decimal escapes ("\194\176" for a degree
--- sign), and a mistyped second byte produces a broken sequence that the parity
--- check cannot see: the key exists on both sides, only its bytes are wrong. WoW
--- renders such a string with a replacement glyph or truncates it at the bad
--- byte, so the check is on the bytes themselves.
+-- Accented characters are written as themselves, and an editor that saves a
+-- locale file in another encoding -- Latin-1, Windows-1252 -- produces bytes the
+-- parity check cannot see: the key exists on both sides, only its bytes are
+-- wrong. WoW renders such a string with a replacement glyph or truncates it at
+-- the bad byte, so the check is on the bytes themselves.
 local invalidUtf8 = {}
-for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) do
+for _, shipped in ipairs(shippedLocales) do
+    local entry = { shipped.code, shipped.strings }
     for key, value in pairs(entry[2]) do
         if type(value) == "string" and not utf8.len(value) then
             invalidUtf8[#invalidUtf8 + 1] = entry[1] .. "." .. key
@@ -7536,28 +7832,53 @@ assertModelAtRest()
 --
 -- Two places a visible glyph can come from here: a locale value, and a string
 -- literal in the code written as escaped bytes, which is what the caret was.
+--
+-- The set is kept for the smoke test at the end of the file too, which holds
+-- every text of every window to the font that actually draws it.
+local WINDOW_FONT_EXTRA = {}
+for _, code in ipairs({ 0x20AC, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+    0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x017D, 0x2018, 0x2019, 0x201C,
+    0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153,
+    0x017E, 0x0178 }) do
+    WINDOW_FONT_EXTRA[code] = true
+end
+-- The Cyrillic cut of the face adds the Cyrillic block, and loses some of the
+-- rest on the way. Looked at in game, a French client drawing each character in
+-- UNIT_NAME_FONT_CYRILLIC: the accented letters, the angle quotes, the ellipsis,
+-- the dashes, the bullet and the typographic quotes are all there, but the
+-- middle dot, Z and z with caron are white rectangles, and the others below
+-- come out as a different letter (a French "oe" ligature drawn as a Cyrillic
+-- "nje"). So a text the Cyrillic cut draws may use none of them.
+WINDOW_FONT_EXTRA.cyrillicCutLacks = {}
+for _, code in ipairs({ 0x00B7, 0x017D, 0x017E,
+    0x0152, 0x0153, 0x0160, 0x0161, 0x0178, 0x0192, 0x02C6, 0x02DC,
+    0x00A8, 0x00AA, 0x00AF, 0x00B2, 0x00B3, 0x00B4, 0x00B8, 0x00B9, 0x00BA,
+    0x00BC, 0x00BD, 0x00BE }) do
+    WINDOW_FONT_EXTRA.cyrillicCutLacks[code] = true
+end
 do
-    local FONT_EXTRA = {}
-    for _, code in ipairs({ 0x20AC, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
-        0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x017D, 0x2018, 0x2019, 0x201C,
-        0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153,
-        0x017E, 0x0178 }) do
-        FONT_EXTRA[code] = true
-    end
-    local function outsideFont(text)
+    local FONT_EXTRA = WINDOW_FONT_EXTRA
+    -- A Russian client draws the same window in the Cyrillic cut of the face:
+    -- a Russian value may use the Cyrillic block, and no other language may,
+    -- and a Russian value may not use what that cut lacks.
+    local CYRILLIC_FONT = { ruRU = true }
+    local function outsideFont(text, locale)
         if not utf8.len(text) then return nil end
         for _, code in utf8.codes(text) do
-            if code >= 0x100 and not FONT_EXTRA[code] then
+            if (code >= 0x100 and not FONT_EXTRA[code]
+                and not (CYRILLIC_FONT[locale] and code >= 0x0400 and code <= 0x04FF))
+                or (CYRILLIC_FONT[locale] and FONT_EXTRA.cyrillicCutLacks[code]) then
                 return string.format("U+%04X", code)
             end
         end
         return nil
     end
     local unrenderable = {}
-    for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) do
+    for _, shipped in ipairs(shippedLocales) do
+        local entry = { shipped.code, shipped.strings }
         for key, value in pairs(entry[2]) do
             if type(value) == "string" then
-                local code = outsideFont(value)
+                local code = outsideFont(value, entry[1])
                 if code then
                     unrenderable[#unrenderable + 1] = entry[1] .. "." .. key .. " " .. code
                 end
@@ -7619,7 +7940,8 @@ assertModelAtRest()
 -- is not one of them -- it joins two numbers, not two clauses.
 do
     local dashed = {}
-    for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) do
+    for _, shipped in ipairs(shippedLocales) do
+        local entry = { shipped.code, shipped.strings }
         for key, value in pairs(entry[2]) do
             if type(value) == "string" then
                 local body = value:gsub("^\226\128\148 ?", "")
@@ -7633,6 +7955,129 @@ do
     equal(#dashed, 0,
         "no visible sentence is held together by an em dash ("
         .. table.concat(dashed, ", ") .. ")")
+end
+
+assertModelAtRest()
+-- ---------------------------------------------------------------------------
+-- A translation keeps its placeholders, its numbers, and plain bytes
+-- ---------------------------------------------------------------------------
+
+do
+    -- 1. The placeholders of a value are the arguments the code hands it, in the
+    -- order it hands them. A `%s` lost from a translation drops a name from the
+    -- sentence, one too many raises an error the moment the line is built, and a
+    -- `%d` where the code passes a word does the same. So every translation keeps
+    -- the reference's placeholders, in the reference's order -- French included,
+    -- which nothing checked before. Numbered placeholders (`%2$s`) are refused:
+    -- the game reads them, the Lua this harness runs on does not, so a sentence
+    -- that needed one could never be checked here.
+    local function placeholders(text)
+        local found = {}
+        for spec in text:gmatch("%%([-+ #0]*%d*%.?%d*[%a%%])") do
+            if spec ~= "%" then found[#found + 1] = spec end
+        end
+        return table.concat(found, " ")
+    end
+    equal(placeholders(defaultLocale.ADV_STATUS), "s s s s s s",
+        "the placeholders of a value are read in order")
+    equal(placeholders("100%% of %d"), "d", "and an escaped percent sign is not one")
+
+    local mismatched, numbered = {}, {}
+    for _, shipped in ipairs(shippedLocales) do
+        for key, reference in pairs(defaultLocale) do
+            local value = shipped.strings[key]
+            if key ~= "DATE_TIME_FORMAT" and type(value) == "string" then
+                if placeholders(value) ~= placeholders(reference) then
+                    mismatched[#mismatched + 1] = shipped.code .. "." .. key
+                end
+            end
+            if type(value) == "string" and value:find("%%%d+%$") then
+                numbered[#numbered + 1] = shipped.code .. "." .. key
+            end
+        end
+    end
+    table.sort(mismatched)
+    table.sort(numbered)
+    equal(#mismatched, 0, "every translation keeps the placeholders of the reference, in order ("
+        .. table.concat(mismatched, ", ") .. ")")
+    equal(#numbered, 0, "no value uses a numbered placeholder (" .. table.concat(numbered, ", ") .. ")")
+
+    -- DATE_TIME_FORMAT is not a sentence but a pattern for `date`, and each
+    -- language orders the day its own way. What it may not do is use a
+    -- conversion the client's `date` could refuse: the Journal export calls it
+    -- without a guard.
+    for _, shipped in ipairs(shippedLocales) do
+        local pattern = shipped.strings.DATE_TIME_FORMAT
+        local unsafe = {}
+        for spec in pattern:gmatch("%%(.)") do
+            if not ("YymdHMS"):find(spec, 1, true) then unsafe[#unsafe + 1] = spec end
+        end
+        equal(#unsafe, 0, shipped.code .. ": the date pattern only uses year, month, day and time ("
+            .. table.concat(unsafe, " ") .. ")")
+        check(pcall(os.date, pattern, 0), shipped.code .. ": and it formats a date")
+    end
+
+    -- 2. The numbers a sentence promises are the numbers the code applies: the
+    -- trust threshold is five minutes, and saying another in any language would
+    -- be a promise the add-on does not keep.
+    for _, shipped in ipairs(shippedLocales) do
+        for _, key in ipairs({ "FILTER_AUTO_TRUST", "ADV_TRUST_DESC" }) do
+            local value = shipped.strings[key] or ""
+            check(value:find("%f[%d]5%f[%D]") ~= nil,
+                shipped.code .. "." .. key .. " says five minutes, as the code does")
+        end
+    end
+
+    -- 3. Each locale file is plain UTF-8, as its header says: no byte-order mark,
+    -- no invalid sequence, and no escaped byte in a value. `\x41` and `\u{416}`
+    -- deserve a word: the Lua this harness runs on reads both, and the game's
+    -- Lua 5.1 prints them as written -- a check green here and a screen full of
+    -- backslashes there. Only the quote, the backslash and the line break may be
+    -- escaped.
+    local handle = assert(io.open(repoRoot .. "/Sanctuary.toc", "r"))
+    local manifest = handle:read("a")
+    handle:close()
+    for file in manifest:gmatch("(Locales[\\/][%w_]+%.lua)") do
+        local path = repoRoot .. "/" .. file:gsub("\\", "/")
+        local source = assert(io.open(path, "rb"))
+        local bytes = source:read("a")
+        source:close()
+        check(bytes:sub(1, 3) ~= "\239\187\191", file .. " has no byte-order mark")
+        check(utf8.len(bytes) ~= nil, file .. " is valid UTF-8")
+        local escaped = {}
+        for line in bytes:gmatch("[^\n]+") do
+            local key, value = line:match('^L%["([%w_]+)"%]%s*=%s*"(.*)"%s*$')
+            if value then
+                for at, escape in value:gmatch("()\\(.)") do
+                    if escape ~= '"' and escape ~= "\\" and escape ~= "n" then
+                        escaped[#escaped + 1] = key .. " (" .. value:sub(at, at + 3) .. ")"
+                    end
+                end
+            end
+        end
+        equal(#escaped, 0, file .. " writes every character as itself ("
+            .. table.concat(escaped, ", ") .. ")")
+    end
+
+    -- 4. The client describes the add-on in the list of add-ons, in the player's
+    -- language: every language shipped gives it a line of notes and a category
+    -- there, written as the manifest reads them -- plain UTF-8, since a .toc
+    -- knows no escape.
+    for _, shipped in ipairs(shippedLocales) do
+        if shipped.code ~= "enUS" then
+            for _, field in ipairs({ "Notes", "Category" }) do
+                local value = manifestField(field .. "-" .. shipped.code)
+                check(value ~= nil and value ~= "",
+                    "the manifest carries ## " .. field .. "-" .. shipped.code)
+                check(value == nil or (utf8.len(value) ~= nil and not value:find("\\", 1, true)),
+                    "and writes it as plain text (" .. tostring(value) .. ")")
+            end
+        end
+    end
+    -- The French line, to the letter: it went out as "harcelement", the accent
+    -- lost to a 7-bit habit the manifest never had.
+    equal(manifestField("Notes-frFR"), "Protection anti-harcèlement",
+        "the French add-on list reads its accent")
 end
 
 assertModelAtRest()
@@ -8208,19 +8653,21 @@ do
         math.floor((_G.SanctuaryQ2Note.__colorR or 0) * 255 + 0.5),
         math.floor((_G.SanctuaryQ2Note.__colorG or 0) * 255 + 0.5),
         math.floor((_G.SanctuaryQ2Note.__colorB or 0) * 255 + 0.5))
-    for locale, name in pairs({ [frenchLocale] = "French", [defaultLocale] = "default" }) do
-        local label = locale.FILTER_STRICT_GROUP_INVITE_SYSTEM
+    for _, shipped in ipairs(shippedLocales) do
+        local name = shipped.code
+        local label = shipped.strings.FILTER_STRICT_GROUP_INVITE_SYSTEM
         equal(label:match("|c%x%x(%x%x%x%x%x%x)%("), orange,
             "the " .. name .. " mention wears the orange of the state notes")
-        check(label:find("|r", 1, true) > label:find("|c", 1, true),
+        check((label:find("|r", 1, true) or 0) > (label:find("|c", 1, true) or math.huge),
             "and the " .. name .. " label closes the colour before it ends")
         equal(select(2, label:gsub("|c%x%x%x%x%x%x%x%x", "")), 1,
             "one coloured run in the " .. name .. " label, no more")
     end
     -- The warning of 167b left the locales with the dialog (decision 170c).
     for _, key in ipairs({ "STRICT_CONFIRM", "STRICT_CONFIRM_OK", "STRICT_CONFIRM_CANCEL" }) do
-        equal(frenchLocale[key], nil, key .. " is gone from the French block")
-        equal(defaultLocale[key], nil, "and from the default locale")
+        for _, shipped in ipairs(shippedLocales) do
+            equal(shipped.strings[key], nil, key .. " is gone from the " .. shipped.code .. " locale")
+        end
     end
     -- The tooltip validated at decision 170d, to the letter: it opens on
     -- "Exp\195\169rimental", it says what turning the option on costs, and the
@@ -9854,7 +10301,7 @@ equal(patternBox.note:GetWidth(), 500, "and the pattern field too")
 
 -- ... and the sentences measured against it, because the sentences are what
 -- changes. 6.5 px is a majorant for one character of FONT_BODY in a latin face;
--- characters are counted, not bytes, French being stored as escaped UTF-8.
+-- characters are counted, not bytes, an accented letter being two bytes of UTF-8.
 -- Decision 167c cut the reserved room to ONE line under all three fields, so the
 -- labels start just under the field they belong to: every answer but one has to
 -- fit that line, and this check is what fails the day one of them grows past it.
@@ -9866,8 +10313,8 @@ end
 -- The longest name the green answer can be handed: a 12-character pseudo, which
 -- is WoW's own ceiling, on a realm of twice that.
 local LONGEST_ENTRY = string.rep("W", 12) .. "-" .. string.rep("W", 24)
-for _, entry in ipairs({ { "enUS", defaultLocale }, { "frFR", frenchLocale } }) do
-    local localeName, strings = entry[1], entry[2]
+for _, shipped in ipairs(shippedLocales) do
+    local localeName, strings = shipped.code, shipped.strings
     check(noteLines(strings["REFUSED_NAME"]) <= 1,
         "REFUSED_NAME fits the one line the name fields keep (" .. localeName .. ")")
     check(noteLines(strings["REFUSED_PATTERN"]) <= 1,
@@ -11128,7 +11575,7 @@ do
     gripUp(grip)
     equal(content:GetWidth(), 500, "the window is at its narrowest bound")
     local narrow = sweep()
-    equal(#narrow.sections, 3, "the Advanced screen has its three section rules")
+    equal(#narrow.sections, 4, "the Advanced screen has its four section rules")
     for _, section in ipairs(narrow.sections) do
         equal(section:GetWidth(), 500 - 18 * 2, "and each spans the narrow window")
     end
@@ -12449,366 +12896,15 @@ ns.invalidateWhitelist()
 
 assertModelAtRest()
 -- ---------------------------------------------------------------------------
--- The offline check the closing step now delegates to
--- ---------------------------------------------------------------------------
-
--- The checklist no longer asks anyone to scroll an export looking for five
--- entries: it runs the offline check on the settings file, and the session
--- protocol and that check have to name the same markers -- a session measuring
--- something other than what it claims to is worse than no session at all.
---
--- Both tools left the repository with 1.0.0 (decisions 112, 114, 116): they only
--- ever serve a session, the add-on never calls them, and they live in
--- internal_docs/qa/, which is ignored. A clone of the published repository does
--- not have them, and there is then nothing here to check -- which is a silence,
--- not a failure. What follows runs only when they are there.
-local qaToolsDir = repoRoot .. "/internal_docs/qa"
-local function qaTool(name)
-    local handle = io.open(qaToolsDir .. "/" .. name, "r")
-    if not handle then return nil end
-    handle:close()
-    return qaToolsDir .. "/" .. name
-end
-local checkerPath, protocolPath = qaTool("check_qa_run.lua"), qaTool("qa_protocol.py")
-
-if not checkerPath or not protocolPath then
-    print("-- session tooling absent (internal_docs/qa): those checks are skipped")
-else
-;(function()
--- opts.chatFilterApi   value carried by the SNAPSHOT in the log ("" for none)
--- opts.manifestHealth  instrumentation carried by the manifest, or nil
--- opts.scenarios       false to write a log where nothing was played
--- opts.logBuild        build stamped in the SNAPSHOT (defaults to the manifest's)
--- opts.extraBuild      a second build stamped in a second SNAPSHOT
--- opts.neverCleared    true to write a manifest with no debug-log clear date
--- opts.savedAt         when the report was written (defaults to the clear day)
--- opts.deathOnly       true to write a log where the character died and never came back
--- opts.metaBuild       build the client read out of the .toc (defaults to the code build)
-local function writeFixture(opts)
-    local snapshot = ""
-    if opts.chatFilterApi then
-        snapshot = ([[
-        { ["seq"] = 5, ["cat"] = "SNAPSHOT", ["data"] = { ["chatFilterApiUsed"] = "%s",
-            ["build"] = "%s",
-            ["chatFramesSeen"] = 10, ["chatFramesWrapped"] = 10, ["systemChatTypeID"] = 90 } },]])
-            :format(opts.chatFilterApi, opts.logBuild or "20260820-8")
-    end
-    if opts.extraBuild then
-        snapshot = snapshot .. ([[
-
-        { ["seq"] = 6, ["cat"] = "SNAPSHOT", ["data"] = { ["chatFilterApiUsed"] = "legacy",
-            ["build"] = "%s",
-            ["chatFramesSeen"] = 10, ["chatFramesWrapped"] = 10, ["systemChatTypeID"] = 90 } },]])
-            :format(opts.extraBuild)
-    end
-    local scenarios = ""
-    if opts.deathOnly then
-        scenarios = [[
-        { ["seq"] = 1, ["cat"] = "CHAT_OUTPUT", ["data"] = { ["action"] = "NO_MATCH" } },
-        { ["seq"] = 2, ["cat"] = "POPUP", ["data"] = { ["action"] = "MASK_AWAITING_EVENT", ["affected"] = 1 } },
-        { ["seq"] = 3, ["cat"] = "WORLD", ["data"] = { ["inInstance"] = true } },
-        { ["seq"] = 4, ["cat"] = "PLAYER_STATE", ["data"] = { ["event"] = "PLAYER_DEAD" } },]]
-    elseif opts.scenarios ~= false then
-        scenarios = [[
-        { ["seq"] = 1, ["cat"] = "CHAT_OUTPUT", ["data"] = { ["action"] = "NO_MATCH" } },
-        { ["seq"] = 2, ["cat"] = "POPUP", ["data"] = { ["action"] = "MASK_AWAITING_EVENT", ["affected"] = 1 } },
-        { ["seq"] = 3, ["cat"] = "WORLD", ["data"] = { ["inInstance"] = true } },
-        { ["seq"] = 4, ["cat"] = "PLAYER_STATE", ["data"] = { ["event"] = "PLAYER_DEAD" } },
-        { ["seq"] = 7, ["cat"] = "PLAYER_STATE", ["data"] = { ["event"] = "PLAYER_ALIVE" } },]]
-    end
-    local health = ""
-    if opts.manifestHealth then
-        health = ([[ ["chatFilterApiUsed"] = "%s", ["chatFramesSeen"] = 10,
-        ["chatFramesWrapped"] = 10, ["systemChatTypeID"] = 90,]]):format(opts.manifestHealth)
-    end
-
-    local fixturePath = os.tmpname()
-    local handle = assert(io.open(fixturePath, "w"))
-    handle:write(([[
-SanctuaryDB = {
-    ["debugLogStats"] = { ["produced"] = 6, ["dropped"] = 0 },
-    ["log"] = {},
-    ["reportManifest"] = { ["trigger"] = "logout", ["savedAt"] = "%s",
-        ["version"] = "0.3.2", ["addonMetaVersion"] = "0.3.2",
-        ["build"] = "20260820-8", ["addonMetaBuild"] = "20260820-8",
-        ["addonMetaInterface"] = "120100", ["addonInterface"] = %s,
-        ["clientVersion"] = "12.1.0",%s
-        ["clientBuild"] = "61234", ["clientInterface"] = 120100,%s%s ["verdict"] = "ok" },
-    ["debugLog"] = {
-%s
-%s
-    },
-}
-]]):format(opts.savedAt or "2026-08-20 18:12:00",
-        tostring(opts.addonInterface or 120100),
-        opts.metaBuild and (' ["addonMetaBuild"] = "' .. opts.metaBuild .. '",') or "",
-        health, opts.neverCleared and "" or ' ["debugLogClearedAt"] = "2026-08-20 17:50:00",',
-        scenarios, snapshot))
-    handle:close()
-    return fixturePath
-end
-
-local function runChecker(fixturePath, since)
-    local interpreter = (arg and arg[-1]) or "lua"
-    local command
-    if since then
-        command = string.format('%q %q --since %q %q 2>&1', interpreter,
-            checkerPath, since, fixturePath)
-    else
-        command = string.format('%q %q %q 2>&1', interpreter,
-            checkerPath, fixturePath)
-    end
-    local pipe = io.popen(command)
-    local output = pipe:read("a")
-    local _, _, code = pipe:close()
-    return output or "", code
-end
-
-local function checkFixture(opts)
-    local fixturePath = writeFixture(opts)
-    local output, code = runChecker(fixturePath, opts.since)
-    os.remove(fixturePath)
-    return output, code
-end
-
-local goodOutput, goodCode = checkFixture({ chatFilterApi = "legacy" })
-equal(goodCode, 0, "the checker accepts a complete recording")
-check(goodOutput:find("RELEVE COMPLET", 1, true) ~= nil,
-    "the checker says so in one line")
-check(goodOutput:find("20260820-8", 1, true) ~= nil,
-    "the checker reads the build out of the file, so nobody transcribes it")
--- Numbered as the checklist numbers them: C.1 is the panel, F.1 to F.3 are the
--- scenarios. A report blaming "F3" used to send the reader to the wrong step.
-for _, marker in ipairs({ "C%.1", "F%.1", "F%.2", "F%.3" }) do
-    check(goodOutput:find("%[  ok  %] " .. marker) ~= nil,
-        "the checker reports marker " .. marker:gsub("%%", ""))
-end
-
-local badOutput, badCode = checkFixture({ chatFilterApi = "unregistered" })
-equal(badCode, 1, "the checker fails a recording that filtered nothing")
-check(badOutput:find("ECHEC BLOQUANT", 1, true) ~= nil,
-    "and says why in terms the checklist can quote")
-
--- A recording where nothing was played must not exit 0: any caller testing $?
--- would read "conforme" on a session where phase F was skipped entirely.
-local emptyOutput, emptyCode = checkFixture({ chatFilterApi = "legacy", scenarios = false })
-equal(emptyCode, 3, "a recording with no scenario played exits on its own code")
-check(emptyOutput:find("EXPLOITABLE AVEC RESERVES", 1, true) ~= nil,
-    "and is named as reserves, not as a complete recording")
-check(emptyOutput:find("RELEVE COMPLET", 1, true) == nil,
-    "and never as complete")
-
--- The log rotates; the manifest does not. A recording whose log outlived its
--- last snapshot is still gradeable, and used to be declared unexploitable.
-local rotatedOutput, rotatedCode = checkFixture({ manifestHealth = "legacy" })
-check(rotatedOutput:find("instrumentation lue dans le manifeste", 1, true) ~= nil,
-    "a log that rotated past its last snapshot is graded on the manifest")
-check(rotatedOutput:find("%[  ok  %] API de filtrage chat +legacy") ~= nil,
-    "reading the instrumentation the manifest actually carries")
-check(rotatedOutput:find("%[  ok  %] Frames de chat observees +10 / 10") ~= nil,
-    "including the counts the log no longer holds")
-check(rotatedOutput:find("ECHEC BLOQUANT", 1, true) == nil,
-    "so a usable recording is no longer declared unexploitable")
--- It is still a reserve, and only that: the log did lose entries.
-equal(rotatedCode, 3, "a rotated log is a reserve, not a clean recording")
-check(rotatedOutput:find("%[ warn %] Snapshots dans le journal") ~= nil,
-    "and the missing snapshot is what is flagged")
-
--- The persistent log survives reloads, relogs and sessions. A complete
--- recording made under an earlier build must never read as a complete recording
--- of this one: that is how a step skipped today gets credited by a passage from
--- last week.
-local staleOutput, staleCode = checkFixture({ chatFilterApi = "legacy", logBuild = "20260820-4" })
-equal(staleCode, 1, "a log written by another build is refused")
-check(staleOutput:find("20260820-4 != 20260820-8", 1, true) ~= nil,
-    "and the report names both builds rather than just failing")
-
-local mixedOutput, mixedCode = checkFixture({ chatFilterApi = "legacy", extraBuild = "20260820-4" })
-equal(mixedCode, 1, "a log holding two builds is refused")
-check(mixedOutput:find("journal melange", 1, true) ~= nil,
-    "and says that it is mixed")
-
--- A log that was never cleared may still hold an earlier passage. That does not
--- void it, but it has to be visible rather than silently credited.
-local uncleanedOutput, uncleanedCode = checkFixture({ chatFilterApi = "legacy", neverCleared = true })
-equal(uncleanedCode, 3, "a log that was never cleared is a reserve")
-check(uncleanedOutput:find("%[ warn %] Journal vide le +jamais") ~= nil,
-    "and the report says so on its own line")
-
--- "Never cleared" was only half the case, and the smaller half. The nominal one
--- is a log cleared during an EARLIER passage: same build, second session, and
--- the build does not change between the maintainer's pass and the tester's. The
--- markers then come from the previous day and credit steps nobody played.
-local staleClearOutput, staleClearCode = checkFixture({ chatFilterApi = "legacy",
-    savedAt = "2026-08-21 19:04:00" })
-equal(staleClearCode, 3, "a log cleared during an earlier passage is a reserve")
-check(staleClearOutput:find("releve ecrit le 2026%-08%-21") ~= nil,
-    "and the report puts both dates on the line so the gap is one glance")
-check(staleClearOutput:find("RELEVE COMPLET", 1, true) == nil,
-    "such a recording is never reported as complete")
-
--- This folder is deployed by hand. A copy where the .lua files were replaced
--- but not the .toc -- or the other way round -- makes the code's own build
--- constant and the build the client reads out of the .toc disagree. The report
--- used to print one and check the other, and certify.
-local mixedDeployOutput, mixedDeployCode = checkFixture({ chatFilterApi = "legacy",
-    metaBuild = "20260820-4" })
-equal(mixedDeployCode, 1, "a partially deployed copy is refused")
-check(mixedDeployOutput:find("deploiement partiel", 1, true) ~= nil,
-    "and is named for what it is")
-check(mixedDeployOutput:find("build code=20260820-8 .toc=20260820-4", 1, true) ~= nil,
-    "with both identities on the line")
-check(mixedDeployOutput:find("RELEVE COMPLET", 1, true) == nil,
-    "such a copy is never reported as complete")
--- The header names the identity of the code that actually ran, so it cannot
--- print one identity while the line below checks the other.
-check(mixedDeployOutput:find("Build     : 20260820-8", 1, true) ~= nil,
-    "and the header names the build the code itself carries")
-
--- The third branch of the same check, and the only correctile of the previous
--- round whose mutation did not bite. It is reachable for real:
--- C_AddOns.GetAddOnMetadata unavailable makes the client report the .toc build
--- as "unavailable", which is not a mismatch -- it is a read failure, and a read
--- failure must not pass for agreement.
-local unreadableTocOutput, unreadableTocCode = checkFixture({ chatFilterApi = "legacy",
-    metaBuild = "unavailable" })
-equal(unreadableTocCode, 3, "an unreadable .toc is a reserve, not a pass")
-check(unreadableTocOutput:find("%[ warn %] Build du code et du %.toc") ~= nil,
-    "and is flagged on its own line")
-check(unreadableTocOutput:find("build_meta_unreadable", 1, true) ~= nil,
-    "naming which identity could not be read")
-check(unreadableTocOutput:find("RELEVE COMPLET", 1, true) == nil,
-    "such a recording is never reported as complete")
-
--- "Died and never came back" is a session that ended on a corpse, not the
--- scenario the step asks for.
-local deathOnlyOutput, deathOnlyCode = checkFixture({ chatFilterApi = "legacy", deathOnly = true })
-equal(deathOnlyCode, 3, "a death with no return stays in reserves")
-check(deathOnlyOutput:find("mort sans retour a la vie", 1, true) ~= nil,
-    "and the report names the half that is missing")
-check(deathOnlyOutput:find("RELEVE COMPLET", 1, true) == nil,
-    "it is never reported as complete")
-
--- Without a manifest AND without a snapshot there is nothing left to grade, and
--- no value may be printed as `ok`.
-local blindOutput, blindCode = checkFixture({ scenarios = false })
-equal(blindCode, 1, "a recording with neither manifest health nor snapshot is blocking")
-check(blindOutput:find("[ warn ] Frames de chat observees", 1, true) ~= nil,
-    "and an unknown value is never presented as conforming")
-
-assertModelAtRest()
--- ---------------------------------------------------------------------------
--- The freshness rule, the interface comparison and the settings block
--- ---------------------------------------------------------------------------
-
--- "Cleared today" passed a log cleared at 08:00 for a session played at 18:00,
--- and the markers then come from the morning. With --since the whole timestamp
--- is compared against the moment the session actually started.
-local freshOutput, freshCode = checkFixture({ chatFilterApi = "legacy",
-    since = "2026-08-20 17:00:00" })
-equal(freshCode, 0, "a log cleared after the session started is accepted")
-check(freshOutput:find("%[  ok  %] Journal vide le") ~= nil,
-    "and the line says so")
-
-local staleSinceOutput, staleSinceCode = checkFixture({ chatFilterApi = "legacy",
-    since = "2026-08-20 18:00:00" })
-equal(staleSinceCode, 3, "a log cleared before the session started is a reserve")
-check(staleSinceOutput:find("session ouverte le 2026%-08%-20 18:00:00") ~= nil,
-    "and the report puts both moments on the line")
-
--- The AddOns manager grades "Out of date" on this comparison; the check does it
--- so the person does not have to know the numbers.
-local staleInterfaceOutput, staleInterfaceCode = checkFixture({
-    chatFilterApi = "legacy", addonInterface = 110000 })
-equal(staleInterfaceCode, 3, "an addon interface below the client's is a reserve")
-check(staleInterfaceOutput:find("obsolete", 1, true) ~= nil,
-    "and is named for what the game calls it")
-
--- The settings the session ran under, resolved by the addon's own rule.
-check(goodOutput:find("question 1 = strangers", 1, true) ~= nil,
-    "the check reports which mode the session ran in")
-check(goodOutput:find("question 2 = all", 1, true) ~= nil, "and which preset")
-check(goodOutput:find("invitations=true", 1, true) ~= nil,
-    "and the resolved filters, not the stored checkboxes")
-
-assertModelAtRest()
--- ---------------------------------------------------------------------------
--- The session protocol and the check agree on the markers
--- ---------------------------------------------------------------------------
-
--- A disagreement here stops the harness rather than costing a manual session
--- forty-five minutes of the wrong test.
-local function readLines(command)
-    local pipe = io.popen(command)
-    if not pipe then return nil end
-    local output = pipe:read("a")
-    pipe:close()
-    local lines = {}
-    for line in tostring(output or ""):gmatch("[^\n]+") do
-        local trimmed = line:match("^%s*(.-)%s*$")
-        if trimmed ~= "" then lines[#lines + 1] = trimmed end
-    end
-    return lines
-end
-
-local interpreter = (arg and arg[-1]) or "lua"
-local checkerMarkers = readLines(string.format('%q %q --markers 2>&1', interpreter,
-    checkerPath))
-check(checkerMarkers ~= nil and #checkerMarkers > 0,
-    "the offline check lists the markers it reads")
-
-local protocolMarkers = readLines(string.format('python3 %q --markers 2>&1',
-    protocolPath))
-check(protocolMarkers ~= nil and #protocolMarkers > 0,
-    "the session protocol lists the markers its steps claim")
-
-if checkerMarkers and protocolMarkers then
-    local known = ns.getReportMarkers({})
-    local claimed, displayed = {}, {}
-    for _, name in ipairs(protocolMarkers) do claimed[name] = true end
-    for _, name in ipairs(checkerMarkers) do displayed[name] = true end
-
-    local missingFromCore, missingFromCheck = {}, {}
-    for _, name in ipairs(protocolMarkers) do
-        if known[name] == nil then missingFromCore[#missingFromCore + 1] = name end
-        if not displayed[name] then missingFromCheck[#missingFromCheck + 1] = name end
-    end
-    equal(#missingFromCore, 0,
-        "every marker a step names exists in the addon (" ..
-        table.concat(missingFromCore, ", ") .. ")")
-    equal(#missingFromCheck, 0,
-        "every marker a step names is displayed by the check (" ..
-        table.concat(missingFromCheck, ", ") .. ")")
-
-    local unclaimed = {}
-    for _, name in ipairs(checkerMarkers) do
-        if not claimed[name] then unclaimed[#unclaimed + 1] = name end
-    end
-    equal(#unclaimed, 0,
-        "every marker the check displays is claimed by a step (" ..
-        table.concat(unclaimed, ", ") .. ")")
-end
-
-check(os.execute(string.format('python3 %q --check >/dev/null 2>&1',
-    protocolPath)) == true
-    or os.execute(string.format('python3 %q --check >/dev/null 2>&1',
-    protocolPath)) == 0,
-    "the session protocol passes its own structural check")
-
-end)()
-end
-
-assertModelAtRest()
--- ---------------------------------------------------------------------------
 -- The deployment verdict, which is the add-on's own rule
 -- ---------------------------------------------------------------------------
 
 -- `ns.getDeploymentVerdict` is add-on code (Sanctuary.lua), called in production
 -- by the summary the maintainer reads on screen. These assertions used to sit
--- INSIDE the block above, which only runs where internal_docs/qa is present: a
--- clone of the published repository therefore never checked the rule that
--- decides whether a copy is fully deployed. Nothing here needs the session
--- tooling, so nothing here is conditioned on it.
+-- inside the checks of the local session tooling, which only ran where
+-- internal_docs/qa was present: a clone of the published repository therefore
+-- never checked the rule that decides whether a copy is fully deployed. Nothing
+-- here needs that tooling, so nothing here is conditioned on it.
 do
     local keptDebug = SanctuaryDB.debugEnabled
     -- The two identities of one copy: what the code carries, and what the client
@@ -12862,9 +12958,9 @@ end
 
 -- `debugLog` writes only while debug mode is on, so the section that needs the
 -- entry arms the mode itself and puts back what it found. It used to inherit an
--- armed flag from a neighbour -- and that neighbour is inside the block
--- conditioned on internal_docs/qa, so a clone of the published repository ran
--- this with debug mode off, wrote nothing, and failed here alone.
+-- armed flag from a neighbour -- and that neighbour was conditioned on
+-- internal_docs/qa, so a clone of the published repository ran this with debug
+-- mode off, wrote nothing, and failed here alone.
 do
     local keptDebug = SanctuaryDB.debugEnabled
     SanctuaryDB.debugEnabled = true
@@ -13351,6 +13447,524 @@ end)()
 
 assertModelAtRest()
 -- ---------------------------------------------------------------------------
+-- What the three surfaces that shape a translated word print today
+-- ---------------------------------------------------------------------------
+
+-- Three places do more with a translation than show it: the verbose chat line
+-- lower-cases the Journal's label for the type, the header's tooltip joins the
+-- names of the five kinds into a sentence, and the tab strip sizes each tab from
+-- its label. What they print is pinned here, word for word and pixel for pixel,
+-- in English and in French, before the locales leave their single file and
+-- before any code learns a third language: a change to either of these two
+-- languages has to show up as a change to this block.
+--
+-- A language is applied by refilling `ns.L` in place, which is the table both
+-- files hold from the moment they load -- the same move the add-on makes.
+
+;(function()
+
+local frenchAsFound = {}
+for key, value in pairs(ns.L) do frenchAsFound[key] = value end
+local function useStrings(strings)
+    for key in pairs(ns.L) do ns.L[key] = nil end
+    for key, value in pairs(strings) do ns.L[key] = value end
+end
+local LOCALES = {
+    { code = "enUS", strings = defaultLocale },
+    { code = "frFR", strings = frenchLocale },
+}
+
+-- 1. The word a verbose line uses for a block: the Journal's label, its first
+-- letter lower-cased. Every type `logBlock` is ever handed is here.
+local BLOCK_WORDS = {
+    enUS = {
+        groupInvite = "group invitation", whisper = "private message", say = "say",
+        yell = "yell", emote = "emote", duel = "duel", trade = "trade",
+        guildInvite = "guild invitation", channel = "channel", group = "group",
+        mail = "mail",
+    },
+    frFR = {
+        groupInvite = "invitation de groupe", whisper = "message privé", say = "dire",
+        yell = "crier", emote = "émote", duel = "duel", trade = "échange",
+        guildInvite = "invitation de guilde", channel = "canal", group = "groupe",
+        mail = "courrier",
+    },
+}
+local BLOCK_TYPES = { "groupInvite", "whisper", "say", "yell", "emote", "duel", "trade",
+    "guildInvite", "channel", "group", "mail" }
+
+local keptMode = SanctuaryDB.notifications.mode
+local keptLogging = SanctuaryDB.logging.enabled
+SanctuaryDB.notifications.mode = "verbose"
+SanctuaryDB.logging.enabled = true
+ns.clearJournal()
+for _, locale in ipairs(LOCALES) do
+    useStrings(locale.strings)
+    for _, blockType in ipairs(BLOCK_TYPES) do
+        chatMessages = {}
+        now = now + 5
+        ns.logBlock(blockType, "Pinned-TestRealm", "pinned " .. blockType .. " " .. locale.code, nil, nil)
+        local line = (chatMessages[#chatMessages] or "")
+            :gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+        local expected = string.format(locale.strings.BLOCKED_VERBOSE,
+            BLOCK_WORDS[locale.code][blockType], "Pinned-TestRealm")
+        equal(#chatMessages, 1,
+            locale.code .. ": a block of type " .. blockType .. " prints one verbose line")
+        equal(line:sub(-#expected), expected,
+            locale.code .. ": the verbose line names the type " .. blockType .. " as it always did")
+    end
+end
+ns.clearJournal()
+SanctuaryDB.notifications.mode = keptMode
+SanctuaryDB.logging.enabled = keptLogging
+
+-- 2. The header's tooltip, for each of the 32 combinations of the five kinds.
+-- Its first line is the kinds joined by the locale's separator and closed by its
+-- full stop, each kind as it reads inside the list, and the sentence opens on a
+-- capital whichever kind comes first. Before, only the group invitations were
+-- written with one, so with them unticked the sentence opened in lower case:
+-- masks 30 and 24 below are the lines that fix moved, and the only ones.
+local KIND_ORDER = { "groupInvite", "whisper", "duel", "trade", "guildInvite" }
+local KIND_KEYS = {
+    groupInvite = "KIND_GROUP_INVITE", whisper = "KIND_WHISPER", duel = "KIND_DUEL",
+    trade = "KIND_TRADE", guildInvite = "KIND_GUILD_INVITE",
+}
+local FIRST_LINES = {
+    enUS = {
+        [31] = "Group invitations, private messages, duels, trades, guild invitations.",
+        [30] = "Private messages, duels, trades, guild invitations.",
+        [24] = "Trades, guild invitations.",
+        [0] = "Nothing is being filtered.",
+    },
+    frFR = {
+        [31] = "Invitations de groupe, messages privés, duels, échanges, invitations de guilde.",
+        [30] = "Messages privés, duels, échanges, invitations de guilde.",
+        [24] = "Échanges, invitations de guilde.",
+        [0] = "Rien n'est filtré.",
+    },
+}
+-- The capital, worked out here without the add-on's own helper: ASCII, and the
+-- Latin-1 lower case both languages can open on.
+local function capitalised(text)
+    local ascii = text:match("^%l")
+    if ascii then return ascii:upper() .. text:sub(2) end
+    local trail = text:match("^\195([\160-\190])")
+    if trail and trail ~= "\183" then
+        return "\195" .. string.char(trail:byte() - 32) .. text:sub(3)
+    end
+    return text
+end
+
+local stateButton = _G.SanctuaryStateButton
+local function headerTip()
+    rawset(GameTooltip, "__lastText", nil)
+    stateButton:GetScript("OnEnter")(stateButton)
+    local text = rawget(GameTooltip, "__lastText")
+    stateButton:GetScript("OnLeave")(stateButton)
+    return text
+end
+
+local keptFilters = {}
+for _, kind in ipairs(KIND_ORDER) do keptFilters[kind] = SanctuaryDB.filters[kind] end
+local keptPreset, keptScope = SanctuaryDB.filters.preset, SanctuaryDB.filters.scope
+-- A per-character answer would win over the account's, and none is wanted here.
+local keptCharFilters = SanctuaryCharDB.overrides.filters
+SanctuaryCharDB.overrides.filters = {}
+SanctuaryDB.filters.preset = "custom"
+SanctuaryDB.filters.scope = "strangers"
+for _, locale in ipairs(LOCALES) do
+    useStrings(locale.strings)
+    local info = ns.describeProtection()
+    local allowedLine = string.format(locale.strings.HEADER_TIP_ALLOWED, tostring(info.allowedCount))
+    local clickLine = info.enabled and locale.strings.HEADER_TIP_CLICK_OFF
+        or locale.strings.HEADER_TIP_CLICK_ON
+    for mask = 0, 31 do
+        local parts = {}
+        for bit, kind in ipairs(KIND_ORDER) do
+            local on = math.floor(mask / 2 ^ (bit - 1)) % 2 == 1
+            SanctuaryDB.filters[kind] = on
+            if on then parts[#parts + 1] = locale.strings[KIND_KEYS[kind]] end
+        end
+        local first = #parts > 0 and capitalised(table.concat(parts, ", ") .. ".")
+            or locale.strings.HEADER_TIP_NOTHING
+        local shown = headerTip() or ""
+        equal(shown, first .. "\n" .. allowedLine .. "\n" .. clickLine,
+            locale.code .. ": the header tooltip for kinds mask " .. mask)
+        if FIRST_LINES[locale.code][mask] then
+            equal(shown:match("^[^\n]*"), FIRST_LINES[locale.code][mask],
+                locale.code .. ": the first line for mask " .. mask .. ", word for word")
+        end
+    end
+end
+for _, kind in ipairs(KIND_ORDER) do SanctuaryDB.filters[kind] = keptFilters[kind] end
+SanctuaryDB.filters.preset, SanctuaryDB.filters.scope = keptPreset, keptScope
+SanctuaryCharDB.overrides.filters = keptCharFilters
+
+-- 3. The tab strip. Each tab is sized from the BYTES of its label: eight pixels
+-- a byte plus 34, never under 70, and the whole row scaled down to the strip
+-- (the window less its two 2 px edges) when it does not fit. The widths below
+-- are that rule's answers for the four and the five tabs of each language.
+local TAB_KEYS = { "protection", "journal", "advanced", "about", "diagnostics" }
+local TAB_WIDTHS = {
+    enUS = {
+        [false] = { [500] = { 114, 90, 98, 74 }, [640] = { 114, 90, 98, 74 },
+            [900] = { 114, 90, 98, 74 } },
+        [true] = { [500] = { 113, 89, 97, 73, 121 }, [640] = { 114, 90, 98, 74, 122 },
+            [900] = { 114, 90, 98, 74, 122 } },
+    },
+    frFR = {
+        [false] = { [500] = { 114, 90, 90, 106 }, [640] = { 114, 90, 90, 106 },
+            [900] = { 114, 90, 90, 106 } },
+        [true] = { [500] = { 108, 85, 85, 100, 115 }, [640] = { 114, 90, 90, 106, 122 },
+            [900] = { 114, 90, 90, 106, 122 } },
+    },
+}
+local keptScreen, keptSize = UIParent.GetHeight, SanctuaryDB.uiSize
+local keptDebug = SanctuaryDB.debugEnabled
+local keptShown = mainFrame:IsShown()
+UIParent.GetHeight = function() return 768 end
+if not keptShown then mainFrame:Show() end
+for _, locale in ipairs(LOCALES) do
+    useStrings(locale.strings)
+    for _, debugOn in ipairs({ false, true }) do
+        for _, width in ipairs({ 500, 640, 900 }) do
+            SanctuaryDB.debugEnabled = debugOn
+            SanctuaryDB.uiSize = { width, 700 }
+            ns.refreshTabBar()
+            ns.refreshUI()
+            local expected = TAB_WIDTHS[locale.code][debugOn][width]
+            local x = 0
+            for index, key in ipairs(TAB_KEYS) do
+                local tab = _G["SanctuaryTab_" .. key]
+                local label = locale.code .. " " .. width .. " px, "
+                    .. (debugOn and "five" or "four") .. " tabs: " .. key
+                if expected[index] then
+                    local _, _, _, tabX = tab:GetPoint()
+                    equal(tab:GetWidth(), expected[index], label .. " keeps its width")
+                    equal(tabX, x, label .. " follows the one before it")
+                    x = x + expected[index]
+                else
+                    check(not tab:IsShown(), label .. " stays off the strip")
+                end
+            end
+        end
+    end
+end
+SanctuaryDB.debugEnabled = keptDebug
+SanctuaryDB.uiSize = keptSize
+UIParent.GetHeight = keptScreen
+
+-- 4. And what the same three do with a third script, where a byte is not a
+-- letter and `%u` is not a capital.
+equal(ns.upperFirst("échanges, duels."), "Échanges, duels.", "a sentence can open on an accented capital")
+equal(ns.upperFirst("мир"), "Мир", "or a Cyrillic one")
+equal(ns.upperFirst("ёж"), "Ёж", "Ё included")
+equal(ns.upperFirst("Gruppeneinladungen"), "Gruppeneinladungen", "a capital stays one")
+equal(ns.upperFirst("5 minutes"), "5 minutes", "and what is not a letter is left alone")
+equal(ns.upperFirst(""), "", "as is nothing at all")
+
+local russian, keptCase = {}, ns.localeKeepsLabelCase
+for key, value in pairs(defaultLocale) do russian[key] = value end
+russian.LOG_TYPE_TRADE = "Обмен"
+russian.BLOCKED_VERBOSE = "Заблокировано: %s от %s"
+SanctuaryDB.notifications.mode = "verbose"
+SanctuaryDB.logging.enabled = true
+useStrings(russian)
+ns.localeKeepsLabelCase = false
+chatMessages = {}
+now = now + 5
+ns.logBlock("trade", "Pinned-TestRealm", nil, nil, nil)
+check((chatMessages[#chatMessages] or ""):find("обмен", 1, true) ~= nil,
+    "a Cyrillic label is lower-cased in the verbose line, not left as it opens")
+russian.LOG_TYPE_TRADE = "Handel"
+useStrings(russian)
+ns.localeKeepsLabelCase = true
+chatMessages = {}
+now = now + 5
+ns.logBlock("trade", "Pinned-TestRealm", nil, nil, nil)
+check((chatMessages[#chatMessages] or ""):find("Handel", 1, true) ~= nil,
+    "and a language that capitalises its nouns keeps the capital")
+ns.localeKeepsLabelCase = keptCase
+ns.clearJournal()
+SanctuaryDB.notifications.mode = keptMode
+SanctuaryDB.logging.enabled = keptLogging
+
+-- Six Cyrillic letters are twelve bytes and one word of six letters: the tab is
+-- sized for the six, as a Latin word of six would be.
+russian.TAB_PROTECTION, russian.TAB_JOURNAL = "Защита", "Журнал"
+russian.TAB_ADVANCED, russian.TAB_ABOUT = "Дополнительно", "О программе"
+useStrings(russian)
+UIParent.GetHeight = function() return 768 end
+SanctuaryDB.debugEnabled = false
+SanctuaryDB.uiSize = { 900, 700 }
+ns.refreshTabBar()
+ns.refreshUI()
+for index, key in ipairs({ "protection", "journal", "advanced", "about" }) do
+    equal(_G["SanctuaryTab_" .. key]:GetWidth(), ({ 82, 82, 138, 122 })[index],
+        "a Cyrillic " .. key .. " tab is sized by its letters, not its bytes")
+end
+SanctuaryDB.debugEnabled = keptDebug
+SanctuaryDB.uiSize = keptSize
+UIParent.GetHeight = keptScreen
+
+useStrings(frenchAsFound)
+ns.refreshTabBar()
+ns.refreshUI()
+if not keptShown then mainFrame:Hide() end
+
+end)()
+
+assertModelAtRest()
+-- ---------------------------------------------------------------------------
+-- A one-unit border is one physical pixel, off the pixel grid
+-- ---------------------------------------------------------------------------
+
+-- At a UI scale of 0.67 on a 1440 px screen, a unit is 1.25 pixels, and the
+-- client snapping a border that thin to the pixel grid rounded the bottom one
+-- of the cards under questions 2 and 5 to nothing -- seen on screen, and found
+-- again by scrolling the window a few pixels, which brought it back. The fix is
+-- in what the add-on asks for: the size of one physical pixel, from PixelUtil,
+-- and the eight pieces kept off the grid. What the client then draws is for the
+-- screenshots to show; this holds the asking.
+;(function()
+local keptPixel = PixelUtil
+local asked = {}
+PixelUtil = { GetNearestPixelSize = function(size, scale, minPixels)
+    asked[#asked + 1] = { size = size, scale = scale, minPixels = minPixels }
+    return 0.8
+end }
+local keptShown = mainFrame:IsShown()
+if not keptShown then mainFrame:Show() end
+_G.SanctuaryTab_protection:Click()
+local card = _G.SanctuaryQ2_all
+rawset(card, "GetEffectiveScale", function() return 2 / 3 end)
+ns.refreshUI()
+equal(card.__backdrop.edgeSize, 0.8, "a card's one-unit border is drawn one physical pixel thick")
+local last = asked[#asked] or {}
+equal(last.size, 1, "the size asked for is one unit")
+equal(last.scale, 2 / 3, "at the card's own scale")
+equal(last.minPixels, 1, "and never under one pixel")
+for _, key in ipairs({ "TopEdge", "BottomEdge", "LeftEdge", "RightEdge", "TopLeftCorner",
+    "TopRightCorner", "BottomLeftCorner", "BottomRightCorner" }) do
+    equal(card[key] and card[key].__snapToPixelGrid, false, "its " .. key .. " stays off the pixel grid")
+    equal(card[key] and card[key].__texelSnappingBias, 0, "with no texel snapping either")
+end
+-- The window's own border is two units wide and drew well: it is not touched.
+equal(mainFrame.__backdrop.edgeSize, 2, "the window's two-unit border is left as it was")
+
+PixelUtil = keptPixel
+rawset(card, "GetEffectiveScale", nil)
+ns.refreshUI()
+equal(card.__backdrop.edgeSize, 1, "and a client without PixelUtil keeps the one unit")
+if not keptShown then mainFrame:Hide() end
+end)()
+
+assertModelAtRest()
+-- ---------------------------------------------------------------------------
+-- A language picked for Sanctuary alone
+-- ---------------------------------------------------------------------------
+
+-- The Advanced tab lets a player read Sanctuary in another language than the
+-- game's -- a French client reading English, a Russian reading an EU realm's
+-- French. The files lay the strings out for the game's language when they load,
+-- before the saved variables exist; the choice is applied at ADDON_LOADED. A
+-- reload is simulated as the client runs one: the game's language laid out
+-- again, the dialogs written again at load, then the event.
+;(function()
+
+local function sameStrings(a, b)
+    for key, value in pairs(a) do
+        if b[key] ~= value then return false, key end
+    end
+    for key in pairs(b) do
+        if a[key] == nil then return false, key end
+    end
+    return true
+end
+local function reloadWith(choice)
+    SanctuaryDB.locale = choice
+    ns.applyLocale(GetLocale())
+    ns.refreshPopupTexts()
+    chatMessages = {}
+    fire("ADDON_LOADED", "Sanctuary")
+end
+local DIALOG_TEXTS = {
+    SANCTUARY_CLEAR_LOG = { "LOGS_CLEAR_CONFIRM", "LOGS_CLEAR_YES", "LOGS_CLEAR_NO" },
+    SANCTUARY_MAIL_DELETE_ATTACHMENTS = { "MAIL_DELETE_CONFIRM", "MAIL_DELETE_OK", "MAIL_DELETE_CANCEL" },
+    SANCTUARY_CLEAR_DEBUG_LOG = { "DEBUG_CLEAR_CONFIRM", "LOGS_CLEAR_YES", "LOGS_CLEAR_NO" },
+    SANCTUARY_RELOAD_LOCALE = { "LANGUAGE_RELOAD_TEXT", "LANGUAGE_RELOAD_NOW", "LANGUAGE_RELOAD_LATER" },
+}
+local function dialogsSpeak(strings, label)
+    for which, keys in pairs(DIALOG_TEXTS) do
+        local dialog = StaticPopupDialogs[which]
+        equal(dialog.text, strings[keys[1]], which .. " reads " .. label)
+        equal(dialog.button1, strings[keys[2]], "and so does its first button")
+        equal(dialog.button2, strings[keys[3]], "and its second")
+    end
+end
+
+equal(ns.ACCOUNT_DEFAULTS.locale, "auto", "a new settings file follows the game's language")
+equal(SanctuaryDB.locale, "auto", "and so does the one this run started on")
+
+-- "auto" changes nothing: the table laid out for the game's language stays.
+reloadWith("auto")
+equal((sameStrings(ns.L, frenchLocale)), true, "with auto, a French client reads French")
+equal(SanctuaryDB.locale, "auto", "and the saved choice stays auto")
+dialogsSpeak(frenchLocale, "French")
+
+-- A language picked is applied before the first line is printed, and the four
+-- dialogs written at load are written again in it.
+reloadWith("enUS")
+local same, differing = sameStrings(ns.L, defaultLocale)
+check(same, "with English picked, a French client reads English (" .. tostring(differing) .. ")")
+check((chatMessages[1] or ""):find(defaultLocale.ADDON_LOADED_ACTIVE, 1, true) ~= nil,
+    "and the load line is already English")
+dialogsSpeak(defaultLocale, "English")
+
+-- Every language the menu offers reads its own table, and every language this
+-- copy ships is on the menu.
+local FILE_OF = {}
+for _, pair in ipairs(CLIENT_FILES) do FILE_OF[pair[1]] = pair[2] end
+local offered, offeredFiles = {}, {}
+for _, choice in ipairs(ns.LOCALE_CHOICES) do
+    if ns.isLocaleAvailable(choice.code) then
+        offered[#offered + 1] = choice.code
+        offeredFiles[FILE_OF[choice.code]] = true
+        reloadWith(choice.code)
+        local matches, key = sameStrings(ns.L, loadLocale(choice.code))
+        check(matches, choice.code .. " picked reads the " .. choice.code .. " table (" .. tostring(key) .. ")")
+        equal(SanctuaryDB.locale, choice.code, "and the choice is kept")
+        -- German writes its nouns with a capital in the middle of a sentence,
+        -- and no other language here does: the flag follows the language applied.
+        equal(ns.localeKeepsLabelCase, choice.code == "deDE",
+            choice.code .. " picked keeps a block's label as written only if it is German")
+    end
+end
+
+-- And what that does to the verbose line, through the language applied rather
+-- than a flag set by hand: German keeps the capital, English and Russian fold it.
+do
+    local keptMode, keptLogging = SanctuaryDB.notifications.mode, SanctuaryDB.logging.enabled
+    SanctuaryDB.notifications.mode = "verbose"
+    SanctuaryDB.logging.enabled = true
+    local function verboseTrade()
+        chatMessages = {}
+        now = now + 5
+        ns.logBlock("trade", "Cased-TestRealm", nil, nil, nil)
+        return (chatMessages[#chatMessages] or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    end
+    local function foldedFirst(label)
+        local pair = label:match("^[\208\209][\128-\191]")
+        if pair then
+            local lead, trail = pair:byte(1), pair:byte(2)
+            if lead == 0xD0 and trail >= 0x90 and trail <= 0x9F then
+                return "\208" .. string.char(trail + 0x20) .. label:sub(3)
+            elseif lead == 0xD0 and trail >= 0xA0 and trail <= 0xAF then
+                return "\209" .. string.char(trail - 0x20) .. label:sub(3)
+            end
+            return label
+        end
+        return label:sub(1, 1):lower() .. label:sub(2)
+    end
+    for _, code in ipairs({ "deDE", "enUS", "ruRU" }) do
+        if ns.isLocaleAvailable(code) then
+            reloadWith(code)
+            local label = ns.L.LOG_TYPE_TRADE
+            local expected = code == "deDE" and label or foldedFirst(label)
+            local line = verboseTrade()
+            check(line:find(string.format(ns.L.BLOCKED_VERBOSE, expected, "Cased-TestRealm"), 1, true) ~= nil,
+                code .. ": the verbose line writes the trade as " .. expected)
+        end
+    end
+    ns.clearJournal()
+    SanctuaryDB.notifications.mode = keptMode
+    SanctuaryDB.logging.enabled = keptLogging
+end
+for _, shipped in ipairs(shippedLocales) do
+    check(offeredFiles[shipped.file], "the menu offers the language a " .. shipped.code .. " client reads")
+end
+
+-- A value this copy cannot honour -- a code from a later version, a language it
+-- does not ship, a file an editor broke -- reads as auto, and is put back to it.
+for _, broken in ipairs({ "xxXX", "es", "koKR", "enGB", 42, true, "" }) do
+    reloadWith(broken)
+    equal(SanctuaryDB.locale, "auto", "a saved " .. tostring(broken) .. " is read as auto")
+    equal((sameStrings(ns.L, frenchLocale)), true, "and Sanctuary follows the game again")
+end
+
+-- The menu: the game's language first, then each language in itself.
+local keptUI, keptReload = C_UI, ReloadUI
+local reloads = 0
+C_UI = { Reload = function() reloads = reloads + 1 end }
+ReloadUI = function() reloads = reloads + 100 end
+reloadWith("auto")
+local keptShown = mainFrame:IsShown()
+if not keptShown then mainFrame:Show() end
+_G.SanctuaryTab_advanced:Click()
+local menu = _G.SanctuaryLanguageMenu
+check(menu ~= nil, "the Advanced tab carries the language menu")
+equal(#menu.rows, 1 + #offered, "one row for the game's language and one per language shipped")
+equal(menu.rows[1].label:GetText(), frenchLocale.LANGUAGE_AUTO, "the first row follows the game")
+for index, code in ipairs(offered) do
+    local name
+    for _, choice in ipairs(ns.LOCALE_CHOICES) do
+        if choice.code == code then name = choice.name end
+    end
+    equal(menu.rows[index + 1].label:GetText(), name, code .. " is named in itself")
+end
+menu:Refresh()
+equal(menu.value:GetText(), frenchLocale.LANGUAGE_AUTO, "closed, the menu shows the saved choice")
+
+-- Picking a language saves it and asks for a reload; only the click reloads.
+popup.shown = false
+menu.rows[2]:Click()
+equal(SanctuaryDB.locale, offered[1], "a pick is saved at once")
+equal(popup.shown and popup.which, "SANCTUARY_RELOAD_LOCALE", "and the reload is asked for")
+equal(reloads, 0, "nothing reloads on its own")
+menu:Refresh()
+equal(menu.value:GetText(), menu.rows[2].label:GetText(), "the closed menu names the language picked")
+StaticPopupDialogs.SANCTUARY_RELOAD_LOCALE.OnAccept()
+equal(reloads, 1, "Reload now reloads the interface, once")
+popup.shown = false
+menu.rows[2]:Click()
+equal(popup.shown, false, "picking the language already saved asks nothing")
+C_UI = nil
+StaticPopupDialogs.SANCTUARY_RELOAD_LOCALE.OnAccept()
+equal(reloads, 101, "and a client without C_UI.Reload falls back to ReloadUI")
+
+-- Russian picked on this French client, and the reload put off: the window is
+-- still Latin, and the closed menu is the one label that now shows Cyrillic. It
+-- takes the Cyrillic cut of the face, and gives it back once the pick is undone.
+local russianRow
+for index, code in ipairs(offered) do
+    if code == "ruRU" then russianRow = menu.rows[index + 1] end
+end
+if russianRow then
+    check(russianRow.label.__fontFile:find("CYR", 1, true) ~= nil,
+        "the Русский row is drawn in the Cyrillic cut on a French client")
+    russianRow:Click()
+    popup.shown = false
+    menu:Refresh()
+    equal(menu.value:GetText(), "Русский", "Russian picked, the closed menu says so")
+    check((menu.value.__fontFile or ""):find("CYR", 1, true) ~= nil,
+        "in the Cyrillic cut, before any reload")
+    SanctuaryDB.locale = "auto"
+    menu:Refresh()
+    check(not (menu.value.__fontFile or ""):find("CYR", 1, true),
+        "and back in the game's own cut once the pick is undone")
+end
+
+C_UI, ReloadUI = keptUI, keptReload
+popup.shown = false
+reloadWith("auto")
+_G.SanctuaryTab_protection:Click()
+ns.refreshUI()
+if not keptShown then mainFrame:Hide() end
+
+end)()
+
+assertModelAtRest()
+-- ---------------------------------------------------------------------------
 -- The day's fold survives a /reload
 -- ---------------------------------------------------------------------------
 
@@ -13381,8 +13995,7 @@ equal(#SanctuaryDB.log, 1, "before the reload the day holds one entry")
 equal(SanctuaryDB.log[1].count, 2, "counted twice")
 local openedAt, openedOn = SanctuaryDB.log[1].t, SanctuaryDB.log[1].d
 
-local reloaded = {}
-assert(loadfile(repoRoot .. "/Locales.lua"))("Sanctuary", reloaded)
+local reloaded = loadLocaleFiles({})
 assert(loadfile(repoRoot .. "/Sanctuary.lua"))("Sanctuary", reloaded)
 
 now = now + 10
@@ -13484,8 +14097,7 @@ equal(SanctuaryDB.log[1].realm, "TestRealm", "and stored with the realm it was w
 
 local ownRealm = GetNormalizedRealmName
 function GetNormalizedRealmName() return "OtherRealm" end
-local elsewhere = {}
-assert(loadfile(repoRoot .. "/Locales.lua"))("Sanctuary", elsewhere)
+local elsewhere = loadLocaleFiles({})
 assert(loadfile(repoRoot .. "/Sanctuary.lua"))("Sanctuary", elsewhere)
 
 now = now + 10
@@ -13530,6 +14142,510 @@ resetModelState()
 SanctuaryDB.logging.enabled = asFound.reloadRecording
 
 end
+
+assertModelAtRest()
+-- ---------------------------------------------------------------------------
+-- Every shipped language builds the whole interface, and fits in it
+-- ---------------------------------------------------------------------------
+
+-- The run above is French from end to end, and every measure it takes is a
+-- French one. Here each shipped language gets the add-on to itself: loaded as a
+-- client of that language loads it, the window built, every tab and both panels
+-- opened at the narrowest, the default and the widest window, with and without
+-- the debug tab, with the sections that only show on an answer shown. An error
+-- anywhere in that is a language that breaks the window.
+--
+-- And a measure. A text that cannot fold -- a label told not to wrap, a word on
+-- a button -- has the room its widget gives it, and English and French are the
+-- two languages that were looked at on screen. So a text is held to the widest
+-- of those two on the same widget: longer than both AND longer than its room is
+-- a word that will be cut or spill, and the fix is a shorter translation, never
+-- a wider widget.
+--
+-- After the /reload section, and for the same reason: every language registers
+-- its own frames under the same global names, and nothing may be tested through
+-- the first window once this has run. A function of its own, the enclosing one
+-- being at Lua's 200-local ceiling.
+;(function()
+    local keptLocale = GetLocale
+    local keptScreen = UIParent.GetHeight
+    local keptSize, keptDebug = SanctuaryDB.uiSize, SanctuaryDB.debugEnabled
+    local keptPreset = SanctuaryDB.filters.preset
+    local keptMail = SanctuaryDB.mail.mode
+    local keptAntiSpam = SanctuaryDB.antiSpam.enabled
+    local keptDialogs = {}
+    local DIALOGS = { "SANCTUARY_CLEAR_LOG", "SANCTUARY_MAIL_DELETE_ATTACHMENTS",
+        "SANCTUARY_CLEAR_DEBUG_LOG", "SANCTUARY_RELOAD_LOCALE" }
+    for _, which in ipairs(DIALOGS) do keptDialogs[which] = StaticPopupDialogs[which] end
+    UIParent.GetHeight = function() return 768 end
+
+    local TAB_KEYS = { "protection", "journal", "advanced", "about", "diagnostics" }
+    local builds = {}
+    -- `code` names the build, `clientCode` is the game's language, `picked` the
+    -- language chosen in the Advanced tab (nil: none), `strings` the table the
+    -- window is expected to speak.
+    local function buildWindow(code, clientCode, picked, strings)
+        local scope = {}
+        GetLocale = function() return clientCode end
+        local first = #createdWidgets + 1
+        local loaded, loadError = pcall(function()
+            loadLocaleFiles(scope)
+            assert(loadfile(repoRoot .. "/Sanctuary.lua"))("Sanctuary", scope)
+            assert(loadfile(repoRoot .. "/SanctuaryUI.lua"))("Sanctuary", scope)
+        end)
+        check(loaded, code .. ": the add-on loads (" .. tostring(loadError) .. ")")
+
+        local failures = {}
+        local function try(label, action)
+            local ok, err = pcall(action)
+            if not ok then failures[#failures + 1] = label .. ": " .. tostring(err) end
+        end
+        SanctuaryDB.debugEnabled = false
+        if loaded then
+            -- What the client does once the saved variables exist.
+            SanctuaryDB.locale = picked or "auto"
+            local fired = false
+            for index = first, #createdWidgets do
+                local widget = createdWidgets[index]
+                if not fired and widget.__events and widget.__events.ADDON_LOADED
+                    and widget.__scripts.OnEvent then
+                    try("ADDON_LOADED", function()
+                        widget.__scripts.OnEvent(widget, "ADDON_LOADED", "Sanctuary")
+                    end)
+                    fired = true
+                end
+            end
+            check(fired, code .. ": its ADDON_LOADED is found and fired")
+        end
+        equal(scope.L and scope.L.TAB_PROTECTION, strings.TAB_PROTECTION,
+            code .. ": and reads its own language")
+        if loaded then
+            SanctuaryDB.filters.preset = "custom"
+            SanctuaryDB.mail.mode = "delete"
+            SanctuaryDB.antiSpam.enabled = true
+            try("open", function() scope.ToggleUI() end)
+            for _, debugOn in ipairs({ false, true }) do
+                for _, width in ipairs({ 900, 780, 500 }) do
+                    SanctuaryDB.debugEnabled = debugOn
+                    SanctuaryDB.uiSize = { width, 700 }
+                    try("refresh " .. width, function()
+                        scope.refreshTabBar()
+                        scope.refreshUI()
+                    end)
+                    local far = 0
+                    for _, key in ipairs(TAB_KEYS) do
+                        local tab = _G["SanctuaryTab_" .. key]
+                        if tab and tab:IsShown() then
+                            try("tab " .. key .. " at " .. width, function() tab:Click() end)
+                            local _, _, _, tabX = tab:GetPoint()
+                            far = math.max(far, (tabX or 0) + (tab:GetWidth() or 0))
+                        end
+                    end
+                    check(far <= width + 1, code .. ": the tabs fit the strip at " .. width
+                        .. " px" .. (debugOn and ", debug tab included" or "") .. " (" .. far .. ")")
+                    for _, panel in ipairs({ "allowed", "blocked" }) do
+                        try("panel " .. panel .. " at " .. width, function()
+                            scope.OpenPanel(panel)
+                            scope.ClosePanel()
+                        end)
+                    end
+                end
+            end
+            _G.SanctuaryTab_protection:Click()
+            try("header tooltip", function()
+                local button = _G.SanctuaryStateButton
+                button:GetScript("OnEnter")(button)
+                button:GetScript("OnLeave")(button)
+            end)
+            -- The two columns of "I choose" at the narrowest window, where the
+            -- most labels fold: each row starts under the folded block of the
+            -- row above it, the child box under its parent included. Its label
+            -- carries "(experimental)", and a row booked at the flat height let
+            -- the second line run into the box under it.
+            local function span(widget)
+                local _, relative, relativePoint, _, top = widget:GetPoint()
+                if relativePoint == "BOTTOMLEFT" then
+                    local _, _, _, _, parentTop = relative:GetPoint()
+                    top = parentTop - (relative:GetHeight() or 0) + top
+                end
+                local bottom = top - (widget:GetHeight() or 0)
+                if widget.label then
+                    local _, _, _, _, drop = widget.label:GetPoint()
+                    bottom = math.min(bottom, top + (drop or 0) - (widget.label:GetStringHeight() or 0))
+                end
+                return top, bottom
+            end
+            local overlaps = {}
+            for _, column in ipairs({
+                { "SanctuaryFilter_groupInvite", "SanctuaryStrictCheck", "SanctuaryFilter_whisper",
+                    "SanctuaryFilter_sayYell", "SanctuaryFilter_emote" },
+                { "SanctuaryFilter_duel", "SanctuaryFilter_trade", "SanctuaryFilter_guildInvite",
+                    "SanctuaryChannelsLabel" },
+            }) do
+                for index = 2, #column do
+                    local _, above = span(_G[column[index - 1]])
+                    local below = span(_G[column[index]])
+                    if below > above then
+                        overlaps[#overlaps + 1] = string.format("%s at %s, over %s ending at %s",
+                            column[index], below, column[index - 1], above)
+                    end
+                end
+            end
+            equal(#overlaps, 0, code .. ": no row of \"I choose\" starts inside the one above it at 500 px ("
+                .. table.concat(overlaps, " | ") .. ")")
+            -- The debug paragraph of Advanced folds over more lines in a longer
+            -- language or a narrower window. At 500 px its two buttons start
+            -- under its last line, and the screen is as tall as what was pushed
+            -- down: the technical line at its bottom stays inside the height,
+            -- and the one refresh that follows a narrowing already answers the
+            -- height a second one would. The window is at its lowest, so the
+            -- screen is taller than it and the height is the screen's own.
+            local oneRefresh, twoRefreshes
+            try("advanced at 500", function()
+                SanctuaryDB.uiSize = { 900, 380 }
+                scope.refreshUI()
+                _G.SanctuaryTab_advanced:Click()
+                SanctuaryDB.uiSize = { 500, 380 }
+                scope.refreshUI()
+                oneRefresh = _G.SanctuaryTabContent_advanced:GetHeight()
+                scope.refreshUI()
+                twoRefreshes = _G.SanctuaryTabContent_advanced:GetHeight()
+            end)
+            equal(oneRefresh, twoRefreshes, code .. ": Advanced answers its height at 500 px from the"
+                .. " first refresh after a narrowing")
+            local desc, export, status
+            for index = first, #createdWidgets do
+                local widget = createdWidgets[index]
+                if widget.__kind == "FontString" and widget.__text == strings.ADV_DEBUG_DESC then
+                    desc = widget
+                elseif widget.__kind == "Button" and widget.label
+                    and widget.label.__text == strings.DEBUG_EXPORT_BTN then
+                    export = widget
+                elseif widget.__kind == "FontString" and type(widget.__text) == "string"
+                    and widget.__text:find(" 20%d%d%d%d%d%d%-%d") then
+                    status = widget
+                end
+            end
+            check(desc and export and status and true, code .. ": the debug paragraph, its export button"
+                .. " and the technical line are found")
+            if desc and export and status then
+                local _, _, _, _, descY = desc:GetPoint()
+                local _, _, _, _, exportY = export:GetPoint()
+                local _, _, _, _, statusY = status:GetPoint()
+                local descBottom = descY - (desc:GetStringHeight() or 0)
+                check(exportY <= descBottom - 4, code .. ": the debug buttons start under the folded paragraph"
+                    .. " at 500 px (" .. exportY .. " against " .. descBottom .. ")")
+                local screen = _G.SanctuaryTabContent_advanced
+                local needed = -statusY + (status:GetStringHeight() or 0)
+                check((screen:GetHeight() or 0) >= needed, code .. ": and the screen reaches the technical line ("
+                    .. tostring(screen:GetHeight()) .. " for " .. needed .. ")")
+            end
+            SanctuaryDB.uiSize = { 500, 700 }
+            _G.SanctuaryTab_protection:Click()
+            for _, which in ipairs(DIALOGS) do
+                local dialog = StaticPopupDialogs[which]
+                check(dialog and dialog.text and dialog.button1 and dialog.button2 and true,
+                    code .. ": " .. which .. " has its text and its two buttons")
+            end
+            equal(StaticPopupDialogs.SANCTUARY_CLEAR_LOG.text, strings.LOGS_CLEAR_CONFIRM,
+                code .. ": the dialogs speak the language of the window")
+            equal(StaticPopupDialogs.SANCTUARY_RELOAD_LOCALE.button1, strings.LANGUAGE_RELOAD_NOW,
+                code .. ": the reload dialog too")
+        end
+        equal(#failures, 0, code .. ": the window opens every screen without an error ("
+            .. table.concat(failures, " | ") .. ")")
+
+        -- What each text asks of its widget, read once everything was shown at
+        -- the narrowest width.
+        local texts = {}
+        for index = first, #createdWidgets do
+            local widget = createdWidgets[index]
+            if widget.__kind == "FontString" then
+                local text = widget.__text
+                local room
+                local parent = widget.__parent
+                if widget.__wordWrap == false and widget.__widthPosted then
+                    room = widget.__width
+                elseif not widget.__widthPosted and parent and parent.__kind == "Button"
+                    and parent.__widthPosted then
+                    room = parent.__width
+                end
+                local owner = widget
+                while owner and not owner.__name do owner = owner.__parent end
+                texts[#texts + 1] = {
+                    text = text, room = room,
+                    width = type(text) == "string" and widget:GetStringWidth() or 0,
+                    owner = owner and owner.__name or "?",
+                    font = widget.__fontFile or "Fonts\\FRIZQT__.TTF",
+                }
+            end
+        end
+        GetLocale = keptLocale
+
+        -- Each text drawn in a font that has its letters: judged by the file the
+        -- label was actually given, not by the language the text is in. The Latin
+        -- cut of the face draws Latin-1 and the Windows-1252 additions; the
+        -- Cyrillic cut adds the Cyrillic block and lacks a few of the others
+        -- (`cyrillicCutLacks`). And only Russian text is handed the Cyrillic
+        -- cut, unless the client or Sanctuary speaks Russian: every other label
+        -- keeps the file the game gave it.
+        local undrawable, recut, menuText = {}, {}, nil
+        for _, entry in ipairs(texts) do
+            local cyrillicCut = entry.font:find("CYR", 1, true) ~= nil
+            if type(entry.text) == "string" and utf8.len(entry.text) then
+                for _, point in utf8.codes(entry.text) do
+                    if (point >= 0x100 and not WINDOW_FONT_EXTRA[point]
+                        and not (cyrillicCut and point >= 0x0400 and point <= 0x04FF))
+                        or (cyrillicCut and WINDOW_FONT_EXTRA.cyrillicCutLacks[point]) then
+                        undrawable[#undrawable + 1] = string.format("%s \"%s\" U+%04X in %s",
+                            entry.owner, entry.text, point, entry.font)
+                        break
+                    end
+                end
+            end
+            if cyrillicCut and clientCode ~= "ruRU" and picked ~= "ruRU"
+                and not (type(entry.text) == "string" and entry.text:find("[\208\209][\128-\191]")) then
+                recut[#recut + 1] = entry.owner .. " \"" .. tostring(entry.text) .. "\""
+            end
+            if entry.owner == "SanctuaryLanguageMenu" then menuText = entry.text end
+        end
+        equal(#undrawable, 0, code .. ": every text is drawn in a font that has its letters ("
+            .. table.concat(undrawable, " | ") .. ")")
+        equal(#recut, 0, code .. ": and only Russian text is drawn in the Cyrillic cut ("
+            .. table.concat(recut, " | ") .. ")")
+        return { code = code, texts = texts, menuText = menuText, scope = scope }
+    end
+    for _, shipped in ipairs(shippedLocales) do
+        local build = buildWindow(shipped.code, shipped.code, nil, shipped.strings)
+        builds[#builds + 1] = build
+        equal(build.menuText, shipped.strings.LANGUAGE_AUTO,
+            shipped.code .. ": the closed language menu follows the game")
+    end
+
+    -- The same window built by a French client that picked another language in
+    -- the Advanced tab: word for word the window that language's own client
+    -- builds, or a string copied at load was left behind in French.
+    local byCode = {}
+    for index, build in ipairs(builds) do byCode[build.code] = { build = build, shipped = shippedLocales[index] } end
+    for _, choice in ipairs(ns.LOCALE_CHOICES) do
+        local own = byCode[choice.code]
+        if own and choice.code ~= "frFR" then
+            local label = choice.code .. " picked on a French client"
+            local picked = buildWindow(label, "frFR", choice.code, own.shipped.strings)
+            equal(#picked.texts, #own.build.texts, label .. ": the same texts as its own client's window")
+            -- One text differs by design: the closed language menu shows the
+            -- choice saved, "auto" on one side and the language on the other.
+            equal(picked.menuText, choice.name, label .. ": the closed menu names the language picked")
+            local differing = {}
+            for index, entry in ipairs(own.build.texts) do
+                local other = picked.texts[index]
+                if entry.owner == "SanctuaryLanguageMenu" then
+                    -- Checked above.
+                elseif not other or other.text ~= entry.text then
+                    differing[#differing + 1] = string.format("%s \"%s\" for \"%s\"", entry.owner,
+                        tostring(other and other.text), tostring(entry.text))
+                end
+            end
+            equal(#differing, 0, label .. ": every text in it (" .. table.concat(differing, " | ") .. ")")
+        end
+    end
+
+    -- And each language picked on a Russian client. That client draws the
+    -- whole window in the Cyrillic cut of the game font, whatever language
+    -- Sanctuary speaks there: the Russian names the Journal and the lists
+    -- show need it. The cut has no middle dot and draws the ordinal indicator
+    -- as another letter (seen in game), so on that client alone the two are
+    -- written as a bullet and a degree sign. Every other text is the one the
+    -- language's own client shows, and the font check above holds it to the
+    -- letters the Cyrillic cut draws.
+    local CYRILLIC_CUT_SWAPS = { ["\194\183"] = "\226\128\162", ["\194\186"] = "\194\176" }
+    for _, choice in ipairs(ns.LOCALE_CHOICES) do
+        local own = byCode[choice.code]
+        if own and choice.code ~= "ruRU" then
+            local label = choice.code .. " picked on a Russian client"
+            local picked = buildWindow(label, "ruRU", choice.code, own.shipped.strings)
+            equal(#picked.texts, #own.build.texts, label .. ": the same texts as its own client's window")
+            equal(picked.menuText, choice.name, label .. ": the closed menu names the language picked")
+            local differing = {}
+            for index, entry in ipairs(own.build.texts) do
+                local other = picked.texts[index]
+                local expected = entry.text
+                if type(expected) == "string" then
+                    expected = expected:gsub("\194[\183\186]", CYRILLIC_CUT_SWAPS)
+                end
+                if entry.owner ~= "SanctuaryLanguageMenu" and (not other or other.text ~= expected) then
+                    differing[#differing + 1] = string.format("%s \"%s\" for \"%s\"", entry.owner,
+                        tostring(other and other.text), tostring(expected))
+                end
+            end
+            equal(#differing, 0, label .. ": every text in it, the two swaps aside ("
+                .. table.concat(differing, " | ") .. ")")
+        end
+    end
+    -- Only there: every other client reads each string exactly as its file
+    -- writes it, the middle dots of English and French included.
+    for index, build in ipairs(builds) do
+        local shipped = shippedLocales[index]
+        local changed = {}
+        for key, value in pairs(shipped.strings) do
+            if build.scope.L[key] ~= value then changed[#changed + 1] = key end
+        end
+        table.sort(changed)
+        equal(#changed, 0, shipped.code .. ": its client reads every string as the file writes it ("
+            .. table.concat(changed, ", ") .. ")")
+    end
+    SanctuaryDB.locale = "auto"
+
+    -- One more window, built where a unit is not a whole pixel: every frame at
+    -- a scale of 2/3, and a PixelUtil that answers 0.8 units for one pixel. The
+    -- rules drawn as textures -- between the questions, under each section
+    -- title, the dashes of the dotted one, the two of the tab strip -- are one
+    -- pixel and off the grid, like the one-unit borders. Snapped at one unit,
+    -- the rule between questions 3 and 4 of the Russian window was not drawn.
+    do
+        local keptPixel, plainIndex = PixelUtil, widgetMeta.__index
+        -- A UI scale, and the one pixel PixelUtil answers for it.
+        local function setScale(scale, pixel)
+            widgetMeta.__index = function(widget, key)
+                if key == "GetEffectiveScale" then return function() return scale end end
+                return plainIndex(widget, key)
+            end
+            PixelUtil = { GetNearestPixelSize = function() return pixel end }
+        end
+        setScale(2 / 3, 0.8)
+        local first = #createdWidgets + 1
+        local build = buildWindow("enUS at a scale of 2/3", "enUS", nil, shippedLocales[1].strings)
+        local snapped, hairlines = {}, 0
+        for index = first, #createdWidgets do
+            local widget = createdWidgets[index]
+            if widget.__kind == "Texture" then
+                if widget.__height == 1 then
+                    local owner = widget
+                    while owner and not owner.__name do owner = owner.__parent end
+                    snapped[#snapped + 1] = owner and owner.__name or "?"
+                elseif widget.__height == 0.8 and widget.__snapToPixelGrid == false
+                    and widget.__texelSnappingBias == 0 then
+                    hairlines = hairlines + 1
+                end
+            end
+        end
+        equal(#snapped, 0, "no texture is left one unit tall on the pixel grid ("
+            .. table.concat(snapped, " | ") .. ")")
+        check(hairlines >= 5 + 2, "the rules of the home screen and the tab strip are among the "
+            .. hairlines .. " drawn one pixel tall off the grid")
+        -- The borders two units wide are not lines of one pixel: the window's
+        -- own keeps its two units at any scale.
+        equal(_G.SanctuaryMainFrame.__backdrop.edgeSize, 2,
+            "the window's two-unit border is left as it was at a scale of 2/3")
+
+        -- Then the UI scale changes under the open window, and one pixel is a
+        -- whole unit. Every line sized for the old scale is sized again when
+        -- the client says so, and a border keeps the colour it wears: a line
+        -- left at 0.8 units would cover less than a pixel, off the grid.
+        local lines, borders, watcher = {}, {}, nil
+        for index = first, #createdWidgets do
+            local widget = createdWidgets[index]
+            if widget.__kind == "Texture" and widget.__height == 0.8 then lines[#lines + 1] = widget end
+            if widget.__backdrop and widget.__backdrop.edgeSize == 0.8 then borders[#borders + 1] = widget end
+            if widget.__events and widget.__events.UI_SCALE_CHANGED then watcher = widget end
+        end
+        check(watcher ~= nil and watcher.__events.DISPLAY_SIZE_CHANGED,
+            "the window listens for the UI scale and the screen size")
+        check(#lines >= 7 and #borders > 0, "lines and borders one pixel thick are there to follow ("
+            .. #lines .. " lines, " .. #borders .. " borders)")
+        local worn = borders[1]
+        worn:SetBackdropBorderColor(0.1, 0.2, 0.3, 1)
+        setScale(1, 1)
+        if watcher then watcher.__scripts.OnEvent(watcher, "UI_SCALE_CHANGED") end
+        local stale = 0
+        for _, line in ipairs(lines) do if line.__height ~= 1 then stale = stale + 1 end end
+        for _, frame in ipairs(borders) do
+            if frame.__backdrop.edgeSize ~= 1 then stale = stale + 1 end
+        end
+        equal(stale, 0, "after a UI scale change every line is one pixel at the new scale")
+        equal(table.concat(worn.__backdropBorder or {}, ","), "0.1,0.2,0.3,1",
+            "and a border keeps the colour it wore")
+        -- And a refresh does the same, for a change no event announced.
+        setScale(2 / 3, 0.8)
+        build.scope.refreshUI()
+        stale = 0
+        for _, line in ipairs(lines) do if line.__height ~= 0.8 then stale = stale + 1 end end
+        equal(stale, 0, "a refresh sizes the lines for the scale of the moment too")
+        widgetMeta.__index = plainIndex
+        PixelUtil = keptPixel
+    end
+
+    local reference = {}
+    for _, build in ipairs(builds) do
+        if build.code == "enUS" or build.code == "frFR" then reference[#reference + 1] = build end
+    end
+    for _, build in ipairs(builds) do
+        equal(#build.texts, #reference[1].texts,
+            build.code .. ": the window holds the same texts as the English one")
+        local tooWide, missing = {}, {}
+        for index, entry in ipairs(build.texts) do
+            local widest = 0
+            for _, other in ipairs(reference) do
+                local seen = other.texts[index]
+                if seen then widest = math.max(widest, seen.width) end
+            end
+            if entry.room and entry.width > entry.room and entry.width > widest then
+                tooWide[#tooWide + 1] = string.format("%s \"%s\" %d/%d px",
+                    entry.owner, tostring(entry.text), entry.width, entry.room)
+            end
+            local english = reference[1].texts[index]
+            if type(entry.text) ~= "string" and english and type(english.text) == "string" then
+                missing[#missing + 1] = entry.owner
+            end
+        end
+        equal(#tooWide, 0, build.code .. ": no text that cannot fold is wider than its widget"
+            .. " and than English and French (" .. table.concat(tooWide, " | ") .. ")")
+        equal(#missing, 0, build.code .. ": and none is missing (" .. table.concat(missing, ", ") .. ")")
+    end
+
+    -- The six titles of the home screen do not fold: each is one line beside
+    -- its number, with no width of its own, so the check above never measures
+    -- them. They share one font and one place, so the room is the same for
+    -- all six, and the longest of them in English and French was seen to fit
+    -- the narrowest window. Longer than that is a title that runs off the
+    -- window's edge at 500 px: the anti-spam question did in Spanish, German
+    -- and Russian.
+    local probe = newWidget("FontString")
+    local function measure(text)
+        probe:SetText(text)
+        return probe:GetStringWidth()
+    end
+    local english, french
+    for _, shipped in ipairs(shippedLocales) do
+        if shipped.code == "enUS" then english = shipped.strings end
+        if shipped.code == "frFR" then french = shipped.strings end
+    end
+    local TITLE_KEYS = { "Q1_TITLE", "Q2_TITLE", "MAIL_Q_TITLE", "ANTISPAM_Q_TITLE",
+        "Q4_TITLE", "Q5_TITLE" }
+    local widest = 0
+    for _, key in ipairs(TITLE_KEYS) do
+        widest = math.max(widest, measure(english[key]), measure(french[key]))
+    end
+    for _, shipped in ipairs(shippedLocales) do
+        local tooLong = {}
+        for _, key in ipairs(TITLE_KEYS) do
+            local width = measure(shipped.strings[key])
+            if width > widest then
+                tooLong[#tooLong + 1] = string.format("%s \"%s\" %d/%d px", key,
+                    shipped.strings[key], width, widest)
+            end
+        end
+        equal(#tooLong, 0, shipped.code .. ": no title of the home screen is longer than"
+            .. " the longest English or French one (" .. table.concat(tooLong, " | ") .. ")")
+    end
+
+    for _, which in ipairs(DIALOGS) do StaticPopupDialogs[which] = keptDialogs[which] end
+    SanctuaryDB.filters.preset = keptPreset
+    SanctuaryDB.mail.mode = keptMail
+    SanctuaryDB.antiSpam.enabled = keptAntiSpam
+    SanctuaryDB.uiSize, SanctuaryDB.debugEnabled = keptSize, keptDebug
+    UIParent.GetHeight = keptScreen
+end)()
 
 end)()
 

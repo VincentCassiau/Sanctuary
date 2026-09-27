@@ -2,7 +2,7 @@
 
 > Anti-harassment and anti-spam protection for World of Warcraft: Sanctuary blocks invitations, messages, whispers and other toxic interactions from harmful players before they can bother you.
 
-*[Version française](README.fr.md)*
+*[English](README.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Español](README.es.md) · [Português](README.pt.md) · [Русский](README.ru.md) · [Italiano](README.it.md)*
 
 ![Sanctuary's main screen](media/screenshots/en-protection.png)
 
@@ -84,6 +84,12 @@ The people you trust come from several sources, all active at the same time:
 ## If something goes wrong
 
 Open the Advanced tab and turn debug mode on. Reproduce the problem, then copy the journal from the Journal tab and paste it into a GitHub issue. Nothing is sent automatically.
+
+## Languages
+
+Sanctuary speaks English, French, German, Spanish (Spain and Latin America), Brazilian Portuguese, Russian and Italian. It follows the language of your game, and the Advanced tab lets you pick another one for Sanctuary alone: the game keeps its own.
+
+The German, Spanish, Portuguese, Russian and Italian translations are drafts that no native speaker has reviewed yet. If a word sounds wrong, open an issue or a pull request: each language is one file in `Locales/`.
 
 ## Compatibility
 
