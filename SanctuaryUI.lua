@@ -3820,7 +3820,7 @@ local function refreshAllowedPanel(force)
     -- contacts sit in the same table with source = "trust" and get their own
     -- group further down, so they are excluded here: listing them twice would
     -- show the tester the same name in two places and count as typed by hand
-    -- someone she never typed.
+    -- a name nobody typed.
     local manual = {}
     for key, data in pairs(SanctuaryDB.manualWhitelist or {}) do
         if type(data) ~= "table" or data.source ~= "trust" then
