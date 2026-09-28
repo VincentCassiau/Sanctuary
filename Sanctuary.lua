@@ -7727,7 +7727,7 @@ local frame = CreateFrame("Frame")
 -- The lists go with them. Keeping them meant a conversion -- the blocked list
 -- is keyed by realm in 1.0.0 and was not before -- and a conversion is another
 -- guess about what someone meant, written once and lived with forever. There is
--- one user today, she is told, and she types her lists again once.
+-- one user today, who is told and types the lists again once.
 --
 -- Idempotent by construction -- the rebuilt file carries schemaVersion 2, so a
 -- second load falls straight through to fillMissingDefaults.

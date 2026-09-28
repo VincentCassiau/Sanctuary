@@ -3810,7 +3810,7 @@ equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Toto-Ysondre"), true,
 equal(select(1, ns.addAllowed("Toto Ysondre")), true,
     "the same name typed with a space is allowed")
 equal(dispatchChatFilter("CHAT_MSG_WHISPER", "hi", "Toto-Ysondre"), false,
-    "and her whisper arrives, exactly as WoW wrote it")
+    "and the whisper arrives, exactly as WoW wrote it")
 
 -- Nothing but separators is nobody on this side either.
 for _, typed in ipairs({ "-", " - ", "--" }) do
@@ -4955,8 +4955,8 @@ equal(SanctuaryDB.uiSettings.showMessageColumn, false,
     "the text of blocked messages is not displayed until it is asked for")
 -- The lists go back to empty with the settings. Keeping them meant converting
 -- them -- the blocked list is keyed by realm in 1.0.0 and was not before -- and
--- a conversion is one more guess about what someone meant. She is told, and she
--- types them again once.
+-- a conversion is one more guess about what someone meant. The user is told,
+-- and types them again once.
 equal(next(SanctuaryDB.manualWhitelist), nil, "the names added by hand go too")
 equal(#SanctuaryDB.keywords, 0, "and the patterns")
 equal(next(SanctuaryCharDB.manualWhitelist), nil, "and the per-character list")
@@ -9718,8 +9718,8 @@ do
 
 -- "Added by you" and "Automatically trusted" read the same table: a contact the
 -- five-minute group rule added carries source = "trust". Listed in both, the
--- tester sees one name in two places and a counter that credits her with a name
--- she never typed. Automatic trust fills that table on its own, in group after
+-- tester sees one name in two places and a counter that credits them with a
+-- name they never typed. Automatic trust fills that table on its own, in group after
 -- group, so the miscount appears without anybody typing anything.
 local function addedCount()
     return tonumber(tostring(allowedPanel.addedSection.count:GetText()):match("%d+"))
@@ -10048,7 +10048,7 @@ check(SanctuaryDB.manualWhitelist["bothways-testrealm"] ~= nil, "and puts the ol
 equal(undo:IsShown(), false, "the offer goes with it")
 -- And so does the green line that confirmed the addition: it said yes to the
 -- very gesture Annuler has just taken back, on the screen a person comes to
--- read the state of her lists off.
+-- read the state of their lists off.
 equal(nameBox.note:GetText(), "", "and the field stops saying the name went in")
 equal(nameBox.note:IsShown(), false, "sentence and room together")
 
@@ -11037,12 +11037,12 @@ do
     ns.addAllowed("Menutwo", "menu")
     equal(SanctuaryDB.manualWhitelist["menutwo-testrealm"].source, "menu",
         "and the origin travels on the direct call")
-    -- Still counted among the names she added: she did add it, with two clicks
-    -- instead of by typing. Only the automatic trust entries stand apart.
+    -- Still counted among the names added by hand: the user did add it, with two
+    -- clicks instead of by typing. Only the automatic trust entries stand apart.
     local before = ns.getListCounts().allowed.manual
     ns.removeAllowed("menutwo-testrealm")
     equal(ns.getListCounts().allowed.manual, before - 1,
-        "a name added from the menu counts as one she added, not as automatic trust")
+        "a name added from the menu counts as one added by hand, not as automatic trust")
     ns.removeAllowed(menuKey)
     ns.removeAllowed("handtyped-testrealm")
 end
